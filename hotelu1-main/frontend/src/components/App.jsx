@@ -90,9 +90,13 @@ const App = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('authToken');
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedToken && storedUser) {
+    const storedToken = localStorage.getItem('token');
+    const storedUser = localStorage.getItem('user');
+    
+    // Check if we're on the login page - if so, don't restore session
+    const isLoginPage = window.location.pathname === '/login';
+    
+    if (storedToken && storedUser && !isLoginPage) {
       try {
         const user = JSON.parse(storedUser);
         setCurrentUser(user);
@@ -107,8 +111,8 @@ const App = () => {
         }
       } catch (error) {
         console.error('Failed to restore user from localStorage:', error);
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('currentUser');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
       }
     }
     setIsLoading(false);
@@ -129,8 +133,8 @@ const App = () => {
 
   const handleLogin = (user, token) => {
     setCurrentUser(user);
-    localStorage.setItem('authToken', token);
-    localStorage.setItem('currentUser', JSON.stringify(user));
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(user));
     if (user.role === 'chef') {
       setActiveTab('kds');
     } else if (user.role === 'waiter') {
@@ -145,8 +149,8 @@ const App = () => {
 
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('currentUser');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
     setActiveTab('dashboard');
     navigate('/login');
   };
@@ -192,9 +196,9 @@ const App = () => {
       case 'menu-management':
         return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <MenuManagement locationSettings={locationSettings} /> : <NoAccessMessage />;
       case 'user-management':
-        return role === 'admin' ? <UserManagement token={localStorage.getItem('authToken')} /> : <NoAccessMessage />;
+        return role === 'admin' ? <UserManagement token={localStorage.getItem('token')} /> : <NoAccessMessage />;
       case 'permission-management':
-        return role === 'admin' ? <PermissionManagementNew token={localStorage.getItem('authToken')} /> : <NoAccessMessage />;
+        return role === 'admin' ? <PermissionManagementNew token={localStorage.getItem('token')} /> : <NoAccessMessage />;
       case 'franchise-dashboard':
         return (role === 'admin' || role === 'franchise') ? <FranchiseDashboard currentUser={currentUser} /> : <NoAccessMessage />;
       case 'subfranchise-management':
@@ -209,8 +213,8 @@ const App = () => {
 
   const DashboardLayout = () => {
     useEffect(() => {
-      const user = localStorage.getItem('currentUser');
-      const token = localStorage.getItem('authToken');
+      const user = localStorage.getItem('user');
+      const token = localStorage.getItem('token');
       if (!user || !token) {
         navigate('/login');
       }
@@ -239,7 +243,14 @@ const App = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={<Login onLogin={handleLogin} />} />
+      <Route 
+        path="/login" 
+        element={
+          localStorage.getItem('token') && localStorage.getItem('user') ? 
+          <Navigate to="/dashboard" /> : 
+          <Login />
+        } 
+      />
       <Route path="/dashboard" element={<DashboardLayout />} />
       <Route path="/" element={<Navigate to="/login" />} />
     </Routes>

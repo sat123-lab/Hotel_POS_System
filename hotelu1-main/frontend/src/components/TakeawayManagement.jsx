@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-
+import { authFetch } from '../utils/api';
 import Notification from './Notification';
-
 import OrderEntryModal from './OrderEntryModal';
 
 
@@ -47,7 +46,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
     const fetchActiveOrders = () => {
 
-        fetch('https://hotel-pos-system.onrender.com/api/orders?type=TAKEAWAY')
+        authFetch('https://hotel-pos-system.onrender.com/api/orders?type=TAKEAWAY')
 
             .then(res => {
 
@@ -165,20 +164,8 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
             try {
 
-                const token = localStorage.getItem('authToken');
-
-
-
-                const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
-
-                    method: 'DELETE',
-
-                    headers: {
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    }
-
+                const deleteResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
+                    method: 'DELETE'
                 });
 
 
@@ -209,20 +196,9 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
 
 
-                const createResponse = await fetch('https://hotel-pos-system.onrender.com/api/orders', {
-
+                const createResponse = await authFetch('https://hotel-pos-system.onrender.com/api/orders', {
                     method: 'POST',
-
-                    headers: {
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
                     body: JSON.stringify(newOrderPayload)
-
                 });
 
 
@@ -299,26 +275,12 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
                 // First update the order to have empty items and total = 0
 
-                const updateResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
-
+                const updateResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
                     method: 'PUT',
-
-                    headers: {
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
                     body: JSON.stringify({
-
                         items: [],
-
                         total: 0
-
                     })
-
                 });
 
 
@@ -339,16 +301,8 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
                 console.log('Deleting empty order:', order.id, 'with total: 0');
 
-                const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
-
-                    method: 'DELETE',
-
-                    headers: {
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    }
-
+                const deleteResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
+                    method: 'DELETE'
                 });
 
 
@@ -377,26 +331,12 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
                 console.log('Updating order:', order.id, 'with items:', updatedItems.length, 'new total:', newTotal);
 
-                const response = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
-
+                const response = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
                     method: 'PUT',
-
-                    headers: {
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
                     body: JSON.stringify({
-
                         items: updatedItems,
-
                         total: newTotal
-
                     })
-
                 });
 
 
@@ -449,20 +389,8 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
         try {
 
-            const token = localStorage.getItem('authToken');
-
-            
-
-            const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
-
-                method: 'DELETE',
-
-                headers: {
-
-                    'Authorization': token ? `Bearer ${token}` : ''
-
-                }
-
+            const deleteResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
+                method: 'DELETE'
             });
 
 
@@ -503,14 +431,9 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
         try {
 
-            await fetch(`https://hotel-pos-system.onrender.com/api/orders/${orderId}`, {
-
+            await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${orderId}`, {
                 method: 'PUT',
-
-                headers: { 'Content-Type': 'application/json' },
-
                 body: JSON.stringify({ status: 'completed' })
-
             });
 
             setActiveOrders(prev => prev.filter(order => order.id !== orderId));

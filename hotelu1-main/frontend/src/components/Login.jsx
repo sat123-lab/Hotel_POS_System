@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from "react-router-dom";
 
-const Login = ({ onLogin }) => {
+const Login = () => {
     const navigate = useNavigate();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -27,12 +27,10 @@ const Login = ({ onLogin }) => {
                 if (response.ok) {
                     const data = await response.json();
                     // Store user and token in localStorage
-                    localStorage.setItem("currentUser", JSON.stringify(data.user));
-                    if (data.token) {
-                        localStorage.setItem("authToken", data.token);
-                    }
-                    // Inform App of successful login (App will handle navigation)
-                    if (onLogin) onLogin(data.user, data.token);
+                    localStorage.setItem("token", data.token);
+                    localStorage.setItem("user", JSON.stringify(data.user));
+                    // Navigate to dashboard
+                    navigate("/dashboard");
                 } else {
                     setError("Login failed. Please try again.");
                 }

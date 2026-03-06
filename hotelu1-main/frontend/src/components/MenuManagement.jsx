@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchWithErrorHandling } from '../utils/api';
+import { authFetch } from '../utils/api';
 import Notification from './Notification';
 import MenuItemForm from './MenuItemForm';
 import { Plus, Edit, Trash2, Search, Filter, Package, DollarSign, RefreshCw, ChefHat, Utensils } from 'lucide-react';
@@ -28,11 +28,7 @@ const MenuManagement = ({ locationSettings }) => {
     const fetchMenuItems = async () => {
         setIsLoading(true);
         try {
-            const response = await fetch('https://hotel-pos-system.onrender.com/api/menu', {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                }
-            });
+            const response = await authFetch('https://hotel-pos-system.onrender.com/api/menu');
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -99,12 +95,8 @@ const MenuManagement = ({ locationSettings }) => {
     const handleAddMenuItem = async (item) => {
         try {
             console.log('Adding new menu item:', item);
-            const response = await fetch('https://hotel-pos-system.onrender.com/api/menu', {
+            const response = await authFetch('https://hotel-pos-system.onrender.com/api/menu', {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                },
                 body: JSON.stringify(item)
             });
             
@@ -134,12 +126,8 @@ const MenuManagement = ({ locationSettings }) => {
     const handleUpdateMenuItem = async (item) => {
         try {
             console.log('Updating menu item:', item);
-            const response = await fetch(`https://hotel-pos-system.onrender.com/api/menu/${item.id}`, {
+            const response = await authFetch(`https://hotel-pos-system.onrender.com/api/menu/${item.id}`, {
                 method: 'PUT',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                },
                 body: JSON.stringify(item)
             });
             
@@ -170,11 +158,8 @@ const MenuManagement = ({ locationSettings }) => {
     const handleDeleteItem = async (id, name) => {
         try {
             console.log('Deleting item:', id);
-            const response = await fetch(`https://hotel-pos-system.onrender.com/api/menu/${id}`, { 
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                }
+            const response = await authFetch(`https://hotel-pos-system.onrender.com/api/menu/${id}`, { 
+                method: 'DELETE'
             });
             
             if (!response.ok) {
@@ -200,12 +185,8 @@ const MenuManagement = ({ locationSettings }) => {
     const handleAvailabilityToggle = async (id, isAvailable) => {
         try {
             console.log('Toggling availability for item:', id, 'to:', isAvailable);
-            const response = await fetch(`https://hotel-pos-system.onrender.com/api/menu/${id}/availability`, {
+            const response = await authFetch(`https://hotel-pos-system.onrender.com/api/menu/${id}/availability`, {
                 method: 'PUT',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                },
                 body: JSON.stringify({ isAvailable })
             });
             

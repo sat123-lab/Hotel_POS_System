@@ -1,8 +1,30 @@
 const API_URL = "https://hotel-pos-system.onrender.com";
 
+export const authFetch = (url, options = {}) => {
+  const token = localStorage.getItem("token");
+
+  return fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+      ...options.headers
+    }
+  }).then(response => {
+    if (response.status === 401) {
+      // Clear token and redirect to login
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.href = "/login";
+      throw new Error("Session expired. Please login again.");
+    }
+    return response;
+  });
+};
+
 export const fetchWithErrorHandling = async (url, options = {}) => {
   try {
-    const token = localStorage.getItem("authToken");
+    const token = localStorage.getItem("token");
     const headers = {
       "Content-Type": "application/json",
       ...options.headers,
@@ -16,6 +38,14 @@ export const fetchWithErrorHandling = async (url, options = {}) => {
       ...options,
       headers,
     });
+
+    if (response.status === 401) {
+      // Clear token and redirect to login
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.href = "/login";
+      throw new Error("Session expired. Please login again.");
+    }
 
     if (!response.ok) {
       const error = new Error(`HTTP error! status: ${response.status}`);

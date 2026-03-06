@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { authFetch } from '../utils/api';
 import API_URL from '../utils/api';
-
 import Notification from './Notification';
-
 import OrderEntryModal from './OrderEntryModal';
-
 import { Utensils, Clock, CheckCircle, Truck } from 'lucide-react';
 
 
@@ -261,21 +259,8 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
         if (order.status === 'NOT_AVAILABLE') {
 
             try {
-
-                const token = localStorage.getItem('authToken');
-
-
-
-                const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
-
-                    method: 'DELETE',
-
-                    headers: {
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    }
-
+                const deleteResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
+                    method: 'DELETE'
                 });
 
 
@@ -306,20 +291,9 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
 
 
-                const createResponse = await fetch('https://hotel-pos-system.onrender.com/api/orders', {
-
+                const createResponse = await authFetch('https://hotel-pos-system.onrender.com/api/orders', {
                     method: 'POST',
-
-                    headers: {
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
                     body: JSON.stringify(newOrderPayload)
-
                 });
 
 

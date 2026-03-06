@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { authFetch } from '../utils/api';
 import API_URL from '../utils/api';
-
 import Notification from './Notification';
-
 import QRCode from 'qrcode';
-
 import { getUPIConfig } from '../config/upiConfig';
-
 import { CheckCircle, Printer, Tag, CreditCard, DollarSign, Smartphone, Globe, Utensils } from 'lucide-react';
 
 
@@ -58,79 +55,33 @@ const BillingPage = ({ locationSettings }) => {
 
 
     const fetchDeliveredOrders = () => {
-
-        const token = localStorage.getItem('authToken');
-
-        fetch(`${API_URL}/api/orders?status=delivered`, {
-
-            headers: {
-
-                'Authorization': token ? `Bearer ${token}` : ''
-
-            }
-
-        })
-
+        authFetch(`${API_URL}/api/orders?status=delivered`)
             .then(res => res.json())
-
             .then(data => {
-
                 const filtered = Array.isArray(data) ? data : [];
-
-                
-
                 // Filter only delivered orders - show all tables
-
                 setOrders(filtered);
-
             })
-
             .catch(err => {
-
                 console.error('Error fetching delivered orders:', err);
-
                 setOrders([]);
-
             });
-
     };
 
 
 
     const fetchBillForOrder = async (orderId) => {
-
-        const token = localStorage.getItem('authToken');
-
         try {
-
-            const response = await fetch(`${API_URL}/api/orders/${orderId}/bill`, {
-
-                headers: {
-
-                    'Authorization': token ? `Bearer ${token}` : ''
-
-                }
-
-            });
-
+            const response = await authFetch(`${API_URL}/api/orders/${orderId}/bill`);
             if (response.ok) {
-
                 const bill = await response.json();
-
                 setSelectedBill(bill);
-
                 return bill;
-
             }
-
         } catch (error) {
-
             console.error('Error fetching bill:', error);
-
         }
-
         return null;
-
     };
 
 
