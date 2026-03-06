@@ -12,6 +12,13 @@ import { io } from 'socket.io-client';
 const Dashboard = ({ locationSettings }) => {
 
 
+    // Authentication check
+    useEffect(() => {
+        const user = localStorage.getItem("user");
+        if (!user) {
+            window.location.href = "/";
+        }
+    }, []);
 
     const [isLoading, setIsLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState(new Date());

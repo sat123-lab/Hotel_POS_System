@@ -22,15 +22,21 @@ const Login = ({ onLogin }) => {
                 })
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                // Inform App of successful login (App will handle navigation)
-                onLogin(data.user, data.token);
-                // Redirect to dashboard
-                window.location.href = "/dashboard";
-            } else {
-                setError("Login failed. Please try again.");
-            }
+                if (response.ok) {
+                    const data = await response.json();
+                    // Store user in localStorage
+                    localStorage.setItem("user", JSON.stringify(data.user));
+                    // Optionally store token if needed
+                    if (data.token) {
+                        localStorage.setItem("token", data.token);
+                    }
+                    // Inform App of successful login (App will handle navigation)
+                    if (onLogin) onLogin(data.user, data.token);
+                    // Redirect to dashboard
+                    window.location.href = "/dashboard";
+                } else {
+                    setError("Login failed. Please try again.");
+                }
         } catch (err) {
             setError("Login failed. Please try again.");
         } finally {
