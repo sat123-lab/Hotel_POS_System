@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import API_URL from '../utils/api';
 
 const CustomerOrderTracker = ({ orderId, tableId }) => {
   const [order, setOrder] = useState(null);
@@ -13,7 +14,7 @@ const CustomerOrderTracker = ({ orderId, tableId }) => {
 
   const fetchOrderStatus = async () => {
     try {
-      const response = await fetch(`http://localhost:3001/api/orders?table_name=${tableId}`);
+      const response = await fetch(`${API_URL}/api/orders?table_name=${tableId}`);
       const orders = await response.json();
       const currentOrder = orders.find(o => o.id === orderId);
       if (currentOrder) {

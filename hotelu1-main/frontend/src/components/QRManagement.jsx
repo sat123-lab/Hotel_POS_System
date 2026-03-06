@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import API_URL from '../utils/api';
 
 import Notification from './Notification';
 
@@ -25,15 +26,15 @@ const QRManagement = ({ locationSettings }) => {
 
 
 
-    // Use localhost for dev, but can be changed to actual IP for production
+    // Use dynamic URL for both development and production
 
-    const BASE_QR_ORDER_URL = `${window.location.protocol}//localhost:3000`;
+    const BASE_QR_ORDER_URL = window.location.origin;
 
 
 
     useEffect(() => {
 
-        fetch('https://hotel-pos-system.onrender.com/api/menu')
+        fetch(`${API_URL}/api/menu`)
 
             .then(res => res.json())
 

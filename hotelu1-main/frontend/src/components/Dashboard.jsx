@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { TrendingUp, Users, DollarSign, Package, Calendar, BarChart3, PieChart as PieChartIcon, ShoppingCart, TrendingDown, Activity, Download, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { io } from 'socket.io-client';
+import API_URL from '../utils/api';
 
 
 
@@ -121,7 +122,7 @@ const Dashboard = ({ locationSettings }) => {
         try {
             if (!isRefreshing) setIsLoading(true);
             
-            const res = await fetch(`http://localhost:3001/api/orders?date=${selectedDate}`);
+            const res = await fetch(`${API_URL}/api/orders?date=${selectedDate}`);
             
             if (!res.ok) {
                 console.error('Server error:', res.status, res.statusText);
@@ -164,7 +165,7 @@ const Dashboard = ({ locationSettings }) => {
 
             let liveOrders = 0;
             if (selectedDate === todayLocalDate) {
-                const liveOrdersRes = await fetch('http://localhost:3001/api/orders/live-count');
+                const liveOrdersRes = await fetch(`${API_URL}/api/orders/live-count`);
                 if (liveOrdersRes.ok) {
                     const liveOrdersData = await liveOrdersRes.json();
                     liveOrders = liveOrdersData.count || 0;
@@ -277,7 +278,7 @@ const Dashboard = ({ locationSettings }) => {
     }, [fetchDashboardData]);
 
     useEffect(() => {
-        const socket = io('http://localhost:3001');
+        const socket = io(API_URL.replace('https://', 'wss://').replace('http://', 'ws://'));
         socket.on('order_status_updated', () => {
             fetchDashboardData();
         });

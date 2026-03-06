@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import API_URL from '../utils/api';
 
 import Notification from './Notification';
 
@@ -41,7 +42,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
     const fetchOrdersAndSync = () => {
 
-        fetch('https://hotel-pos-system.onrender.com/api/orders?type=DINE_IN')
+        fetch(`${API_URL}/api/orders?type=DINE_IN`)
 
             .then(res => {
 
@@ -403,7 +404,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 // First update order to have empty items and total = 0
 
-                const updateResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const updateResponse = await fetch(`${API_URL}/api/orders/${order.id}`, {
 
                     method: 'PUT',
 
@@ -443,7 +444,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 console.log('Deleting empty dine-in order:', order.id, 'with total: 0');
 
-                const deleteResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const deleteResponse = await fetch(`${API_URL}/api/orders/${order.id}`, {
 
                     method: 'DELETE',
 
@@ -481,7 +482,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 console.log('Updating dine-in order:', order.id, 'with items:', updatedItems.length, 'new total:', newTotal);
 
-                const response = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const response = await fetch(`${API_URL}/api/orders/${order.id}`, {
 
                     method: 'PUT',
 
@@ -557,7 +558,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
             
 
-            const deleteResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+            const deleteResponse = await fetch(`${API_URL}/api/orders/${order.id}`, {
 
                 method: 'DELETE',
 
@@ -617,7 +618,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 // Complete the order
 
-                await fetch(`http://localhost:3001/api/orders/${tableOrder.id}`, {
+                await fetch(`${API_URL}/api/orders/${tableOrder.id}`, {
 
                     method: 'PUT',
 

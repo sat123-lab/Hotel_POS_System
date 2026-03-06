@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import API_URL from '../utils/api';
 
 import Notification from './Notification';
 
@@ -60,7 +61,7 @@ const BillingPage = ({ locationSettings }) => {
 
         const token = localStorage.getItem('authToken');
 
-        fetch('http://localhost:3001/api/orders?status=delivered', {
+        fetch(`${API_URL}/api/orders?status=delivered`, {
 
             headers: {
 
@@ -102,7 +103,7 @@ const BillingPage = ({ locationSettings }) => {
 
         try {
 
-            const response = await fetch(`http://localhost:3001/api/orders/${orderId}/bill`, {
+            const response = await fetch(`${API_URL}/api/orders/${orderId}/bill`, {
 
                 headers: {
 
@@ -496,7 +497,7 @@ const BillingPage = ({ locationSettings }) => {
 
                     try {
 
-                        const response = await fetch(`http://localhost:3001/api/orders/${orderId}/complete-payment`, {
+                        const response = await fetch(`${API_URL}/api/orders/${orderId}/complete-payment`, {
 
                             method: 'PUT',
 
@@ -578,7 +579,7 @@ const BillingPage = ({ locationSettings }) => {
 
                 // Handle single order payment (existing logic)
 
-                const response = await fetch(`http://localhost:3001/api/orders/${selectedOrder.id}/complete-payment`, {
+                const response = await fetch(`${API_URL}/api/orders/${selectedOrder.id}/complete-payment`, {
 
                     method: 'PUT',
 
