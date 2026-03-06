@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
 const { Sequelize, Op } = require("sequelize");
@@ -17,7 +16,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
-const PORT = process.env.PORT || 3001; // Use environment port or default
+const port = 3001; // Choose a port for your backend
 const JWT_SECRET =
   process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -371,40 +370,7 @@ const mockOrders = [
   },
 ];
 
-const mockMenuItems = [
-  {
-    id: 1,
-    name: "Classic Burger",
-    price: 19.99,
-    category: "Main Course",
-    description: "Beef burger with lettuce, tomato, and cheese",
-    isAvailable: true,
-  },
-  {
-    id: 2,
-    name: "French Fries",
-    price: 4.99,
-    category: "Side",
-    description: "Crispy golden fries",
-    isAvailable: true,
-  },
-  {
-    id: 3,
-    name: "Margherita Pizza",
-    price: 15.5,
-    category: "Main Course",
-    description: "Classic pizza with tomato and mozzarella",
-    isAvailable: true,
-  },
-  {
-    id: 4,
-    name: "Coca Cola",
-    price: 3.0,
-    category: "Beverage",
-    description: "Cold drink",
-    isAvailable: true,
-  },
-];
+// ...existing code...
 
 const mockInventory = [
   { id: 1, name: "Beef Patty", currentStock: 50, minStock: 10 },
@@ -420,7 +386,7 @@ let dbConnected = false;
 sequelize
   .authenticate()
   .then(() => {
-    console.log("Connected to Railway MySQL database");
+    console.log("MySQL connection established.");
     dbConnected = true;
   })
   .catch((err) => {
@@ -545,43 +511,25 @@ app.post("/login", async (req, res) => {
 // Menu Endpoints
 app.get("/api/menu", async (req, res) => {
   try {
-    if (!dbConnected) {
-      return res.json(mockMenuItems);
-    }
     const menuItems = await MenuItem.findAll();
     res.json(menuItems);
   } catch (err) {
-    console.error("Error fetching menu items:", err);
-    res.json(mockMenuItems);
+    console.error("Database error:", err);
+    res.status(500).json({ message: "Database error" });
   }
 });
 
 app.post("/api/menu", verifyToken, async (req, res) => {
   try {
-    if (!dbConnected) {
-      const newItem = { ...req.body, id: mockMenuItems.length + 1 };
-      mockMenuItems.push(newItem);
-      return res.status(201).json(newItem);
-    }
     const newItem = await MenuItem.create(req.body);
     res.status(201).json(newItem);
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Error creating menu item", error: err.message });
+    res.status(500).json({ message: "Error creating menu item", error: err.message });
   }
 });
 
 app.put("/api/menu/:id", verifyToken, async (req, res) => {
   try {
-    if (!dbConnected) {
-      const item = mockMenuItems.find((m) => m.id === parseInt(req.params.id));
-      if (item) {
-        Object.assign(item, req.body);
-        return res.json({ message: "Menu item updated", item });
-      }
-      return res.status(404).json({ message: "Menu item not found" });
-    }
     const { id } = req.params;
     const [updated] = await MenuItem.update(req.body, { where: { id } });
     if (updated) {
@@ -591,9 +539,7 @@ app.put("/api/menu/:id", verifyToken, async (req, res) => {
       res.status(404).json({ message: "Menu item not found" });
     }
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Error updating menu item", error: err.message });
+    res.status(500).json({ message: "Error updating menu item", error: err.message });
   }
 });
 
@@ -1850,6 +1796,6 @@ app.get("/api/my-permissions", verifyToken, async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(port, () => {
+  console.log(`Mock backend running at http://localhost:${port}`);
 });
