@@ -11,24 +11,29 @@ const Login = ({ onLogin }) => {
         setError('');
         setLoading(true);
         try {
-            const res = await fetch('/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
+            const response = await fetch("https://hotel-pos-system.onrender.com/api/login", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    username,
+                    password
+                })
             });
 
-            if (!res.ok) {
-                const data = await res.json();
-                setError(data.message || 'Login failed');
-                setLoading(false);
-                return;
+            if (response.ok) {
+                const data = await response.json();
+                // Inform App of successful login (App will handle navigation)
+                onLogin(data.user, data.token);
+                // Redirect to dashboard
+                window.location.href = "/dashboard";
+            } else {
+                setError("Login failed. Please try again.");
             }
-
-            const data = await res.json();
-            // Inform App of successful login (App will handle navigation)
-            onLogin(data.user, data.token);
         } catch (err) {
-            setError('Login failed. Please try again.');
+            setError("Login failed. Please try again.");
+        } finally {
             setLoading(false);
         }
     };
