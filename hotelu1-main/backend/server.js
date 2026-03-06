@@ -513,9 +513,9 @@ app.get("/api/menu", async (req, res) => {
   try {
     const menuItems = await MenuItem.findAll();
     res.json(menuItems);
-  } catch (err) {
-    console.error("Database error:", err);
-    res.status(500).json({ message: "Database error" });
+  } catch (error) {
+    console.error("REAL DATABASE ERROR:", error);
+    res.status(500).json({ message: "Database error", error: error.message });
   }
 });
 
