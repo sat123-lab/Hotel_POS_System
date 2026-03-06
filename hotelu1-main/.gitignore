@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# Build and dist
+dist/
+build/
+.next/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.temp
+.cache/
+
+# Documentation files (optional - uncomment if needed)
+# DOCUMENTATION_INDEX.md
+# QUICK_START_GUIDE.md
+# README.md
+
+# Test files (optional - uncomment if needed)
+# test-*.js
+# test-*.ps1
+# *-test.js
+# *.test.js
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Node modules for both frontend and backend
+backend/node_modules/
+frontend/node_modules/
