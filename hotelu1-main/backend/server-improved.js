@@ -1,6 +1,7 @@
 // IMPROVED SERVER.JS - Better Error Handling & Real Database Focus
 // This version prioritizes real database usage and removes silent mock data fallbacks
 
+require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
 const { Sequelize } = require("sequelize");
@@ -13,7 +14,7 @@ const Inventory = require("./models/Inventory");
 const bcrypt = require("bcrypt");
 
 const app = express();
-const port = 3001;
+const PORT = process.env.PORT || 3001;
 const JWT_SECRET =
   process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -32,8 +33,8 @@ sequelize
   .authenticate()
   .then(() => {
     console.log("\n✅ SUCCESS: MySQL connection established!");
-    console.log("Database: mrbeast_db");
-    console.log("Host: localhost");
+    console.log(`Database: ${process.env.DB_NAME}`);
+    console.log(`Host: ${process.env.DB_HOST}:${process.env.DB_PORT}`);
     dbConnected = true;
   })
   .catch((err) => {
@@ -511,8 +512,8 @@ app.get("/api/users", verifyToken, async (req, res) => {
 // SERVER START
 // ============================================================================
 
-app.listen(port, () => {
-  console.log(`\n✅ Backend server running at http://localhost:${port}`);
+app.listen(PORT, () => {
+  console.log(`\n✅ Backend server running at http://localhost:${PORT}`);
   console.log("\n📚 API Documentation: See API_TESTING_GUIDE.md");
   console.log("🧪 Run tests with: node api-test-complete.js\n");
 });

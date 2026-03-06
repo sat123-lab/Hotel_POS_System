@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
 const { Sequelize, Op } = require("sequelize");
@@ -16,7 +17,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
-const port = 3001; // Choose a port for your backend
+const PORT = process.env.PORT || 3001; // Use environment port or default
 const JWT_SECRET =
   process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -419,7 +420,7 @@ let dbConnected = false;
 sequelize
   .authenticate()
   .then(() => {
-    console.log("MySQL connection established.");
+    console.log("Connected to Railway MySQL database");
     dbConnected = true;
   })
   .catch((err) => {
@@ -1849,6 +1850,6 @@ app.get("/api/my-permissions", verifyToken, async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`Mock backend running at http://localhost:${port}`);
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
