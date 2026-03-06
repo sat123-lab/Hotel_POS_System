@@ -383,17 +383,25 @@ const sequelize = require("./models/sequelize");
 
 let dbConnected = false;
 
-sequelize
-  .authenticate()
-  .then(() => {
+
+async function startServer() {
+  try {
+    await sequelize.authenticate();
     console.log("MySQL connection established.");
+    await sequelize.sync();
+    console.log("Database tables synchronized.");
+    app.listen(process.env.PORT || 3001, () => {
+      console.log("Server running");
+    });
     dbConnected = true;
-  })
-  .catch((err) => {
-    console.error("Unable to connect to MySQL:", err);
+  } catch (err) {
+    console.error("Database startup error:", err);
     console.log("Server will run in demo mode with mock data.");
     dbConnected = false;
-  });
+  }
+}
+
+startServer();
 
 // Set up associations
 Order.hasMany(OrderItem, { foreignKey: "orderId", as: "items" });
