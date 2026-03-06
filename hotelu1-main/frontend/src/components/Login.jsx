@@ -33,8 +33,6 @@ const Login = ({ onLogin }) => {
                     }
                     // Inform App of successful login (App will handle navigation)
                     if (onLogin) onLogin(data.user, data.token);
-                    // Redirect to dashboard using React Router
-                    navigate("/dashboard");
                 } else {
                     setError("Login failed. Please try again.");
                 }

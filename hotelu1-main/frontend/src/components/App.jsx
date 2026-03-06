@@ -3,7 +3,7 @@ import ErrorBoundary from './ErrorBoundary';
 import Sidebar from './Sidebar';
 import Login from './Login';
 import Dashboard from './Dashboard';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Reports from './Reports';
 import QRManagement from './QRManagement';
 import DineInManagement from './DineInManagement';
@@ -16,7 +16,7 @@ import QRCodeOrdering from './QRCodeOrdering';
 import UserManagement from './UserManagement';
 import PermissionManagementNew from './PermissionManagementNew';
 import CustomerIndex from './CustomerIndex';
-// IndexLogin is deprecated for /login route; use `Login` instead
+import NoAccessMessage from './NoAccessMessage';
 import LandingPage from './LandingPage';
 
 // API utility function
@@ -87,6 +87,7 @@ const App = () => {
   const [nextOrderId, setNextOrderId] = useState(6);
   const [currentUser, setCurrentUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const storedToken = localStorage.getItem('authToken');
@@ -139,6 +140,7 @@ const App = () => {
     } else {
       setActiveTab('dashboard');
     }
+    navigate('/dashboard');
   };
 
   const handleLogout = () => {
@@ -146,6 +148,7 @@ const App = () => {
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
     setActiveTab('dashboard');
+    navigate('/login');
   };
 
   const handleLocationChange = (e) => {
@@ -163,38 +166,7 @@ const App = () => {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
 
-  return (
-    <Routes>
-      <Route path="/login" element={<Login onLogin={handleLogin} />} />
-      <Route
-        path="/dashboard"
-        element={
-          localStorage.getItem('authToken') && localStorage.getItem('currentUser') ? (
-            <div className="flex min-h-screen font-inter relative">
-              <Sidebar
-                activeTab={activeTab}
-                setActiveTab={setActiveTab}
-                currentUser={currentUser}
-                locationSettings={locationSettings}
-                handleLocationChange={handleLocationChange}
-                handleLogout={handleLogout}
-              />
-              <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto">
-                {renderContent()}
-              </main>
-            </div>
-          ) : (
-            <Navigate to="/login" />
-          )
-        }
-      />
-      <Route path="/" element={<Navigate to="/login" />} />
-      {/* ...existing routes for other paths/components... */}
-    </Routes>
-  );
-
-  function renderContent() {
-    // ...existing renderContent logic...
+  const renderContent = () => {
     if (activeTab === 'qr-ordering') {
       return <QRCodeOrdering locationSettings={locationSettings} />;
     }
@@ -233,23 +205,19 @@ const App = () => {
         if (role === 'franchise') return <FranchiseDashboard currentUser={currentUser} />;
         return <Dashboard locationSettings={locationSettings} />;
     }
-  }
-};
+  };
 
-  // Show loading state while checking localStorage
-  if (isLoading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
-  }
+  const DashboardLayout = () => {
+    useEffect(() => {
+      const user = localStorage.getItem('currentUser');
+      const token = localStorage.getItem('authToken');
+      if (!user || !token) {
+        navigate('/login');
+      }
+    }, [navigate]);
 
-  // Handle /login route (staff portal)
-  if (currentPath === '/login') {
-    return <Login onLogin={handleLogin} />;
-  }
-
-  // Handle /dashboard path explicitly; require login
-  if (currentPath === '/dashboard') {
     if (!currentUser) {
-      return <Login onLogin={handleLogin} />;
+      return <Navigate to="/login" />;
     }
 
     return (
@@ -267,104 +235,14 @@ const App = () => {
         </main>
       </div>
     );
-  }
-
-  // Handle root path (/) - landing page / public index
-  if (currentPath === '/') {
-    const params = new URLSearchParams(window.location.search);
-    const tabFromUrl = params.get('tab');
-    const tableId = params.get('tableId');
-
-    // Allow direct QR ordering via ?tab=qr-ordering
-    if (tabFromUrl === 'qr-ordering') {
-      return <QRCodeOrdering locationSettings={locationSettings} />;
-    }
-
-    // If tableId present, show QR ordering (customer view)
-    if (tableId) {
-      return <CustomerIndex locationSettings={locationSettings} />;
-    }
-    // If no tableId and not qr-ordering, show Landing Page as index
-    const navigateToLogin = () => {
-      window.history.pushState({}, '', '/login');
-      setCurrentPath('/login');
-    };
-
-    const navigateToQR = () => {
-      // Navigate to QR ordering via query param and set active tab
-      window.history.pushState({}, '', '/?tab=qr-ordering');
-      setCurrentPath('/');
-      setActiveTab('qr-ordering');
-    };
-
-    return <LandingPage onNavigateToLogin={navigateToLogin} onNavigateToQR={navigateToQR} />;
-  }
-
-  // For all other paths, require admin login
-  const params = new URLSearchParams(window.location.search);
-  const tabFromUrl = params.get('tab');
-  if (!currentUser && tabFromUrl !== 'qr-ordering') {
-    return <Login onLogin={handleLogin} />;
-  }
-
-  function renderContent() {
-    // Allow guest access for QR ordering
-    if (activeTab === 'qr-ordering') {
-      return <QRCodeOrdering locationSettings={locationSettings} />;
-    }
-    // For all other tabs, require a user
-    if (!currentUser) return null;
-
-    const { role } = currentUser;
-    switch (activeTab) {
-      case 'reports':
-        return (role === 'admin' || role === 'manager') ? <Reports locationSettings={locationSettings} /> : <NoAccessMessage />;
-      case 'qr-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <QRManagement locationSettings={locationSettings} /> : <NoAccessMessage />;
-      case 'dine-in-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
-      case 'takeaway-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
-      case 'inventory':
-        return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <InventoryManagement /> : <NoAccessMessage />;
-      case 'dashboard':
-        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'manager') ? <Dashboard locationSettings={locationSettings} /> : <NoAccessMessage />;
-      case 'billing':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <BillingPage locationSettings={locationSettings} /> : <NoAccessMessage />;
-      case 'kds':
-        return (role === 'admin' || role === 'subfranchise' || role === 'chef' || role === 'manager' || role === 'waiter') ? <KitchenDisplaySystem /> : <NoAccessMessage />;
-      case 'menu-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <MenuManagement locationSettings={locationSettings} /> : <NoAccessMessage />;
-      case 'user-management':
-        return role === 'admin' ? <UserManagement token={localStorage.getItem('authToken')} /> : <NoAccessMessage />;
-      case 'permission-management':
-        return role === 'admin' ? <PermissionManagementNew token={localStorage.getItem('authToken')} /> : <NoAccessMessage />;
-      case 'franchise-dashboard':
-        return (role === 'admin' || role === 'franchise') ? <FranchiseDashboard currentUser={currentUser} /> : <NoAccessMessage />;
-      case 'subfranchise-management':
-        return (role === 'admin' || role === 'franchise') ? <SubFranchiseManagement /> : <NoAccessMessage />;
-      default:
-        if (role === 'chef') return <KitchenDisplaySystem />;
-        if (role === 'waiter') return <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />;
-        if (role === 'franchise') return <FranchiseDashboard currentUser={currentUser} />;
-        return <Dashboard locationSettings={locationSettings} />;
-    }
-  }
+  };
 
   return (
-    <div className="flex min-h-screen font-inter">
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        currentUser={currentUser}
-        locationSettings={locationSettings}
-        handleLocationChange={handleLocationChange}
-        handleLogout={handleLogout}
-      />
-      <main className="flex-1 p-8 overflow-y-auto">
-        {renderContent()}
-      </main>
-    </div>
+    <Routes>
+      <Route path="/login" element={<Login onLogin={handleLogin} />} />
+      <Route path="/dashboard" element={<DashboardLayout />} />
+      <Route path="/" element={<Navigate to="/login" />} />
+    </Routes>
   );
 };
 
