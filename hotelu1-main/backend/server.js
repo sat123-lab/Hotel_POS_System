@@ -1807,3 +1807,22 @@ app.get("/api/my-permissions", verifyToken, async (req, res) => {
 server.listen(port, () => {
   console.log(`Mock backend running at http://localhost:${port}`);
 });
+
+  // Login API
+  app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: "Username and password required" });
+    }
+    try {
+      // Query users table
+      const user = await User.findOne({ where: { username, password } });
+      if (user) {
+        return res.json({ success: true, user });
+      } else {
+        return res.status(401).json({ success: false, message: "Invalid username or password" });
+      }
+    } catch (err) {
+      return res.status(500).json({ success: false, message: "Server error", error: err.message });
+    }
+  });
