@@ -103,9 +103,13 @@ const App = () => {
   // Redirect unauthenticated users visiting /dashboard to /login
   useEffect(() => {
     if (currentPath === '/dashboard' && !currentUser) {
-      // update URL first, then update state via setCurrentPath
       window.history.pushState({}, '', '/login');
       setCurrentPath('/login');
+    }
+    // If user exists and is on /login, redirect to dashboard
+    if (currentPath === '/login' && currentUser) {
+      window.history.pushState({}, '', '/dashboard');
+      setCurrentPath('/dashboard');
     }
   }, [currentPath, currentUser]);
 

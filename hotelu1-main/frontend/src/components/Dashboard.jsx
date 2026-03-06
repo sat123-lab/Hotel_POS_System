@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from "react-router-dom";
 import { TrendingUp, Users, DollarSign, Package, Calendar, BarChart3, PieChart as PieChartIcon, ShoppingCart, TrendingDown, Activity, Download, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { io } from 'socket.io-client';
@@ -13,12 +14,13 @@ const Dashboard = ({ locationSettings }) => {
 
 
     // Authentication check
+    const navigate = useNavigate();
     useEffect(() => {
-        const user = localStorage.getItem("user");
+        const user = localStorage.getItem("currentUser");
         if (!user) {
-            window.location.href = "/";
+            navigate("/");
         }
-    }, []);
+    }, [navigate]);
 
     const [isLoading, setIsLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState(new Date());
