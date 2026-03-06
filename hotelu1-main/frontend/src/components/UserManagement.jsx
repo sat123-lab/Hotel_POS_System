@@ -24,7 +24,7 @@ const UserManagement = ({ token }) => {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/users', {
+      const response = await fetch('https://hotel-pos-system.onrender.com/api/users', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -79,8 +79,8 @@ const UserManagement = ({ token }) => {
 
     try {
       const url = editingId
-        ? `http://localhost:3001/api/users/${editingId}`
-        : 'http://localhost:3001/api/users';
+        ? `https://hotel-pos-system.onrender.com/api/users/${editingId}`
+        : 'https://hotel-pos-system.onrender.com/api/users';
 
       const method = editingId ? 'PUT' : 'POST';
       const body = editingId
@@ -134,7 +134,7 @@ const UserManagement = ({ token }) => {
     }
 
     try {
-      const response = await fetch(`http://localhost:3001/api/users/${id}`, {
+      const response = await fetch(`https://hotel-pos-system.onrender.com/api/users/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,

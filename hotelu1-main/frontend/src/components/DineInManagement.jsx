@@ -41,7 +41,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
     const fetchOrdersAndSync = () => {
 
-        fetch('http://localhost:3001/api/orders?type=DINE_IN')
+        fetch('https://hotel-pos-system.onrender.com/api/orders?type=DINE_IN')
 
             .then(res => {
 
@@ -265,7 +265,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
 
 
-                const deleteResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
 
                     method: 'DELETE',
 
@@ -305,7 +305,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
 
 
-                const createResponse = await fetch('http://localhost:3001/api/orders', {
+                const createResponse = await fetch('https://hotel-pos-system.onrender.com/api/orders', {
 
                     method: 'POST',
 

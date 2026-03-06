@@ -1,3 +1,4 @@
+const API_URL = "https://hotel-pos-system.onrender.com";
 export const fetchWithErrorHandling = async (url, options = {}) => {
   try {
     const token = localStorage.getItem("authToken");

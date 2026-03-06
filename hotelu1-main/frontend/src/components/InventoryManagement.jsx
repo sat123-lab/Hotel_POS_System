@@ -9,7 +9,7 @@ const InventoryManagement = () => {
 
     const fetchInventory = async () => {
         try {
-            const data = await fetchWithErrorHandling('http://localhost:3001/api/inventory');
+            const data = await fetchWithErrorHandling('https://hotel-pos-system.onrender.com/api/inventory');
             setInventory(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error('Error fetching inventory:', error);
@@ -28,7 +28,7 @@ const InventoryManagement = () => {
     const handleAddItem = async (e) => {
         e.preventDefault();
         try {
-            const added = await fetchWithErrorHandling('http://localhost:3001/api/inventory', {
+            const added = await fetchWithErrorHandling('https://hotel-pos-system.onrender.com/api/inventory', {
                 method: 'POST',
                 body: JSON.stringify({
                     name: newItem.name,
@@ -55,7 +55,7 @@ const InventoryManagement = () => {
 
     const handleUpdateStock = async (id, currentStock) => {
         try {
-            const updated = await fetchWithErrorHandling(`http://localhost:3001/api/inventory/${id}`, {
+            const updated = await fetchWithErrorHandling(`https://hotel-pos-system.onrender.com/api/inventory/${id}`, {
                 method: 'PUT',
                 body: JSON.stringify({ currentStock })
             });

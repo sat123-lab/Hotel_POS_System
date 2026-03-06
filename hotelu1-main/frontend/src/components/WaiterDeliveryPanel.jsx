@@ -15,7 +15,7 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
 
   const fetchReadyOrders = () => {
     const token = localStorage.getItem('authToken');
-    fetch('http://localhost:3001/api/orders?status=ready', {
+    fetch('https://hotel-pos-system.onrender.com/api/orders?status=ready', {
       headers: {
         'Authorization': token ? `Bearer ${token}` : ''
       }
@@ -36,7 +36,7 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
   const handleConfirmDelivery = async (orderId) => {
     const token = localStorage.getItem('authToken');
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${orderId}/confirm-delivery`, {
+      const response = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${orderId}/confirm-delivery`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

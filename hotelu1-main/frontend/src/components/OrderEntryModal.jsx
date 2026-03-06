@@ -7,7 +7,7 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
     const [notification, setNotification] = useState(null);
 
     useEffect(() => {
-        fetch('http://localhost:3001/api/menu')
+        fetch('https://hotel-pos-system.onrender.com/api/menu')
             .then(res => res.json())
             .then(data => {
                 console.log('Raw menu data from API:', data);
@@ -129,7 +129,7 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
                     const allItems = Object.values(cart);
                     const newTotal = allItems.reduce((sum, item) => sum + (item.price * (item.quantity || item.qty || 1)), 0);
 
-                    const updateResponse = await fetch(`http://localhost:3001/api/orders/${initialOrder.id}`, {
+                    const updateResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${initialOrder.id}`, {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
@@ -175,7 +175,7 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
         console.log('Sending order data:', newOrder);
         try {
             const token = localStorage.getItem('authToken');
-            const url = 'http://localhost:3001/api/orders';
+            const url = 'https://hotel-pos-system.onrender.com/api/orders';
             const method = 'POST';
 
             const headers = {

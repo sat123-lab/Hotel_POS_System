@@ -47,7 +47,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
     const fetchActiveOrders = () => {
 
-        fetch('http://localhost:3001/api/orders?type=TAKEAWAY')
+        fetch('https://hotel-pos-system.onrender.com/api/orders?type=TAKEAWAY')
 
             .then(res => {
 
@@ -169,7 +169,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
 
 
-                const deleteResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
 
                     method: 'DELETE',
 
@@ -209,7 +209,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
 
 
-                const createResponse = await fetch('http://localhost:3001/api/orders', {
+                const createResponse = await fetch('https://hotel-pos-system.onrender.com/api/orders', {
 
                     method: 'POST',
 
@@ -299,7 +299,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
                 // First update the order to have empty items and total = 0
 
-                const updateResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const updateResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
 
                     method: 'PUT',
 
@@ -339,7 +339,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
                 console.log('Deleting empty order:', order.id, 'with total: 0');
 
-                const deleteResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
 
                     method: 'DELETE',
 
@@ -377,7 +377,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
                 console.log('Updating order:', order.id, 'with items:', updatedItems.length, 'new total:', newTotal);
 
-                const response = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+                const response = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
 
                     method: 'PUT',
 
@@ -453,7 +453,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
             
 
-            const deleteResponse = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+            const deleteResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
 
                 method: 'DELETE',
 
@@ -503,7 +503,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
         try {
 
-            await fetch(`http://localhost:3001/api/orders/${orderId}`, {
+            await fetch(`https://hotel-pos-system.onrender.com/api/orders/${orderId}`, {
 
                 method: 'PUT',
 

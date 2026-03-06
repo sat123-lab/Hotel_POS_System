@@ -28,7 +28,7 @@ const MenuManagement = ({ locationSettings }) => {
     const fetchMenuItems = async () => {
         setIsLoading(true);
         try {
-            const response = await fetch('http://localhost:3001/api/menu', {
+            const response = await fetch('https://hotel-pos-system.onrender.com/api/menu', {
                 headers: {
                     'Authorization': `Bearer ${localStorage.getItem('authToken')}`
                 }
@@ -99,7 +99,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleAddMenuItem = async (item) => {
         try {
             console.log('Adding new menu item:', item);
-            const response = await fetch('http://localhost:3001/api/menu', {
+            const response = await fetch('https://hotel-pos-system.onrender.com/api/menu', {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -134,7 +134,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleUpdateMenuItem = async (item) => {
         try {
             console.log('Updating menu item:', item);
-            const response = await fetch(`http://localhost:3001/api/menu/${item.id}`, {
+            const response = await fetch(`https://hotel-pos-system.onrender.com/api/menu/${item.id}`, {
                 method: 'PUT',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -170,7 +170,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleDeleteItem = async (id, name) => {
         try {
             console.log('Deleting item:', id);
-            const response = await fetch(`http://localhost:3001/api/menu/${id}`, { 
+            const response = await fetch(`https://hotel-pos-system.onrender.com/api/menu/${id}`, { 
                 method: 'DELETE',
                 headers: {
                     'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -200,7 +200,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleAvailabilityToggle = async (id, isAvailable) => {
         try {
             console.log('Toggling availability for item:', id, 'to:', isAvailable);
-            const response = await fetch(`http://localhost:3001/api/menu/${id}/availability`, {
+            const response = await fetch(`https://hotel-pos-system.onrender.com/api/menu/${id}/availability`, {
                 method: 'PUT',
                 headers: { 
                     'Content-Type': 'application/json',

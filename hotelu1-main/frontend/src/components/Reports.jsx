@@ -332,7 +332,7 @@ const Reports = ({ locationSettings }) => {
         try {
             if (!isRefreshing) setIsLoading(true);
             console.log('Fetching report data for dates:', { startDate, endDate, reportType });
-            const res = await fetch(`http://localhost:3001/api/orders?startDate=${startDate}&endDate=${endDate}`);
+            const res = await fetch(`https://hotel-pos-system.onrender.com/api/orders?startDate=${startDate}&endDate=${endDate}`);
             if (!res.ok) {
                 console.error('Server error:', res.status, res.statusText);
                 setReportData({

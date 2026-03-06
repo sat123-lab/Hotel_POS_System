@@ -33,7 +33,7 @@ const QRManagement = ({ locationSettings }) => {
 
     useEffect(() => {
 
-        fetch('http://localhost:3001/api/menu')
+        fetch('https://hotel-pos-system.onrender.com/api/menu')
 
             .then(res => res.json())
 

@@ -18,7 +18,7 @@ const PermissionManagement = ({ token }) => {
   const fetchRoles = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:3001/api/roles', {
+      const response = await fetch('https://hotel-pos-system.onrender.com/api/roles', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
@@ -33,7 +33,7 @@ const PermissionManagement = ({ token }) => {
   // Fetch permissions
   const fetchPermissions = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/permissions', {
+      const response = await fetch('https://hotel-pos-system.onrender.com/api/permissions', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
@@ -52,7 +52,7 @@ const PermissionManagement = ({ token }) => {
     }
 
     try {
-      const response = await fetch('http://localhost:3001/api/roles', {
+      const response = await fetch('https://hotel-pos-system.onrender.com/api/roles', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -83,7 +83,7 @@ const PermissionManagement = ({ token }) => {
   // Update role permissions
   const handleUpdateRolePermissions = async (roleId) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/roles/${roleId}/permissions`, {
+      const response = await fetch(`https://hotel-pos-system.onrender.com/api/roles/${roleId}/permissions`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
