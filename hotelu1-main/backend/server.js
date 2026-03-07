@@ -383,21 +383,63 @@ const sequelize = require("./models/sequelize");
 
 let dbConnected = false;
 
-
 async function startServer() {
   try {
-    await sequelize.authenticate();
-    console.log("MySQL connection established.");
-    await sequelize.sync();
-    console.log("Database tables synchronized.");
+    // Railway provides these environment variables automatically
+    const sequelizeConfig = {
+      host: process.env.RAILWAY_PRIVATE_DOMAIN || process.env.DB_HOST || 'localhost',
+      port: process.env.DB_PORT || 3306,
+      dialect: 'mysql',
+      logging: process.env.NODE_ENV === 'development' ? console.log : false,
+      dialectOptions: {
+        ssl: process.env.RAILWAY_ENVIRONMENT ? {
+          require: true,
+          rejectUnauthorized: false,
+        } : false,
+      },
+    };
+
+    // Use Railway database URL if available, otherwise use individual env vars
+    if (process.env.DATABASE_URL) {
+      const sequelizeUrl = new Sequelize(process.env.DATABASE_URL, {
+        dialect: 'mysql',
+        logging: process.env.NODE_ENV === 'development' ? console.log : false,
+        dialectOptions: {
+          ssl: {
+            require: true,
+            rejectUnauthorized: false,
+          },
+        },
+      });
+      
+      await sequelizeUrl.authenticate();
+      console.log("MySQL connection established via DATABASE_URL.");
+      await sequelizeUrl.sync();
+      console.log("Database tables synchronized.");
+    } else {
+      // Use individual environment variables
+      const sequelizeDefault = new Sequelize(
+        process.env.DB_NAME || 'hotel_pos',
+        process.env.DB_USER || 'root',
+        process.env.DB_PASSWORD || '',
+        sequelizeConfig
+      );
+      
+      await sequelizeDefault.authenticate();
+      console.log("MySQL connection established with environment variables.");
+      await sequelizeDefault.sync();
+      console.log("Database tables synchronized.");
+    }
+    
     app.listen(process.env.PORT || 3001, () => {
-      console.log("Server running");
+      console.log("Server running on port", process.env.PORT || 3001);
     });
     dbConnected = true;
   } catch (err) {
     console.error("Database startup error:", err);
-    console.log("Server will run in demo mode with mock data.");
+    console.error("Server cannot start without database connection.");
     dbConnected = false;
+    process.exit(1); // Exit if database connection fails
   }
 }
 
@@ -471,30 +513,16 @@ const optionalToken = (req, res, next) => {
 // Login Endpoint
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
+  console.log("Login attempt:", { username, password: "***" });
+  
   try {
-    // Check default credentials first
-    if (
-      defaultUsers[username] &&
-      defaultUsers[username].password === password
-    ) {
-      const user = {
-        username,
-        role: defaultUsers[username].role,
-        name: defaultUsers[username].name,
-      };
-      const token = jwt.sign(user, JWT_SECRET, { expiresIn: "24h" });
-      return res.json({
-        success: true,
-        user,
-        token,
-      });
-    }
-
+    // Only allow database authentication
     if (!dbConnected) {
-      // If not default user and no database, deny access
-      return res.status(401).json({ message: "Invalid credentials" });
+      console.log("Database not connected - login unavailable");
+      return res.status(500).json({ message: "Database connection unavailable" });
     }
 
+    // Try database authentication only
     const user = await User.findOne({ where: { username } });
     if (user && (await bcrypt.compare(password, user.password))) {
       const userData = {
@@ -503,15 +531,18 @@ app.post("/api/login", async (req, res) => {
         name: user.name,
       };
       const token = jwt.sign(userData, JWT_SECRET, { expiresIn: "24h" });
+      console.log("Login successful with database user:", username);
       res.json({
         success: true,
         user: userData,
         token,
       });
     } else {
+      console.log("Invalid credentials for user:", username);
       res.status(401).json({ message: "Invalid credentials" });
     }
   } catch (err) {
+    console.error("Login error:", err);
     res.status(500).json({ message: "Login error", error: err.message });
   }
 });
