@@ -28,7 +28,7 @@ const Login = ({ onLogin }) => {
 
         try {
 
-            const API_URL = process.env.REACT_APP_API_URL || 'https://hotel-pos-system.onrender.com';
+            const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3002';
 
             console.log("Attempting login to:", API_URL);
 
