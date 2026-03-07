@@ -105,7 +105,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleAddMenuItem = async (item) => {
         try {
             console.log('Adding new menu item:', item);
-            const response = await authFetch('https://hotel-pos-system.onrender.com/api/menu', {
+            const response = await authFetch('/api/menu', {
                 method: 'POST',
                 body: JSON.stringify(item)
             });
@@ -136,7 +136,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleUpdateMenuItem = async (item) => {
         try {
             console.log('Updating menu item:', item);
-            const response = await authFetch(`https://hotel-pos-system.onrender.com/api/menu/${item.id}`, {
+            const response = await authFetch(`/api/menu/${item.id}`, {
                 method: 'PUT',
                 body: JSON.stringify(item)
             });
@@ -168,7 +168,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleDeleteItem = async (id, name) => {
         try {
             console.log('Deleting item:', id);
-            const response = await authFetch(`https://hotel-pos-system.onrender.com/api/menu/${id}`, { 
+            const response = await authFetch(`/api/menu/${id}`, { 
                 method: 'DELETE'
             });
             
@@ -195,7 +195,7 @@ const MenuManagement = ({ locationSettings }) => {
     const handleAvailabilityToggle = async (id, isAvailable) => {
         try {
             console.log('Toggling availability for item:', id, 'to:', isAvailable);
-            const response = await authFetch(`https://hotel-pos-system.onrender.com/api/menu/${id}/availability`, {
+            const response = await authFetch(`/api/menu/${id}/availability`, {
                 method: 'PUT',
                 body: JSON.stringify({ isAvailable })
             });

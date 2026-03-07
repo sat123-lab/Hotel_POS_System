@@ -55,15 +55,25 @@ const BillingPage = ({ locationSettings }) => {
 
 
     const fetchDeliveredOrders = () => {
-        authFetch(`${API_URL}/api/orders?status=delivered`)
+        // Fetch orders that are ready for billing (ready or delivered status)
+        authFetch('/api/orders?status=ready')
             .then(res => res.json())
-            .then(data => {
-                const filtered = Array.isArray(data) ? data : [];
-                // Filter only delivered orders - show all tables
-                setOrders(filtered);
+            .then(readyOrders => {
+                const ready = Array.isArray(readyOrders) ? readyOrders : [];
+                
+                // Also fetch delivered orders
+                return authFetch('/api/orders?status=delivered')
+                    .then(res => res.json())
+                    .then(deliveredOrders => {
+                        const delivered = Array.isArray(deliveredOrders) ? deliveredOrders : [];
+                        
+                        // Combine both ready and delivered orders
+                        const allBillableOrders = [...ready, ...delivered];
+                        setOrders(allBillableOrders);
+                    });
             })
             .catch(err => {
-                console.error('Error fetching delivered orders:', err);
+                console.error('Error fetching billable orders:', err);
                 setOrders([]);
             });
     };
@@ -72,7 +82,7 @@ const BillingPage = ({ locationSettings }) => {
 
     const fetchBillForOrder = async (orderId) => {
         try {
-            const response = await authFetch(`${API_URL}/api/orders/${orderId}/bill`);
+            const response = await authFetch(`/api/orders/${orderId}/bill`);
             if (response.ok) {
                 const bill = await response.json();
                 setSelectedBill(bill);
@@ -428,10 +438,6 @@ const BillingPage = ({ locationSettings }) => {
 
         }
 
-
-
-        const token = localStorage.getItem('authToken');
-
         try {
 
             if (selectedOrder.orderIds) {
@@ -442,33 +448,31 @@ const BillingPage = ({ locationSettings }) => {
 
                 const failedOrders = [];
 
-                
-
                 for (const orderId of selectedOrder.orderIds) {
 
                     try {
 
-                        const response = await fetch(`${API_URL}/api/orders/${orderId}/complete-payment`, {
+                        const response = await authFetch(`/api/orders/${orderId}/complete-payment`, {
 
                             method: 'PUT',
 
-                            headers: {
+                            body: JSON.stringify({
 
-                                'Content-Type': 'application/json',
+                                payment_method: paymentMethod,
 
-                                'Authorization': `Bearer ${token}`
+                                paid_amount: selectedOrder.grandTotal,
 
-                            },
+                                discount: discountPercent,
 
-                            body: JSON.stringify({ payment_method: paymentMethod })
+                                tax_rate: taxRate
+
+                            })
 
                         });
 
-
-
                         if (!response.ok) {
 
-                            throw new Error(`Failed to complete payment for Order #${orderId}`);
+                            throw new Error(`Failed to complete payment for order ${orderId}`);
 
                         }
 
@@ -478,33 +482,19 @@ const BillingPage = ({ locationSettings }) => {
 
                         failedOrders.push(orderId);
 
-                        console.error(`Error completing payment for Order #${orderId}:`, error);
-
                     }
 
                 }
 
-
-
                 if (allSuccessful) {
 
-                    setNotification({ 
-
-                        message: `Payment completed for ${selectedOrder.orderCount} orders (${paymentMethod}).`, 
-
-                        type: 'success' 
-
-                    });
+                    setNotification({ message: `Payment completed for ${selectedOrder.orderCount} orders (${paymentMethod}).`, type: 'success' });
 
                     setTimeout(() => setNotification(null), 3000);
 
-                    
-
                     handlePrintBill();
 
-                    
-
-                    // Remove all orders from the list
+                    // Remove from orders list
 
                     setOrders(prev => prev.filter(o => !selectedOrder.orderIds.includes(o.id)));
 
@@ -516,13 +506,7 @@ const BillingPage = ({ locationSettings }) => {
 
                 } else {
 
-                    setNotification({ 
-
-                        message: `Partial success: Failed to complete payment for orders: ${failedOrders.join(', ')}`,
-
-                        type: 'warning' 
-
-                    });
+                    setNotification({ message: `Payment failed for orders: ${failedOrders.join(', ')}`, type: 'error' });
 
                 }
 
@@ -530,57 +514,47 @@ const BillingPage = ({ locationSettings }) => {
 
                 // Handle single order payment (existing logic)
 
-                const response = await fetch(`${API_URL}/api/orders/${selectedOrder.id}/complete-payment`, {
+                const response = await authFetch(`/api/orders/${selectedOrder.id}/complete-payment`, {
 
                     method: 'PUT',
 
-                    headers: {
+                    body: JSON.stringify({
 
-                        'Content-Type': 'application/json',
+                        payment_method: paymentMethod,
 
-                        'Authorization': `Bearer ${token}`
+                        paid_amount: selectedOrder.total,
 
-                    },
+                        discount: discountPercent,
 
-                    body: JSON.stringify({ payment_method: paymentMethod })
+                        tax_rate: taxRate
+
+                    })
 
                 });
 
+                if (response.ok) {
 
+                    setNotification({ message: `Payment completed for Order #${selectedOrder.id} (${paymentMethod}).`, type: 'success' });
 
-                if (!response.ok) {
+                    setTimeout(() => setNotification(null), 3000);
 
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    handlePrintBill();
+
+                    // Remove from orders list
+
+                    setOrders(prev => prev.filter(o => o.id !== selectedOrder.id));
+
+                    setSelectedOrder(null);
+
+                    setSelectedBill(null);
+
+                    setPaymentMethod('cash');
+
+                } else {
+
+                    throw new Error('Payment failed');
 
                 }
-
-
-
-                setNotification({ 
-
-                    message: `Payment completed for Order #${selectedOrder.id} (${paymentMethod}).`, 
-
-                    type: 'success' 
-
-                });
-
-                setTimeout(() => setNotification(null), 3000);
-
-                
-
-                handlePrintBill();
-
-                
-
-                // Remove from orders list
-
-                setOrders(prev => prev.filter(o => o.id !== selectedOrder.id));
-
-                setSelectedOrder(null);
-
-                setSelectedBill(null);
-
-                setPaymentMethod('cash');
 
             }
 

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { TrendingUp, Users, DollarSign, Package, Calendar, BarChart3, PieChart as PieChartIcon, ShoppingCart, TrendingDown, Activity, Download, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { io } from 'socket.io-client';
-import { authFetch } from '../utils/api';
+import { authFetch, API_URL } from '../utils/api';
 
 
 

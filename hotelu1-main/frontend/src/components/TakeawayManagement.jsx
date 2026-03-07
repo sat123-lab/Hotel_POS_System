@@ -400,7 +400,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
         try {
 
-            const deleteResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
+            const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
                 method: 'DELETE'
             });
 

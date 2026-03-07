@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Menu, X, Clock, Zap, MapPin, Users, QrCode, TrendingUp, Utensils, CreditCard } from 'lucide-react';
 
-const LandingPage = ({ onNavigateToLogin }) => {
+const LandingPage = () => {
+  const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -13,6 +15,10 @@ const LandingPage = ({ onNavigateToLogin }) => {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  const handleNavigateToLogin = () => {
+    navigate('/login');
+  };
 
   return (
     <div className="min-h-screen relative">
@@ -33,7 +39,7 @@ const LandingPage = ({ onNavigateToLogin }) => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
-            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => { window.history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }}>
+            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => navigate('/')}>
               <div className="text-3xl text-orange-400 restaurant-glow"><Utensils size={32} /></div>
               <div>
                 <span className="text-3xl font-bold text-white restaurant-font restaurant-text-shadow">POS System</span>
@@ -49,7 +55,7 @@ const LandingPage = ({ onNavigateToLogin }) => {
             {/* CTA Buttons */}
             <div className="hidden md:flex items-center space-x-4">
               <button
-                onClick={onNavigateToLogin}
+                onClick={handleNavigateToLogin}
                 className="px-6 py-2.5 rounded-lg border-2 border-orange-500 text-orange-400 font-semibold hover:bg-orange-500 hover:text-white transition"
               >
                 Staff Login
@@ -70,7 +76,7 @@ const LandingPage = ({ onNavigateToLogin }) => {
             <div className="md:hidden bg-black bg-opacity-90 backdrop-blur-md border-t border-gray-600 p-4 space-y-3">
               <a href="#features" className="block text-white font-bold py-2 font-medium">Features</a>
               <button
-                onClick={() => { setMobileMenuOpen(false); onNavigateToLogin(); }}
+                onClick={() => { setMobileMenuOpen(false); handleNavigateToLogin(); }}
                 className="w-full px-4 py-2.5 rounded-lg border-2 border-orange-500 text-orange-400 font-semibold hover:bg-orange-500 hover:text-white"
               >
                 Staff Login
@@ -97,7 +103,7 @@ const LandingPage = ({ onNavigateToLogin }) => {
               </p>
               <div className="flex flex-col sm:flex-row gap-4">
                 <button
-                  onClick={onNavigateToLogin}
+                  onClick={handleNavigateToLogin}
                   className="flex items-center justify-center gap-2 px-8 py-4 rounded-xl border-2 border-orange-500 text-orange-400 font-bold text-lg hover:bg-orange-500 hover:text-white transition"
                 >
                   <span>Staff Portal</span>

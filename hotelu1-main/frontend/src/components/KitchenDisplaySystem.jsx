@@ -155,25 +155,33 @@ const KitchenDisplaySystem = () => {
 
     const fetchOrders = async () => {
 
-        const response = await authFetch('/api/orders')
-
-            .then(res => res.json())
-
-            .then(data => setOrders(data.filter(o => 
-
+        try {
+            const response = await authFetch('/api/orders');
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            setOrders(data.filter(o => 
                 o.status !== 'completed' && 
-
                 o.status !== 'NOT_AVAILABLE' && 
-
                 o.status !== 'delivered' &&
-
                 o.items && 
-
                 o.items.length > 0 // Filter out empty orders
-
-            )))
-
-            .catch(err => console.error('Error fetching orders:', err));
+            ));
+        } catch (err) {
+            console.error('Error fetching orders:', err);
+            // Don't show notification for every fetch error to avoid spam
+            // Only show if it's a network error or server error
+            if (err.message && !err.message.includes('401')) {
+                setNotification({ 
+                    message: 'Error loading orders. Backend may be unavailable.', 
+                    type: 'error' 
+                });
+                setTimeout(() => setNotification(null), 3000);
+            }
+        }
 
     };
 
@@ -227,18 +235,9 @@ const KitchenDisplaySystem = () => {
 
             if (newStatus === 'NOT_AVAILABLE') {
 
-                response = await fetch(`/api/orders/${orderId}/not-available`, {
-
+                response = await authFetch(`/api/orders/${orderId}/not-available`, {
                     method: 'PUT',
-
-                    headers: { 
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    }
-
+                    body: JSON.stringify({})
                 });
 
             } else if (newStatus === 'completed') {
@@ -247,20 +246,9 @@ const KitchenDisplaySystem = () => {
 
                 // This will set status to 'delivered' to keep it in live orders until payment
 
-                response = await fetch(`/api/orders/${orderId}/confirm-delivery`, {
-
+                response = await authFetch(`/api/orders/${orderId}/confirm-delivery`, {
                     method: 'PUT',
-
-                    headers: { 
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
                     body: JSON.stringify({ tax_rate: 0.05 })
-
                 });
 
                 // Update local status to 'delivered' to remove from KDS display
@@ -271,20 +259,9 @@ const KitchenDisplaySystem = () => {
 
                 // For other status changes, use the regular update endpoint
 
-                response = await fetch(`/api/orders/${orderId}`, {
-
+                response = await authFetch(`/api/orders/${orderId}`, {
                     method: 'PUT',
-
-                    headers: { 
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
                     body: JSON.stringify({ status: newStatus })
-
                 });
 
             }
@@ -349,123 +326,63 @@ const KitchenDisplaySystem = () => {
 
     };
 
-
-
     const handleRemoveItem = async (orderId, itemIndex, itemName) => {
 
-        const token = localStorage.getItem('token');
-
         try {
-
             // Get the current order
-
             const order = orders.find(o => o.id === orderId);
 
             if (!order) {
-
                 setNotification({ message: 'Order not found', type: 'error' });
-
                 return;
-
             }
-
-
 
             // Remove the item from the items array
-
             const updatedItems = order.items.filter((_, index) => index !== itemIndex);
-
             
-
             // Calculate new total
-
             const newTotal = updatedItems.reduce((sum, item) => sum + (item.price * (item.qty || item.quantity)), 0);
 
-
-
             // Update the order with the removed item
-
-            const response = await fetch(`/api/orders/${orderId}`, {
-
+            const response = await authFetch(`/api/orders/${orderId}`, {
                 method: 'PUT',
-
-                headers: { 
-
-                    'Content-Type': 'application/json',
-
-                    'Authorization': token ? `Bearer ${token}` : ''
-
-                },
-
                 body: JSON.stringify({ 
-
                     items: updatedItems,
-
                     total: newTotal
-
                 })
-
             });
-
-
 
             if (!response.ok) {
-
+                // Check if response is HTML (error page)
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Expected JSON but got HTML:', text.substring(0, 200));
+                    throw new Error('Server error: Backend returned HTML instead of JSON');
+                }
+                
                 const errorData = await response.json();
-
                 throw new Error(errorData.message || 'Failed to remove item');
-
             }
-
-
 
             // Update local state
-
             setOrders(prev => prev.map(order => 
-
                 order.id === orderId 
-
                     ? { ...order, items: updatedItems, total: newTotal }
-
                     : order
-
             ));
 
-
-
-            // Send notification to waiter about unavailable item
-
-            setNotification({ 
-
-                message: `${itemName} - this item not available`, 
-
-                type: 'warning' 
-
-            });
-
-
-
-            // If order has no items left, mark as NOT_AVAILABLE
-
-            if (updatedItems.length === 0) {
-
-                await handleUpdateOrderStatus(orderId, 'NOT_AVAILABLE');
-
-            }
-
-
+            setNotification({ message: `${itemName} removed from order`, type: 'success' });
+            setTimeout(() => setNotification(null), 3000);
 
         } catch (error) {
-
             console.error('Error removing item:', error);
-
-            setNotification({ message: `Error: ${error.message || 'Could not remove item'}`, type: 'error' });
-
+            setNotification({ 
+                message: `Error removing item: ${error.message || 'Please try again'}`, 
+                type: 'error' 
+            });
+            setTimeout(() => setNotification(null), 3000);
         }
-
-
-
-        setTimeout(() => setNotification(null), 3000);
 
     };
 

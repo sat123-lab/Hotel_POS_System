@@ -9,7 +9,7 @@ const InventoryManagement = () => {
 
     const fetchInventory = async () => {
         try {
-            const data = await fetchWithErrorHandling('https://hotel-pos-system.onrender.com/api/inventory');
+            const data = await fetchWithErrorHandling('/api/inventory');
             setInventory(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error('Error fetching inventory:', error);
@@ -27,15 +27,31 @@ const InventoryManagement = () => {
 
     const handleAddItem = async (e) => {
         e.preventDefault();
+        
+        // Validate input
+        if (!newItem.name || !newItem.currentStock || !newItem.minStock) {
+            setNotification({ 
+                message: 'Please fill in all fields', 
+                type: 'error' 
+            });
+            setTimeout(() => setNotification(null), 3000);
+            return;
+        }
+        
         try {
-            const added = await fetchWithErrorHandling('https://hotel-pos-system.onrender.com/api/inventory', {
+            console.log('Adding inventory item:', newItem);
+            
+            const added = await fetchWithErrorHandling('/api/inventory', {
                 method: 'POST',
                 body: JSON.stringify({
-                    name: newItem.name,
+                    name: newItem.name.trim(),
                     currentStock: parseFloat(newItem.currentStock),
                     minStock: parseFloat(newItem.minStock)
                 })
             });
+            
+            console.log('Inventory item added:', added);
+            
             setInventory(prev => [...prev, added]);
             setNotification({ 
                 message: 'Inventory item added successfully!', 
@@ -45,17 +61,30 @@ const InventoryManagement = () => {
             fetchInventory(); // Refresh the inventory list
         } catch (error) {
             console.error('Error adding inventory item:', error);
+            
+            // Provide more specific error messages
+            let errorMessage = 'Error adding inventory item';
+            if (error.message && error.message.includes('401')) {
+                errorMessage = 'Authentication error. Please login again.';
+            } else if (error.message && error.message.includes('403')) {
+                errorMessage = 'Permission denied. You do not have access to add inventory items.';
+            } else if (error.message && error.message.includes('500')) {
+                errorMessage = 'Server error. The backend may be unavailable or in demo mode.';
+            } else if (error.message) {
+                errorMessage = `Error adding inventory item: ${error.message}`;
+            }
+            
             setNotification({ 
-                message: `Error adding inventory item: ${error.message || 'Please try again'}`, 
+                message: errorMessage, 
                 type: 'error' 
             });
         }
-        setTimeout(() => setNotification(null), 3000);
+        setTimeout(() => setNotification(null), 5000);
     };
 
     const handleUpdateStock = async (id, currentStock) => {
         try {
-            const updated = await fetchWithErrorHandling(`https://hotel-pos-system.onrender.com/api/inventory/${id}`, {
+            const updated = await fetchWithErrorHandling(`/api/inventory/${id}`, {
                 method: 'PUT',
                 body: JSON.stringify({ currentStock })
             });
@@ -83,15 +112,44 @@ const InventoryManagement = () => {
                 <form onSubmit={handleAddItem} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
                     <div>
                         <label htmlFor="name" className="block text-gray-700 text-sm font-bold mb-2">Material Name</label>
-                        <input type="text" id="name" name="name" className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="e.g., Flour (kg)" required />
+                        <input 
+                            type="text" 
+                            id="name" 
+                            name="name" 
+                            value={newItem.name}
+                            onChange={(e) => setNewItem(prev => ({ ...prev, name: e.target.value }))}
+                            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
+                            placeholder="e.g., Flour (kg)" 
+                            required 
+                        />
                     </div>
                     <div>
                         <label htmlFor="stock" className="block text-gray-700 text-sm font-bold mb-2">Initial Stock</label>
-                        <input type="number" id="stock" name="stock" className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="e.g., 100" min="0" required />
+                        <input 
+                            type="number" 
+                            id="stock" 
+                            name="stock" 
+                            value={newItem.currentStock}
+                            onChange={(e) => setNewItem(prev => ({ ...prev, currentStock: e.target.value }))}
+                            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
+                            placeholder="e.g., 100" 
+                            min="0" 
+                            required 
+                        />
                     </div>
                     <div>
                         <label htmlFor="minStock" className="block text-gray-700 text-sm font-bold mb-2">Min Stock Alert</label>
-                        <input type="number" id="minStock" name="minStock" className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="e.g., 10" min="0" required />
+                        <input 
+                            type="number" 
+                            id="minStock" 
+                            name="minStock" 
+                            value={newItem.minStock}
+                            onChange={(e) => setNewItem(prev => ({ ...prev, minStock: e.target.value }))}
+                            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
+                            placeholder="e.g., 10" 
+                            min="0" 
+                            required 
+                        />
                     </div>
                     <div className="md:col-span-3 flex justify-end">
                         <button type="submit" className="btn-gradient px-6 py-2.5 transition-transform hover:scale-105">

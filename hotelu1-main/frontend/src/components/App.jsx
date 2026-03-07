@@ -18,6 +18,8 @@ import PermissionManagementNew from './PermissionManagementNew';
 import CustomerIndex from './CustomerIndex';
 import NoAccessMessage from './NoAccessMessage';
 import LandingPage from './LandingPage';
+import ProtectedRoute from './ProtectedRoute';
+import RoleBasedRoute from './RoleBasedRoute';
 
 // API utility function
 const fetchWithErrorHandling = async (url, options = {}) => {
@@ -211,6 +213,28 @@ const App = () => {
     }
   };
 
+  const MenuLayout = ({ children }) => {
+    if (!currentUser) {
+      return <Navigate to="/login" />;
+    }
+
+    return (
+      <div className="flex min-h-screen font-inter relative">
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          currentUser={currentUser}
+          locationSettings={locationSettings}
+          handleLocationChange={handleLocationChange}
+          handleLogout={handleLogout}
+        />
+        <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto">
+          {children}
+        </main>
+      </div>
+    );
+  };
+
   const DashboardLayout = () => {
     useEffect(() => {
       const user = localStorage.getItem('user');
@@ -242,18 +266,110 @@ const App = () => {
   };
 
   return (
-    <Routes>
-      <Route 
-        path="/login" 
-        element={
-          localStorage.getItem('token') && localStorage.getItem('user') ? 
-          <Navigate to="/dashboard" /> : 
-          <Login />
-        } 
-      />
-      <Route path="/dashboard" element={<DashboardLayout />} />
-      <Route path="/" element={<Navigate to="/login" />} />
-    </Routes>
+    <ErrorBoundary>
+      <Routes>
+        {/* Public Routes */}
+        <Route path="/" element={<LandingPage />} />
+        <Route 
+          path="/login" 
+          element={
+            localStorage.getItem('token') && localStorage.getItem('user') ? 
+            <Navigate to="/dashboard" /> : 
+            <Login onLogin={handleLogin} />
+          } 
+        />
+
+        {/* Protected Routes */}
+        <Route path="/dashboard" element={
+          <ProtectedRoute>
+            <DashboardLayout />
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/menu" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise']}>
+              <MenuLayout>
+                <MenuManagement locationSettings={locationSettings} />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/dinein" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise', 'waiter']}>
+              <MenuLayout>
+                <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/inventory" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise']}>
+              <MenuLayout>
+                <InventoryManagement />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/billing" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise', 'waiter']}>
+              <MenuLayout>
+                <BillingPage locationSettings={locationSettings} />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/reports" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'manager']}>
+              <MenuLayout>
+                <Reports locationSettings={locationSettings} />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/kitchen" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'chef', 'manager', 'waiter']}>
+              <MenuLayout>
+                <KitchenDisplaySystem />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/qr-management" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'manager', 'waiter']}>
+              <MenuLayout>
+                <QRManagement locationSettings={locationSettings} />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/takeaway" element={
+          <ProtectedRoute>
+            <RoleBasedRoute allowedRoles={['admin', 'manager', 'waiter']}>
+              <MenuLayout>
+                <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
+              </MenuLayout>
+            </RoleBasedRoute>
+          </ProtectedRoute>
+        } />
+
+        {/* Fallback route */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </ErrorBoundary>
   );
 };
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import {
 
@@ -9,6 +10,7 @@ import {
 
 
 const Sidebar = ({ activeTab, setActiveTab, currentUser, locationSettings, handleLocationChange, handleLogout }) => {
+  const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const toggleMobileMenu = () => {
@@ -18,6 +20,25 @@ const Sidebar = ({ activeTab, setActiveTab, currentUser, locationSettings, handl
   const handleTabClick = (tab) => {
     setActiveTab(tab);
     setIsMobileMenuOpen(false); // Close mobile menu after selection
+    
+    // Only navigate for specific routes that have dedicated pages
+    const routeMap = {
+      'menu-management': '/menu',
+      'dine-in-management': '/dinein',
+      'inventory': '/inventory',
+      'billing': '/billing',
+      'reports': '/reports',
+      'kds': '/kitchen',
+      'qr-management': '/qr-management',
+      'takeaway-management': '/takeaway'
+    };
+    
+    if (routeMap[tab]) {
+      navigate(routeMap[tab]);
+    } else {
+      // For other tabs, stay on dashboard and let activeTab control the content
+      navigate('/dashboard');
+    }
   };
 
   return (

@@ -515,50 +515,47 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
         try {
 
-            const token = localStorage.getItem('token');
-
+            console.log('Deleting empty order:', order.id);
             
-
+            // Check if we have a valid token
+            const token = localStorage.getItem('token');
+            if (!token) {
+                throw new Error('No authentication token found. Please login again.');
+            }
+            
+            console.log('Token available:', token.substring(0, 20) + '...');
+            
             const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
-
-                method: 'DELETE',
-
-                headers: {
-
-                    'Authorization': token ? `Bearer ${token}` : ''
-
-                }
-
+                method: 'DELETE'
             });
 
-
+            console.log('Delete response status:', deleteResponse.status);
 
             if (!deleteResponse.ok) {
-
+                // Check if response is HTML (error page)
+                const contentType = deleteResponse.headers.get('content-type');
+                console.log('Response content-type:', contentType);
+                
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await deleteResponse.text();
+                    console.error('Expected JSON but got HTML:', text.substring(0, 200));
+                    throw new Error('Server error: Backend returned HTML instead of JSON');
+                }
+                
                 const errorData = await deleteResponse.json().catch(() => ({}));
-
+                console.error('Error data:', errorData);
                 throw new Error(errorData.message || 'Failed to delete empty order');
-
             }
 
-
-
             // Remove from local state
-
             setActiveOrders(prev => prev.filter(o => o.id !== order.id));
-
             setNotification({ message: `Order #${order.id} deleted successfully!`, type: 'success' });
-
             setTimeout(() => setNotification(null), 3000);
 
         } catch (error) {
-
             console.error('Error deleting empty order:', error);
-
             setNotification({ message: `Error deleting order: ${error.message}`, type: 'error' });
-
             setTimeout(() => setNotification(null), 3000);
-
         }
 
     };

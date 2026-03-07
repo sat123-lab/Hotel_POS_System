@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from "react-router-dom";
 
-const Login = () => {
+const Login = ({ onLogin }) => {
     const navigate = useNavigate();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -13,7 +13,7 @@ const Login = () => {
         setError('');
         setLoading(true);
         try {
-            const response = await fetch("https://hotel-pos-system.onrender.com/api/login", {
+            const response = await fetch("/api/login", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -30,6 +30,12 @@ const Login = () => {
                         // Store user and token in localStorage
                         localStorage.setItem("token", data.token);
                         localStorage.setItem("user", JSON.stringify(data.user));
+                        
+                        // Call onLogin if provided
+                        if (onLogin) {
+                            onLogin(data.user, data.token);
+                        }
+                        
                         // Navigate to dashboard
                         navigate("/dashboard");
                     } else {
