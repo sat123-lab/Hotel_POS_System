@@ -28,7 +28,11 @@ const Login = ({ onLogin }) => {
 
         try {
 
-            const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:3001'}/api/login`, {
+            const API_URL = process.env.REACT_APP_API_URL || 'https://hotel-pos-system.onrender.com';
+
+            console.log("Attempting login to:", API_URL);
+
+            const response = await fetch(`${API_URL}/api/login`, {
 
                 method: "POST",
 
@@ -58,37 +62,29 @@ const Login = ({ onLogin }) => {
 
 
 
-                if (response.ok) {
+            if (response.ok && data.success) {
 
-                if (data.success) {
+                // Store user and token in localStorage
 
-                    // Store user and token in localStorage
+                localStorage.setItem("token", data.token);
 
-                    localStorage.setItem("token", data.token);
+                localStorage.setItem("user", JSON.stringify(data.user));
 
-                    localStorage.setItem("user", JSON.stringify(data.user));
+                
 
-                    
+                // Call onLogin if provided
 
-                    // Call onLogin if provided
+                if (onLogin) {
 
-                    if (onLogin) {
-
-                        onLogin(data.user, data.token);
-
-                    }
-
-                    
-
-                    // Navigate to dashboard
-
-                    navigate("/dashboard");
-
-                } else {
-
-                    setError("Login failed. Please try again.");
+                    onLogin(data.user, data.token);
 
                 }
+
+                
+
+                // Navigate to dashboard
+
+                navigate("/dashboard");
 
             } else {
 
@@ -97,6 +93,8 @@ const Login = ({ onLogin }) => {
             }
 
         } catch (err) {
+
+            console.error("Login error:", err);
 
             setError("Login failed. Please try again.");
 
@@ -327,6 +325,14 @@ const Login = ({ onLogin }) => {
                                     <span className="font-semibold text-white/80 text-sm">Waiter:</span>
 
                                     <span className="text-orange-300 font-mono text-sm bg-black/20 px-3 py-1 rounded-lg">waiter / pass</span>
+
+                                </div>
+
+                                <div className="flex justify-between items-center bg-white/10 p-3 rounded-xl border border-white/10 backdrop-blur-sm">
+
+                                    <span className="font-semibold text-white/80 text-sm">Chef:</span>
+
+                                    <span className="text-orange-300 font-mono text-sm bg-black/20 px-3 py-1 rounded-lg">chef / pass1</span>
 
                                 </div>
 
