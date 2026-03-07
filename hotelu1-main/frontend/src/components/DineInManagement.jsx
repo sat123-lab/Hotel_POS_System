@@ -1,18 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../utils/api';
 import API_URL from '../utils/api';
 import Notification from './Notification';
 import OrderEntryModal from './OrderEntryModal';
 import { Utensils, Clock, CheckCircle, Truck } from 'lucide-react';
 
-
-
 const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => {
+    const navigate = useNavigate();
+    
+    // Check authentication
+    useEffect(() => {
+        const token = localStorage.getItem("token");
+        if (!token) {
+            navigate("/login");
+        }
+    }, [navigate]);
 
     const [tables, setTables] = useState([
-
         { id: 'T1', status: 'available', capacity: 4 },
-
         { id: 'T2', status: 'available', capacity: 2 },
 
         { id: 'T3', status: 'available', capacity: 6 },
@@ -38,58 +44,39 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
     // Fetch orders and sync table statuses
 
-    const fetchOrdersAndSync = () => {
+    const fetchOrdersAndSync = async () => {
 
-        fetch(`${API_URL}/api/orders?type=DINE_IN`)
-
-            .then(res => {
-
-                if (!res.ok) {
-
-                    console.error('Server error:', res.status, res.statusText);
-
-                    setActiveOrders([]);
-
-                    return Promise.reject(new Error(`HTTP ${res.status}: ${res.statusText}`));
-
-                }
-
-                return res.json();
-
-            })
-
-            .then(data => {
-
-                if (!Array.isArray(data)) {
-
-                    console.error('Orders response is not an array:', data);
-
-                    setActiveOrders([]);
-
-                    return;
-
-                }
-
-                const filteredOrders = data.filter(o => o.status !== 'completed' && o.status !== 'delivered');
-
-                setActiveOrders(filteredOrders);
-
-                
-
-                // Update table statuses based on orders
-
-                updateTableStatuses(filteredOrders);
-
-            })
-
-            .catch(err => {
-
-                console.error('Failed to fetch DINE_IN orders:', err);
-
+        try {
+            const response = await authFetch('/api/orders?type=DINE_IN')
+            
+            if (!response.ok) {
+                console.error('Server error:', response.status, response.statusText);
                 setActiveOrders([]);
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
 
-            });
+            const data = await response.json();
 
+            if (!Array.isArray(data)) {
+                console.error('Orders response is not an array:', data);
+                setActiveOrders([]);
+                return;
+            }
+
+            const filteredOrders = data.filter(o => o.status !== 'completed' && o.status !== 'delivered');
+
+            setActiveOrders(filteredOrders);
+
+            // Update table statuses based on orders
+            updateTableStatuses(filteredOrders);
+
+        } catch (err) {
+
+            console.error('Failed to fetch DINE_IN orders:', err);
+
+            setActiveOrders([]);
+
+        }
     };
 
 
@@ -259,7 +246,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
         if (order.status === 'NOT_AVAILABLE') {
 
             try {
-                const deleteResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${order.id}`, {
+                const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
                     method: 'DELETE'
                 });
 
@@ -291,7 +278,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
 
 
-                const createResponse = await authFetch('https://hotel-pos-system.onrender.com/api/orders', {
+                const createResponse = await authFetch('/api/orders', {
                     method: 'POST',
                     body: JSON.stringify(newOrderPayload)
                 });
@@ -360,7 +347,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
         try {
 
-            const token = localStorage.getItem('authToken');
+            const token = localStorage.getItem('token');
 
             const updatedItems = order.items.filter((_, index) => index !== itemIndex);
 
@@ -378,7 +365,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 // First update order to have empty items and total = 0
 
-                const updateResponse = await fetch(`${API_URL}/api/orders/${order.id}`, {
+                const updateResponse = await authFetch(`/api/orders/${order.id}`, {
 
                     method: 'PUT',
 
@@ -418,7 +405,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 console.log('Deleting empty dine-in order:', order.id, 'with total: 0');
 
-                const deleteResponse = await fetch(`${API_URL}/api/orders/${order.id}`, {
+                const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
 
                     method: 'DELETE',
 
@@ -456,7 +443,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 console.log('Updating dine-in order:', order.id, 'with items:', updatedItems.length, 'new total:', newTotal);
 
-                const response = await fetch(`${API_URL}/api/orders/${order.id}`, {
+                const response = await authFetch(`/api/orders/${order.id}`, {
 
                     method: 'PUT',
 
@@ -528,11 +515,11 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
         try {
 
-            const token = localStorage.getItem('authToken');
+            const token = localStorage.getItem('token');
 
             
 
-            const deleteResponse = await fetch(`${API_URL}/api/orders/${order.id}`, {
+            const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
 
                 method: 'DELETE',
 
@@ -592,7 +579,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                 // Complete the order
 
-                await fetch(`${API_URL}/api/orders/${tableOrder.id}`, {
+                await authFetch(`/api/orders/${tableOrder.id}`, {
 
                     method: 'PUT',
 

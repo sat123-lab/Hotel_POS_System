@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authFetch } from '../utils/api';
 import Notification from './Notification';
 
 const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, nextOrderId, setNextOrderId, orderType, initialOrder }) => {
@@ -7,7 +8,7 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
     const [notification, setNotification] = useState(null);
 
     useEffect(() => {
-        fetch('https://hotel-pos-system.onrender.com/api/menu')
+        authFetch('https://hotel-pos-system.onrender.com/api/menu')
             .then(res => res.json())
             .then(data => {
                 console.log('Raw menu data from API:', data);
@@ -122,19 +123,13 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
         if (initialOrder && initialOrder.id) {
             if (initialOrder.table_name === 'Takeaway') {
                 // For Takeaway, update the existing order with all items (existing + new)
-                const token = localStorage.getItem('authToken');
-                
                 try {
                     // Combine all items (existing + new)
                     const allItems = Object.values(cart);
                     const newTotal = allItems.reduce((sum, item) => sum + (item.price * (item.quantity || item.qty || 1)), 0);
 
-                    const updateResponse = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${initialOrder.id}`, {
+                    const updateResponse = await authFetch(`https://hotel-pos-system.onrender.com/api/orders/${initialOrder.id}`, {
                         method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                        },
                         body: JSON.stringify({
                             items: allItems,
                             total: newTotal,
@@ -174,23 +169,15 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
         // For new orders (not additional items), proceed with normal flow
         console.log('Sending order data:', newOrder);
         try {
-            const token = localStorage.getItem('authToken');
             const url = 'https://hotel-pos-system.onrender.com/api/orders';
             const method = 'POST';
 
-            const headers = {
-                'Content-Type': 'application/json',
-                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            };
-
             console.log('Request URL:', url);
             console.log('Request method:', method);
-            console.log('Request headers:', headers);
             console.log('Request body:', newOrder);
 
-            const res = await fetch(url, {
+            const res = await authFetch(url, {
                 method,
-                headers,
                 body: JSON.stringify(newOrder)
             });
 

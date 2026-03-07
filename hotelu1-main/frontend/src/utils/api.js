@@ -3,7 +3,7 @@ const API_URL = "https://hotel-pos-system.onrender.com";
 export const authFetch = (url, options = {}) => {
   const token = localStorage.getItem("token");
 
-  return fetch(url, {
+  return fetch(`${API_URL}${url}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -34,7 +34,7 @@ export const fetchWithErrorHandling = async (url, options = {}) => {
       headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const response = await fetch(url, {
+    const response = await fetch(`${API_URL}${url}`, {
       ...options,
       headers,
     });

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authFetch } from '../utils/api';
 import { Utensils, CreditCard, Clock, CheckCircle, Truck } from 'lucide-react';
 
 const SimpleMenu = ({ tableId, onOrderPlaced }) => {
@@ -22,7 +23,7 @@ const SimpleMenu = ({ tableId, onOrderPlaced }) => {
 
   const fetchMenu = async () => {
     try {
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/menu');
+      const response = await authFetch('https://hotel-pos-system.onrender.com/api/menu');
       const data = await response.json();
       // Filter out items that are not available
       const availableMenu = data.filter(item => item.isAvailable === true);
@@ -42,7 +43,7 @@ const SimpleMenu = ({ tableId, onOrderPlaced }) => {
 
   const fetchActiveOrders = async () => {
     try {
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/orders?type=DINE_IN');
+      const response = await authFetch('https://hotel-pos-system.onrender.com/api/orders?type=DINE_IN');
       const data = await response.json();
       if (Array.isArray(data)) {
         // Filter orders for this table and exclude completed orders
@@ -107,9 +108,8 @@ const SimpleMenu = ({ tableId, onOrderPlaced }) => {
     };
 
     try {
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/orders', {
+      const response = await authFetch('https://hotel-pos-system.onrender.com/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orderData)
       });
 

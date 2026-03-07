@@ -469,7 +469,7 @@ const optionalToken = (req, res, next) => {
 };
 
 // Login Endpoint
-app.post("/login", async (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
     // Check default credentials first
@@ -484,15 +484,15 @@ app.post("/login", async (req, res) => {
       };
       const token = jwt.sign(user, JWT_SECRET, { expiresIn: "24h" });
       return res.json({
-        message: "Login successful",
-        token,
+        success: true,
         user,
+        token,
       });
     }
 
     if (!dbConnected) {
       // If not default user and no database, deny access
-      return res.status(401).json({ message: "Invalid username or password" });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
     const user = await User.findOne({ where: { username } });
@@ -504,12 +504,12 @@ app.post("/login", async (req, res) => {
       };
       const token = jwt.sign(userData, JWT_SECRET, { expiresIn: "24h" });
       res.json({
-        message: "Login successful",
-        token,
+        success: true,
         user: userData,
+        token,
       });
     } else {
-      res.status(401).json({ message: "Invalid username or password" });
+      res.status(401).json({ message: "Invalid credentials" });
     }
   } catch (err) {
     res.status(500).json({ message: "Login error", error: err.message });

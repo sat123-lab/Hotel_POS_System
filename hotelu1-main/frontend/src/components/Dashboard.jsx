@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { TrendingUp, Users, DollarSign, Package, Calendar, BarChart3, PieChart as PieChartIcon, ShoppingCart, TrendingDown, Activity, Download, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { io } from 'socket.io-client';
-import API_URL from '../utils/api';
+import { authFetch } from '../utils/api';
 
 
 
@@ -17,8 +17,8 @@ const Dashboard = ({ locationSettings }) => {
     // Authentication check
     const navigate = useNavigate();
     useEffect(() => {
-        const user = localStorage.getItem("currentUser");
-        const token = localStorage.getItem("authToken");
+        const user = localStorage.getItem("user");
+        const token = localStorage.getItem("token");
         if (!user || !token) {
             navigate("/login");
         }
@@ -122,7 +122,7 @@ const Dashboard = ({ locationSettings }) => {
         try {
             if (!isRefreshing) setIsLoading(true);
             
-            const res = await fetch(`${API_URL}/api/orders?date=${selectedDate}`);
+            const res = await authFetch(`/api/orders?date=${selectedDate}`);
             
             if (!res.ok) {
                 console.error('Server error:', res.status, res.statusText);
@@ -165,7 +165,7 @@ const Dashboard = ({ locationSettings }) => {
 
             let liveOrders = 0;
             if (selectedDate === todayLocalDate) {
-                const liveOrdersRes = await fetch(`${API_URL}/api/orders/live-count`);
+                const liveOrdersRes = await authFetch('/api/orders/live-count');
                 if (liveOrdersRes.ok) {
                     const liveOrdersData = await liveOrdersRes.json();
                     liveOrders = liveOrdersData.count || 0;

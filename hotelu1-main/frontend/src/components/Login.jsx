@@ -26,13 +26,18 @@ const Login = () => {
 
                 if (response.ok) {
                     const data = await response.json();
-                    // Store user and token in localStorage
-                    localStorage.setItem("token", data.token);
-                    localStorage.setItem("user", JSON.stringify(data.user));
-                    // Navigate to dashboard
-                    navigate("/dashboard");
+                    if (data.success) {
+                        // Store user and token in localStorage
+                        localStorage.setItem("token", data.token);
+                        localStorage.setItem("user", JSON.stringify(data.user));
+                        // Navigate to dashboard
+                        navigate("/dashboard");
+                    } else {
+                        setError("Login failed. Please try again.");
+                    }
                 } else {
-                    setError("Login failed. Please try again.");
+                    const errorData = await response.json();
+                    setError(errorData.message || "Login failed. Please try again.");
                 }
         } catch (err) {
             setError("Login failed. Please try again.");

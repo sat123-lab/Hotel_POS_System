@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../utils/api';
 import Notification from './Notification';
 import MenuItemForm from './MenuItemForm';
 import { Plus, Edit, Trash2, Search, Filter, Package, DollarSign, RefreshCw, ChefHat, Utensils } from 'lucide-react';
 
 const MenuManagement = ({ locationSettings }) => {
+    const navigate = useNavigate();
+    
+    // Check authentication
+    useEffect(() => {
+        const token = localStorage.getItem("token");
+        if (!token) {
+            navigate("/login");
+        }
+    }, [navigate]);
     const [menuItems, setMenuItems] = useState(() => []);
     const [notification, setNotification] = useState(null);
     const [showAddForm, setShowAddForm] = useState(false);
@@ -28,7 +38,7 @@ const MenuManagement = ({ locationSettings }) => {
     const fetchMenuItems = async () => {
         setIsLoading(true);
         try {
-            const response = await authFetch('https://hotel-pos-system.onrender.com/api/menu');
+            const response = await authFetch('/api/menu');
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);

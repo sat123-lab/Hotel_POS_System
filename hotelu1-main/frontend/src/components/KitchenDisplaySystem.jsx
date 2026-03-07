@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import Notification from './Notification';
 
 import { X } from 'lucide-react';
+import { authFetch } from '../utils/api';
 
 
 
@@ -48,15 +49,11 @@ const KitchenDisplaySystem = () => {
 
     const fetchPermissions = async () => {
 
-        const token = localStorage.getItem('authToken');
+        const token = localStorage.getItem('token');
 
         try {
 
-            const response = await fetch('/api/my-permissions', {
-
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
-
-            });
+            const response = await authFetch('/api/my-permissions');
 
             const data = await response.json();
 
@@ -74,7 +71,7 @@ const KitchenDisplaySystem = () => {
 
             // If error, allow all permissions for admin/chef roles
 
-            const token = localStorage.getItem('authToken');
+            const token = localStorage.getItem('token');
 
             if (token) {
 
@@ -156,9 +153,9 @@ const KitchenDisplaySystem = () => {
 
 
 
-    const fetchOrders = () => {
+    const fetchOrders = async () => {
 
-        fetch('/api/orders')
+        const response = await authFetch('/api/orders')
 
             .then(res => res.json())
 
@@ -218,7 +215,7 @@ const KitchenDisplaySystem = () => {
 
 
 
-        const token = localStorage.getItem('authToken');
+        const token = localStorage.getItem('token');
 
         try {
 
@@ -356,7 +353,7 @@ const KitchenDisplaySystem = () => {
 
     const handleRemoveItem = async (orderId, itemIndex, itemName) => {
 
-        const token = localStorage.getItem('authToken');
+        const token = localStorage.getItem('token');
 
         try {
 
