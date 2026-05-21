@@ -14,11 +14,15 @@
     "hard-reset": "rm -rf build node_modules package-lock.json && npm cache clean --force && npm install",
     "clear-browser-cache": "echo 'Clear browser cache manually or use developer tools'"
   },
+  "engines": {
+    "node": ">=18.0.0 <=22.x"
+  },
   "dependencies": {
     "lucide-react": "^0.263.0",
     "qrcode": "^1.5.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-is": "^19.2.6",
     "react-router-dom": "^7.13.1",
     "react-scripts": "^5.0.1",
     "recharts": "^3.0.2",
@@ -26,9 +30,36 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "ajv": "^8.20.0",
+    "ajv-keywords": "^5.1.0",
     "autoprefixer": "^10.4.14",
     "postcss": "^8.4.21",
     "tailwindcss": "^3.4.1"
+  },
+  "overrides": {
+    "fork-ts-checker-webpack-plugin": {
+      "schema-utils": "2.7.1",
+      "ajv": "6.12.6",
+      "ajv-keywords": "3.5.2"
+    },
+    "babel-loader": {
+      "schema-utils": "2.7.1",
+      "ajv": "6.12.6",
+      "ajv-keywords": "3.5.2"
+    },
+    "file-loader": {
+      "schema-utils": "2.7.1",
+      "ajv": "6.12.6",
+      "ajv-keywords": "3.5.2"
+    },
+    "schema-utils@4": {
+      "ajv": "^8.17.1",
+      "ajv-keywords": "^5.1.0"
+    },
+    "schema-utils@3": {
+      "ajv": "^6.12.6",
+      "ajv-keywords": "^3.5.2"
+    }
   },
   "browserslist": {
     "production": [

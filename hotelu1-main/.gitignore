@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
-package-lock.json
+# Lockfiles are committed for reproducible Vercel/Render builds
+# package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
