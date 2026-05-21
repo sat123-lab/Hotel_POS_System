@@ -1,3 +1,6 @@
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require("express");
 const cors = require("cors");
 const { Sequelize, Op } = require("sequelize");
@@ -10,20 +13,43 @@ const Inventory = require("./models/Inventory");
 const Permission = require("./models/Permission");
 const Role = require("./models/Role");
 const RolePermission = require("./models/RolePermission");
+const UserPermission = require("./models/UserPermission");
 const Bill = require("./models/Bill");
+const Settings = require("./models/Settings");
+const SubFranchise = require("./models/SubFranchise");
 const bcrypt = require("bcrypt");
 const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
-const port = 3001; // Choose a port for your backend
+const PORT = process.env.PORT || 3001;
 const JWT_SECRET =
   process.env.JWT_SECRET || "your-secret-key-change-in-production";
+
+const allowedOrigins = (process.env.CORS_ORIGIN || "*")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (
+      !origin ||
+      allowedOrigins.includes("*") ||
+      allowedOrigins.includes(origin)
+    ) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked: ${origin}`));
+  },
+  credentials: true,
+};
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: allowedOrigins.includes("*") ? "*" : allowedOrigins,
+    credentials: true,
   },
 });
 
@@ -33,8 +59,12 @@ const isNotAvailableStatus = (status) => {
   return normalized === "NOTAVAILABLE";
 };
 
-app.use(cors()); // Enable CORS for all routes
-app.use(express.json()); // Enable parsing JSON request bodies
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '50mb' }));
+
+app.get("/healthz", (_req, res) => {
+  res.json({ status: "ok", db: dbConnected, time: new Date().toISOString() });
+});
 
 // Mock data for demo mode
 const mockOrders = [
@@ -372,6 +402,21 @@ const mockOrders = [
 
 // ...existing code...
 
+let mockSubFranchises = [
+  {
+    id: 1,
+    name: "Downtown Branch",
+    code: "SF-DT",
+    address: "Main Road",
+    city: "Hyderabad",
+    phone: "9876543210",
+    email: "downtown@restaurant.com",
+    manager_name: "Ravi Kumar",
+    status: "active",
+    notes: "",
+  },
+];
+
 const mockInventory = [
   { id: 1, name: "Beef Patty", currentStock: 50, minStock: 10 },
   { id: 2, name: "Burger Buns", currentStock: 100, minStock: 20 },
@@ -380,73 +425,67 @@ const mockInventory = [
 ];
 
 const sequelize = require("./models/sequelize");
+const { runSafeMigrations } = require("./scripts/safeMigrations");
+const {
+  computeLocationStats,
+  computeStatsFromOrderList,
+  enrichSubFranchise,
+} = require("./utils/franchiseStats");
 
 let dbConnected = false;
 
+// Test database connection and start server
 async function startServer() {
   try {
-    // Railway provides these environment variables automatically
-    const sequelizeConfig = {
-      host: process.env.RAILWAY_PRIVATE_DOMAIN || process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 3306,
-      dialect: 'mysql',
-      logging: process.env.NODE_ENV === 'development' ? console.log : false,
-      dialectOptions: {
-        ssl: process.env.RAILWAY_ENVIRONMENT ? {
-          require: true,
-          rejectUnauthorized: false,
-        } : false,
-      },
-    };
-
-    // Use Railway database URL if available, otherwise use individual env vars
-    if (process.env.DATABASE_URL) {
-      const sequelizeUrl = new Sequelize(process.env.DATABASE_URL, {
-        dialect: 'mysql',
-        logging: process.env.NODE_ENV === 'development' ? console.log : false,
-        dialectOptions: {
-          ssl: {
-            require: true,
-            rejectUnauthorized: false,
-          },
-        },
-      });
-      
-      await sequelizeUrl.authenticate();
-      console.log("MySQL connection established via DATABASE_URL.");
-      await sequelizeUrl.sync();
-      console.log("Database tables synchronized.");
-    } else {
-      // Use individual environment variables
-      const sequelizeDefault = new Sequelize(
-        process.env.DB_NAME || 'hotel_pos',
-        process.env.DB_USER || 'root',
-        process.env.DB_PASSWORD || '',
-        sequelizeConfig
-      );
-      
-      await sequelizeDefault.authenticate();
-      console.log("MySQL connection established with environment variables.");
-      await sequelizeDefault.sync();
-      console.log("Database tables synchronized.");
-    }
+    // Test database connection
+    await sequelize.authenticate();
+    console.log("Database connected successfully");
     
-    app.listen(process.env.PORT || 3001, () => {
-      console.log("Server running on port", process.env.PORT || 3001);
-    });
+    // Create missing tables only (never alter:true — breaks users indexes)
+    await sequelize.sync();
+    await runSafeMigrations(sequelize, { SubFranchise });
+    await UserPermission.sync();
+    console.log("Database synchronized successfully");
+
     dbConnected = true;
-  } catch (err) {
-    console.error("Database startup error:", err);
+    
+    // Create or reset demo users to ensure default passwords work
+    const demoUsersList = [
+      { username: "admin", password: "admin", role: "admin", name: "Administrator" },
+      { username: "manager", password: "pass2", role: "manager", name: "Manager User" },
+      { username: "waiter", password: "pass", role: "waiter", name: "Waiter User" },
+      { username: "chef", password: "pass1", role: "chef", name: "Chef User" },
+    ];
+    
+    for (const demoUser of demoUsersList) {
+      try {
+        const existing = await User.findOne({ where: { username: demoUser.username } });
+        if (existing) {
+          // Reset password to default for demo users
+          await existing.update({ password: demoUser.password });
+          console.log(`Reset demo user password: ${demoUser.username}`);
+        } else {
+          await User.create({
+            username: demoUser.username,
+            password: demoUser.password,
+            role: demoUser.role,
+            name: demoUser.name,
+          });
+          console.log(`Created demo user: ${demoUser.username}`);
+        }
+      } catch (err) {
+        console.error(`Error with demo user ${demoUser.username}:`, err.message);
+      }
+    }
+  } catch (error) {
+    console.error("Database connection failed:", error.message);
     console.warn("Server starting without database connection - using fallback authentication");
     dbConnected = false;
-    // Don't exit - continue with fallback authentication
-    app.listen(process.env.PORT || 3001, () => {
-      console.log("Server running on port", process.env.PORT || 3001, "without database connection");
-    });
   }
+  
 }
 
-startServer();
+// DB init runs before the HTTP server starts (see boot() at end of file)
 
 // Set up associations
 Order.hasMany(OrderItem, { foreignKey: "orderId", as: "items" });
@@ -461,26 +500,177 @@ RolePermission.belongsTo(Permission, {
   as: "Permission",
 });
 Permission.hasMany(RolePermission, { foreignKey: "permissionId" });
+User.hasMany(UserPermission, { foreignKey: "userId", as: "UserPermissions" });
+UserPermission.belongsTo(User, { foreignKey: "userId" });
+UserPermission.belongsTo(Permission, { foreignKey: "permissionId", as: "Permission" });
+Permission.hasMany(UserPermission, { foreignKey: "permissionId" });
 
-// Sync all models (completely disabled to avoid key constraints issues)
-// sequelize
-//   .sync({ alter: true, force: false })
-//   .then(() => console.log("All models were synchronized successfully."))
-//   .catch((err) => console.error("Model sync error:", err));
+async function getOwnedSubFranchiseIds(userId) {
+  if (!dbConnected) {
+    return mockSubFranchises
+      .filter((s) => Number(s.owner_user_id) === Number(userId))
+      .map((s) => Number(s.id));
+  }
+  const rows = await SubFranchise.findAll({
+    where: { owner_user_id: userId },
+    attributes: ["id"],
+  });
+  return rows.map((r) => Number(r.id));
+}
 
-// Default admin credentials for demo mode
+/** All location IDs a franchise owner may access (owned + linked on user account). */
+async function getFranchiseLocationIds(user) {
+  if (!user || user.role !== "franchise") return [];
+  const ids = new Set();
+  if (user.subfranchise_id != null) {
+    ids.add(Number(user.subfranchise_id));
+  }
+  const owned = await getOwnedSubFranchiseIds(user.id);
+  owned.forEach((id) => ids.add(id));
+  return [...ids];
+}
+
+async function resolveOrderSubFranchiseId(req, bodySubfranchiseId) {
+  if (req.user?.role === "subfranchise" && req.user.subfranchise_id != null) {
+    return Number(req.user.subfranchise_id);
+  }
+  if (req.user?.role === "franchise") {
+    const locIds = await getFranchiseLocationIds(req.user);
+    if (locIds.length === 0) return null;
+    const requested =
+      bodySubfranchiseId != null ? Number(bodySubfranchiseId) : null;
+    if (requested != null && locIds.includes(requested)) return requested;
+    if (locIds.length === 1) return locIds[0];
+    return requested;
+  }
+  if (bodySubfranchiseId != null) return Number(bodySubfranchiseId);
+  if (req.user?.subfranchise_id != null) return Number(req.user.subfranchise_id);
+  return null;
+}
+
+function isMainBranchStaff(role) {
+  return role && ["admin", "manager", "waiter", "chef"].includes(role);
+}
+
+/** Apply order list filters: main branch vs franchise locations stay separate. */
+async function applyOrderScopeToWhere(whereClause, req, query = {}) {
+  const user = req?.user;
+  if (!user) {
+    whereClause.subfranchise_id = { [Op.is]: null };
+    return whereClause;
+  }
+  if (user.role === "subfranchise" && user.subfranchise_id != null) {
+    whereClause.subfranchise_id = user.subfranchise_id;
+    return whereClause;
+  }
+  if (user.role === "franchise") {
+    const locIds = await getFranchiseLocationIds(user);
+    whereClause.subfranchise_id =
+      locIds.length > 0 ? { [Op.in]: locIds } : -1;
+    return whereClause;
+  }
+  if (isMainBranchStaff(user.role)) {
+    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
+      whereClause.subfranchise_id = query.subfranchise_id;
+    } else if (query.scope !== "all") {
+      whereClause.subfranchise_id = { [Op.is]: null };
+    }
+  }
+  return whereClause;
+}
+
+async function assertOrderInScope(req, order, res) {
+  if (!req.user) return true;
+  const oid = order.subfranchise_id;
+  if (req.user.role === "subfranchise") {
+    if (Number(oid) !== Number(req.user.subfranchise_id)) {
+      res.status(403).json({ message: "Order not in your branch scope" });
+      return false;
+    }
+    return true;
+  }
+  if (req.user.role === "franchise") {
+    const locIds = await getFranchiseLocationIds(req.user);
+    if (!locIds.length || !locIds.includes(Number(oid))) {
+      res.status(403).json({ message: "Order not in your franchise scope" });
+      return false;
+    }
+    return true;
+  }
+  if (isMainBranchStaff(req.user.role)) {
+    if (oid != null) {
+      res.status(403).json({
+        message: "This order belongs to a franchise location, not main branch",
+      });
+      return false;
+    }
+    return true;
+  }
+  return true;
+}
+
+async function getPermissionsForUser(user) {
+  if (!user) return [];
+  if (user.role === "admin") return ["*"];
+
+  if (user.role === "franchise" || user.role === "subfranchise") {
+    if (!dbConnected) {
+      return mockUserPermissions[user.id] || [];
+    }
+    const userPerms = await UserPermission.findAll({
+      where: { userId: user.id },
+      include: [{ model: Permission, as: "Permission" }],
+    });
+    return userPerms.map((up) => up.Permission?.name).filter(Boolean);
+  }
+
+  if (!dbConnected) {
+    const rolePermissions = {
+      manager: [
+        "view_dashboard", "view_reports", "manage_qr_codes", "manage_orders",
+        "create_order", "view_orders", "edit_order", "view_inventory",
+        "manage_inventory", "edit_inventory", "view_billing", "process_payments",
+        "view_bills", "kitchen_display", "view_menu", "manage_menu",
+        "create_menu_item", "edit_menu_item", "delete_menu_item",
+        "mark_order_preparing", "mark_order_ready", "confirm_order_delivery",
+      ],
+      waiter: [
+        "view_dashboard", "manage_qr_codes", "create_order", "view_orders",
+        "edit_order", "view_billing", "process_payments", "kitchen_display",
+      ],
+      chef: [
+        "view_dashboard", "kitchen_display", "view_orders",
+        "mark_order_preparing", "mark_order_ready",
+      ],
+    };
+    return rolePermissions[user.role] || [];
+  }
+
+  const role = await Role.findOne({ where: { name: user.role } });
+  if (!role) return [];
+  const rolePermissions = await RolePermission.findAll({
+    where: { roleId: role.id },
+    include: [{ model: Permission, as: "Permission" }],
+  });
+  return rolePermissions.map((rp) => rp.Permission?.name).filter(Boolean);
+}
+
+// Default admin credentials for demo mode - matches login page
 const defaultUsers = {
-  admin: { password: "admin", role: "admin", name: "Admin User" },
-  franchise1: { password: "pass", role: "franchise", name: "Franchise Owner" },
-  subfranchise1: {
-    password: "pass",
-    role: "subfranchise",
-    name: "Sub Franchise Owner",
-  },
-  manager1: { password: "pass", role: "manager", name: "Manager" },
-  waiter1: { password: "pass", role: "waiter", name: "Waiter" },
-  chef1: { password: "pass", role: "chef", name: "Chef" },
+  admin: { password: "admin", role: "admin", name: "Administrator" },
+  manager: { password: "pass2", role: "manager", name: "Manager User" },
+  waiter: { password: "pass", role: "waiter", name: "Waiter User" },
+  chef: { password: "pass1", role: "chef", name: "Chef User" },
 };
+
+// Mock users array for demo mode (in-memory storage)
+let mockUsers = [
+  { id: 1, username: "admin", password: "admin", role: "admin", name: "Administrator" },
+  { id: 2, username: "manager", password: "pass2", role: "manager", name: "Manager User" },
+  { id: 3, username: "waiter", password: "pass", role: "waiter", name: "Waiter User" },
+  { id: 4, username: "chef", password: "pass1", role: "chef", name: "Chef User" },
+];
+const mockUserPermissions = {};
 
 // Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
@@ -544,9 +734,11 @@ app.post("/api/login", async (req, res) => {
           
           if (passwordMatch) {
             const userData = {
+              id: user.id,
               username: user.username,
               role: user.role,
               name: user.name,
+              subfranchise_id: user.subfranchise_id || null,
             };
             const token = jwt.sign(userData, JWT_SECRET, { expiresIn: "24h" });
             console.log("Login successful with database user:", username);
@@ -555,23 +747,41 @@ app.post("/api/login", async (req, res) => {
               user: userData,
               token,
             });
+          } else {
+            // Password doesn't match - return error (don't fall back to mockUsers)
+            console.log("Invalid password for database user:", username);
+            return res.status(401).json({ 
+              success: false,
+              message: "Invalid credentials" 
+            });
           }
+        } else {
+          // User not found in database - return error (don't fall back to mockUsers)
+          console.log("User not found in database:", username);
+          return res.status(401).json({ 
+            success: false,
+            message: "Invalid credentials" 
+          });
         }
       } catch (dbError) {
-        console.log("Database authentication failed, trying fallback:", dbError.message);
+        console.log("Database authentication error:", dbError.message);
+        return res.status(401).json({ 
+          success: false,
+          message: "Invalid credentials" 
+        });
       }
     }
     
-    // Fallback to demo users
-    const demoUser = demoUsers[username];
-    if (demoUser && demoUser.password === password) {
+    // Only use mockUsers fallback when database is NOT connected
+    const mockUser = mockUsers.find(u => u.username === username);
+    if (mockUser && mockUser.password === password) {
       const userData = {
-        username: demoUser.username,
-        role: demoUser.role,
-        name: demoUser.name,
+        username: mockUser.username,
+        role: mockUser.role,
+        name: mockUser.name,
       };
       const token = jwt.sign(userData, JWT_SECRET, { expiresIn: "24h" });
-      console.log("Login successful with demo user:", username);
+      console.log("Login successful with mock user:", username);
       return res.json({
         success: true,
         user: userData,
@@ -617,8 +827,10 @@ app.post("/api/menu", verifyToken, async (req, res) => {
 
 app.put("/api/menu/:id", verifyToken, async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = parseInt(req.params.id);
+    console.log("Updating menu item with ID:", id, "Data:", req.body);
     const [updated] = await MenuItem.update(req.body, { where: { id } });
+    console.log("Updated rows:", updated);
     if (updated) {
       const updatedItem = await MenuItem.findByPk(id);
       res.json({ message: "Menu item updated", item: updatedItem });
@@ -626,6 +838,7 @@ app.put("/api/menu/:id", verifyToken, async (req, res) => {
       res.status(404).json({ message: "Menu item not found" });
     }
   } catch (err) {
+    console.error("Error updating menu item:", err);
     res.status(500).json({ message: "Error updating menu item", error: err.message });
   }
 });
@@ -643,13 +856,20 @@ app.delete("/api/menu/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ message: "Menu item not found" });
     }
     const { id } = req.params;
+    
+    // First, delete any order items that reference this menu item
+    const OrderItem = require('./models/OrderItem');
+    await OrderItem.destroy({ where: { menuItemId: id } });
+    
+    // Then delete the menu item
     const deleted = await MenuItem.destroy({ where: { id } });
     if (deleted) {
-      res.json({ message: "Menu item deleted" });
+      res.json({ message: "Menu item deleted successfully" });
     } else {
       res.status(404).json({ message: "Menu item not found" });
     }
   } catch (err) {
+    console.error("Delete menu item error:", err);
     res
       .status(500)
       .json({ message: "Error deleting menu item", error: err.message });
@@ -694,13 +914,57 @@ app.put("/api/menu/:id/availability", verifyToken, async (req, res) => {
   }
 });
 
+function tableNameVariants(tableId) {
+  const t = String(tableId || "")
+    .replace(/^T/i, "")
+    .trim();
+  return [...new Set([String(tableId), t, `T${t}`, `Table ${t}`, `table ${t}`])];
+}
+
+function orderMatchesTableId(order, tableId) {
+  if (!tableId) return true;
+  const names = tableNameVariants(tableId);
+  return names.some(
+    (n) => String(order.table_name).toLowerCase() === String(n).toLowerCase()
+  );
+}
+
+function scopeOrdersForUser(orders, user, query = {}) {
+  if (!user) {
+    return orders.filter((o) => o.subfranchise_id == null);
+  }
+  if (user?.role === "subfranchise" && user.subfranchise_id != null) {
+    return orders.filter(
+      (o) => Number(o.subfranchise_id) === Number(user.subfranchise_id)
+    );
+  }
+  if (user?.role === "franchise" && user.id != null) {
+    const locIds = new Set();
+    if (user.subfranchise_id != null) locIds.add(Number(user.subfranchise_id));
+    mockSubFranchises
+      .filter((s) => Number(s.owner_user_id) === Number(user.id))
+      .forEach((s) => locIds.add(Number(s.id)));
+    return orders.filter((o) => locIds.has(Number(o.subfranchise_id)));
+  }
+  if (isMainBranchStaff(user.role)) {
+    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
+      return orders.filter(
+        (o) => Number(o.subfranchise_id) === Number(query.subfranchise_id)
+      );
+    }
+    if (query.scope === "all") return orders;
+    return orders.filter((o) => o.subfranchise_id == null);
+  }
+  return orders;
+}
+
 // Orders Endpoints
-app.get("/api/orders", async (req, res) => {
+app.get("/api/orders", optionalToken, async (req, res) => {
   try {
-    const { status, type, table_name, date, startDate, endDate } = req.query;
+    const { status, type, table_name, tableId, date, startDate, endDate } = req.query;
     if (!dbConnected) {
       // Return mock data in demo mode
-      let filteredOrders = [...mockOrders];
+      let filteredOrders = scopeOrdersForUser([...mockOrders], req.user, req.query);
 
       if (status)
         filteredOrders = filteredOrders.filter((o) => o.status === status);
@@ -708,6 +972,10 @@ app.get("/api/orders", async (req, res) => {
       if (table_name)
         filteredOrders = filteredOrders.filter(
           (o) => o.table_name === table_name,
+        );
+      if (tableId)
+        filteredOrders = filteredOrders.filter((o) =>
+          orderMatchesTableId(o, tableId)
         );
       
       // Apply date filtering for mock data
@@ -734,7 +1002,11 @@ app.get("/api/orders", async (req, res) => {
     if (status) whereClause.status = status;
     if (type) whereClause.type = type;
     if (table_name) whereClause.table_name = table_name;
-    
+    if (tableId) {
+      whereClause.table_name = { [Op.in]: tableNameVariants(tableId) };
+    }
+    await applyOrderScopeToWhere(whereClause, req, req.query);
+
     if (date) {
       const filterDate = new Date(date);
       const startOfDay = new Date(filterDate);
@@ -761,54 +1033,142 @@ app.get("/api/orders", async (req, res) => {
     res.json(orders);
   } catch (err) {
     console.error("Error in /api/orders:", err);
-    // Return mock data on error
-    let filteredOrders = mockOrders;
-    
-    if (req.query.date) {
-      const filterDate = new Date(req.query.date);
-      filteredOrders = mockOrders.filter(order => {
-        const orderDate = new Date(order.timestamp);
-        return orderDate.toDateString() === filterDate.toDateString();
-      });
-    } else if (req.query.startDate && req.query.endDate) {
-      const start = new Date(req.query.startDate + 'T00:00:00');
-      const end = new Date(req.query.endDate + 'T23:59:59');
-      filteredOrders = mockOrders.filter(order => {
-        const orderDate = new Date(order.timestamp);
-        return orderDate >= start && orderDate <= end;
-      });
-    }
-    
-    res.json(filteredOrders);
+    res.status(500).json({
+      message: "Error fetching orders",
+      error: err.message,
+    });
   }
 });
 
-app.post("/api/orders", verifyToken, async (req, res) => {
+// Generate unique takeaway token (numeric only for easy readability)
+const generateTakeawayToken = () => {
+  // Generate 4-digit numeric token (0001 to 9999)
+  const random = Math.floor(Math.random() * 9999) + 1;
+  return random.toString().padStart(4, '0');
+};
+
+async function getTaxDiscountSettings() {
+  const defaults = { taxPercent: 5, discountPercent: 0 };
+  if (!dbConnected) return defaults;
   try {
+    const allSettings = await Settings.findAll();
+    const map = {};
+    allSettings.forEach((s) => {
+      map[s.key] = JSON.parse(s.value);
+    });
+    return {
+      taxPercent: Number(map.taxPercent) ?? defaults.taxPercent,
+      discountPercent: Number(map.discountPercent) ?? defaults.discountPercent,
+    };
+  } catch (_) {
+    return defaults;
+  }
+}
+
+function getItemsSubtotal(items = []) {
+  return items.reduce(
+    (sum, item) =>
+      sum + (Number(item.price) || 0) * (item.quantity || item.qty || 1),
+    0
+  );
+}
+
+function calculateOrderTotals(subtotal, settings) {
+  const taxPercent = Number(settings.taxPercent) || 0;
+  const discountPercent = Number(settings.discountPercent) || 0;
+  const safeSubtotal = Number(subtotal) || 0;
+  const discountAmount = safeSubtotal * (discountPercent / 100);
+  const afterDiscount = safeSubtotal - discountAmount;
+  const taxAmount = afterDiscount * (taxPercent / 100);
+  const total = Math.round((afterDiscount + taxAmount) * 100) / 100;
+  return {
+    subtotal: Math.round(safeSubtotal * 100) / 100,
+    discount: discountPercent,
+    discountPercent,
+    discountAmount: Math.round(discountAmount * 100) / 100,
+    taxPercent,
+    taxAmount: Math.round(taxAmount * 100) / 100,
+    total,
+  };
+}
+
+function attachTotalsToOrder(order, items, totals) {
+  const base = order.toJSON ? order.toJSON() : { ...order };
+  const normalizedItems = (items || base.items || []).map((item) => ({
+    ...item,
+    qty: item.qty ?? item.quantity,
+    quantity: item.quantity ?? item.qty,
+  }));
+  return { ...base, items: normalizedItems, ...totals };
+}
+
+app.post("/api/orders", optionalToken, async (req, res) => {
+  try {
+    const {
+      table_name,
+      items,
+      type,
+      parentOrderId,
+      subfranchise_id,
+    } = req.body;
+    let linkedSubFranchiseId = await resolveOrderSubFranchiseId(
+      req,
+      subfranchise_id
+    );
+    if (req.user && isMainBranchStaff(req.user.role)) {
+      linkedSubFranchiseId = null;
+    }
+    if (req.user?.role === "franchise") {
+      const locIds = await getFranchiseLocationIds(req.user);
+      if (locIds.length === 0) {
+        return res.status(400).json({
+          message:
+            "No franchise location linked. Ask admin to link your account to a location.",
+        });
+      }
+      if (linkedSubFranchiseId == null || !locIds.includes(linkedSubFranchiseId)) {
+        return res.status(400).json({
+          message:
+            locIds.length > 1
+              ? "Select a valid franchise location for this order"
+              : "Could not assign order to your franchise location",
+        });
+      }
+    }
+    const settings = await getTaxDiscountSettings();
+    const subtotal =
+      req.body.subtotal != null
+        ? Number(req.body.subtotal)
+        : getItemsSubtotal(items || []);
+    const totals = calculateOrderTotals(subtotal, settings);
+
     if (!dbConnected) {
-      const { table_name, items, total, type, parentOrderId } = req.body;
       const newOrder = {
         id: mockOrders.length + 1,
         table_name,
         items,
-        total,
         status: "pending",
         type: type || "DINE_IN",
-        parentOrderId, // Store parent order reference
+        parentOrderId,
+        subfranchise_id: linkedSubFranchiseId,
         timestamp: new Date(),
+        token: type === "TAKEAWAY" ? generateTakeawayToken() : null,
+        ...totals,
       };
       mockOrders.push(newOrder);
+      io.emit("order_created");
       return res.json(newOrder);
     }
 
-    const { table_name, items, total, type, parentOrderId } = req.body;
     const newOrder = await Order.create({
       table_name,
-      total,
+      total: totals.total,
       status: "pending",
       type: type || "DINE_IN",
-      parentOrderId, // Store parent order reference
+      parentOrderId,
+      subfranchise_id: linkedSubFranchiseId,
       timestamp: new Date(),
+      token: type === "TAKEAWAY" ? generateTakeawayToken() : null,
     });
     if (items && Array.isArray(items)) {
       for (const item of items) {
@@ -825,7 +1185,9 @@ app.post("/api/orders", verifyToken, async (req, res) => {
       include: [{ model: OrderItem, as: "items" }],
     });
     io.emit("order_created");
-    res.status(201).json(orderWithItems);
+    res
+      .status(201)
+      .json(attachTotalsToOrder(orderWithItems, orderWithItems.items, totals));
   } catch (err) {
     res
       .status(500)
@@ -858,7 +1220,8 @@ app.put("/api/orders/:id", verifyToken, async (req, res) => {
     const { status, items, total } = req.body;
     const order = await Order.findByPk(id);
     if (!order) return res.status(404).json({ message: "Order not found" });
-    
+    if (!(await assertOrderInScope(req, order, res))) return;
+
     // Update order status for all orders including Takeaway
     if (status) {
       order.status = status;
@@ -915,7 +1278,8 @@ app.put("/api/orders/:id/not-available", verifyToken, async (req, res) => {
     const { id } = req.params;
     const order = await Order.findByPk(id);
     if (!order) return res.status(404).json({ message: "Order not found" });
-    
+    if (!(await assertOrderInScope(req, order, res))) return;
+
     order.status = "NOT_AVAILABLE";
     await order.save();
 
@@ -934,32 +1298,35 @@ app.put("/api/orders/:id/not-available", verifyToken, async (req, res) => {
 });
 
 // Get Live Orders Count Endpoint
-app.get("/api/orders/live-count", async (req, res) => {
+app.get("/api/orders/live-count", optionalToken, async (req, res) => {
   try {
     if (!dbConnected) {
-      // Live orders are those with status in ['PENDING', 'PREPARING', 'READY', 'DELIVERED']
-      const liveOrders = mockOrders.filter(order => 
-        ['PENDING', 'PREPARING', 'READY', 'DELIVERED', 'pending', 'preparing', 'ready', 'delivered'].includes(order.status)
+      const liveOrders = scopeOrdersForUser(mockOrders, req.user, req.query).filter(
+        (order) =>
+          ["PENDING", "PREPARING", "READY", "DELIVERED", "pending", "preparing", "ready", "delivered"].includes(
+            order.status
+          )
       );
       return res.json({ count: liveOrders.length });
     }
-    
-    const liveOrdersCount = await Order.count({
-      where: {
-        status: {
-          [Op.in]: [
-            "PENDING",
-            "PREPARING",
-            "READY",
-            "DELIVERED",
-            "pending",
-            "preparing",
-            "ready",
-            "delivered",
-          ],
-        },
-      }
-    });
+
+    const whereClause = {
+      status: {
+        [Op.in]: [
+          "PENDING",
+          "PREPARING",
+          "READY",
+          "DELIVERED",
+          "pending",
+          "preparing",
+          "ready",
+          "delivered",
+        ],
+      },
+    };
+    await applyOrderScopeToWhere(whereClause, req, req.query);
+
+    const liveOrdersCount = await Order.count({ where: whereClause });
     
     res.json({ count: liveOrdersCount });
   } catch (err) {
@@ -969,20 +1336,21 @@ app.get("/api/orders/live-count", async (req, res) => {
 });
 
 // Get Total Orders Count Endpoint (exclude NOT_AVAILABLE)
-app.get("/api/orders/total-count", async (req, res) => {
+app.get("/api/orders/total-count", optionalToken, async (req, res) => {
   try {
     if (!dbConnected) {
-      const totalOrders = mockOrders.filter(order => order.status !== 'NOT_AVAILABLE');
+      const totalOrders = scopeOrdersForUser(mockOrders, req.user, req.query).filter(
+        (order) => order.status !== "NOT_AVAILABLE"
+      );
       return res.json({ count: totalOrders.length });
     }
 
-    const totalOrdersCount = await Order.count({
-      where: {
-        status: {
-          [Op.notIn]: ["NOT_AVAILABLE", "not_available"],
-        },
-      },
-    });
+    const whereClause = {
+      status: { [Op.notIn]: ["NOT_AVAILABLE", "not_available"] },
+    };
+    await applyOrderScopeToWhere(whereClause, req, req.query);
+
+    const totalOrdersCount = await Order.count({ where: whereClause });
 
     res.json({ count: totalOrdersCount });
   } catch (err) {
@@ -1017,6 +1385,7 @@ app.delete("/api/orders/:id", optionalToken, async (req, res) => {
 
     const order = await Order.findByPk(id);
     if (!order) return res.status(404).json({ message: "Not found" });
+    if (!(await assertOrderInScope(req, order, res))) return;
 
     console.log('Order to delete:', order.dataValues);
 
@@ -1057,6 +1426,7 @@ app.put("/api/orders/:id/request-bill", verifyToken, async (req, res) => {
     const { id } = req.params;
     const order = await Order.findByPk(id);
     if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!(await assertOrderInScope(req, order, res))) return;
     order.bill_requested = true;
     await order.save();
     res.json({ message: "Bill requested", order });
@@ -1101,7 +1471,8 @@ app.put("/api/orders/:id/reset", verifyToken, async (req, res) => {
         message: "Order not found" 
       });
     }
-    
+    if (!(await assertOrderInScope(req, order, res))) return;
+
     if (!isNotAvailableStatus(order.status)) {
       return res.status(400).json({ 
         success: false, 
@@ -1158,6 +1529,7 @@ app.put("/api/orders/:id/confirm-delivery", verifyToken, async (req, res) => {
     });
 
     if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!(await assertOrderInScope(req, order, res))) return;
     if (order.status !== "ready") {
       return res.status(400).json({
         message: "Order must be in 'ready' status to confirm delivery",
@@ -1229,11 +1601,17 @@ app.get("/api/orders/:id/bill", async (req, res) => {
 app.get("/api/orders/status/delivered", verifyToken, async (req, res) => {
   try {
     if (!dbConnected) {
-      return res.json([]);
+      const orders = scopeOrdersForUser(mockOrders, req.user, req.query).filter(
+        (o) => o.status === "delivered"
+      );
+      return res.json(orders);
     }
 
+    const whereClause = { status: "delivered" };
+    await applyOrderScopeToWhere(whereClause, req, req.query);
+
     const orders = await Order.findAll({
-      where: { status: "delivered" },
+      where: whereClause,
       include: [{ model: OrderItem, as: "items" }],
       order: [["delivered_at", "DESC"]],
     });
@@ -1273,6 +1651,7 @@ app.put("/api/orders/:id/complete-payment", verifyToken, async (req, res) => {
 
     const order = await Order.findByPk(id);
     if (!order) return res.status(404).json({ message: "Order not found" });
+    if (!(await assertOrderInScope(req, order, res))) return;
 
     order.status = "completed";
     order.payment_method = payment_method || "cash";
@@ -1319,12 +1698,47 @@ app.get("/api/inventory", async (req, res) => {
 
 app.post("/api/inventory", verifyToken, async (req, res) => {
   try {
+    const { material_name, current_stock, min_stock } = req.body;
+    
+    // Validate required fields
+    if (!material_name || current_stock === undefined || min_stock === undefined) {
+      return res.status(400).json({ message: "Material name, current stock, and min stock are required" });
+    }
+
+    // Check for duplicate material names
+    if (dbConnected) {
+      const existing = await Inventory.findOne({ where: { material_name } });
+      if (existing) {
+        return res.status(409).json({ message: "Material with this name already exists" });
+      }
+    } else {
+      const existing = mockInventory.find(item => item.name === material_name);
+      if (existing) {
+        return res.status(409).json({ message: "Material with this name already exists" });
+      }
+    }
+
+    // Auto-set status based on stock levels
+    const status = current_stock > min_stock ? "In Stock" : "Out of Stock";
+
     if (!dbConnected) {
-      const newItem = { ...req.body, id: mockInventory.length + 1 };
+      const newItem = { 
+        id: mockInventory.length + 1, 
+        material_name, 
+        current_stock: parseFloat(current_stock), 
+        min_stock: parseFloat(min_stock), 
+        status 
+      };
       mockInventory.push(newItem);
       return res.status(201).json(newItem);
     }
-    const newItem = await Inventory.create(req.body);
+    
+    const newItem = await Inventory.create({
+      material_name,
+      current_stock: parseFloat(current_stock),
+      min_stock: parseFloat(min_stock),
+      status
+    });
     res.status(201).json(newItem);
   } catch (err) {
     res
@@ -1335,16 +1749,68 @@ app.post("/api/inventory", verifyToken, async (req, res) => {
 
 app.put("/api/inventory/:id", verifyToken, async (req, res) => {
   try {
+    const { id } = req.params;
+    const { current_stock, min_stock, status, operation } = req.body;
+    
     if (!dbConnected) {
-      const item = mockInventory.find((i) => i.id === parseInt(req.params.id));
+      const item = mockInventory.find((i) => i.id === parseInt(id));
       if (item) {
-        Object.assign(item, req.body);
+        // Handle different operations
+        if (operation === 'add') {
+          item.current_stock = (item.current_stock || 0) + 1;
+        } else if (operation === 'remove') {
+          item.current_stock = Math.max(0, (item.current_stock || 0) - 1);
+        } else if (current_stock !== undefined) {
+          item.current_stock = Math.max(0, parseFloat(current_stock));
+        }
+        
+        // Update min_stock if provided
+        if (min_stock !== undefined) {
+          item.min_stock = parseFloat(min_stock);
+        }
+        
+        // Auto-update status if not explicitly set
+        if (status !== undefined) {
+          item.status = status;
+        } else {
+          item.status = item.current_stock > item.min_stock ? "In Stock" : "Out of Stock";
+        }
+        
         return res.json({ message: "Inventory item updated", item });
       }
       return res.status(404).json({ message: "Inventory item not found" });
     }
-    const { id } = req.params;
-    const [updated] = await Inventory.update(req.body, { where: { id } });
+
+    const inventoryItem = await Inventory.findByPk(id);
+    if (!inventoryItem) {
+      return res.status(404).json({ message: "Inventory item not found" });
+    }
+
+    // Handle different operations
+    let updateData = {};
+    if (operation === 'add') {
+      updateData.current_stock = Math.max(0, (inventoryItem.current_stock || 0) + 1);
+    } else if (operation === 'remove') {
+      updateData.current_stock = Math.max(0, (inventoryItem.current_stock || 0) - 1);
+    } else {
+      if (current_stock !== undefined) {
+        updateData.current_stock = Math.max(0, parseFloat(current_stock));
+      }
+      if (min_stock !== undefined) {
+        updateData.min_stock = parseFloat(min_stock);
+      }
+    }
+
+    // Auto-update status if not explicitly provided
+    if (status !== undefined) {
+      updateData.status = status;
+    } else {
+      const currentStock = updateData.current_stock !== undefined ? updateData.current_stock : inventoryItem.current_stock;
+      const minStock = updateData.min_stock !== undefined ? updateData.min_stock : inventoryItem.min_stock;
+      updateData.status = currentStock > minStock ? "In Stock" : "Out of Stock";
+    }
+
+    const [updated] = await Inventory.update(updateData, { where: { id } });
     if (updated) {
       const updatedItem = await Inventory.findByPk(id);
       res.json({ message: "Inventory item updated", item: updatedItem });
@@ -1355,6 +1821,32 @@ app.put("/api/inventory/:id", verifyToken, async (req, res) => {
     res
       .status(500)
       .json({ message: "Error updating inventory item", error: err.message });
+  }
+});
+
+app.delete("/api/inventory/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!dbConnected) {
+      const index = mockInventory.findIndex((i) => i.id === parseInt(id));
+      if (index !== -1) {
+        const deletedItem = mockInventory.splice(index, 1)[0];
+        return res.json({ message: "Inventory item deleted", item: deletedItem });
+      }
+      return res.status(404).json({ message: "Inventory item not found" });
+    }
+
+    const deleted = await Inventory.destroy({ where: { id } });
+    if (deleted) {
+      res.json({ message: "Inventory item deleted successfully" });
+    } else {
+      res.status(404).json({ message: "Inventory item not found" });
+    }
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Error deleting inventory item", error: err.message });
   }
 });
 
@@ -1414,10 +1906,27 @@ app.post("/api/users", verifyToken, async (req, res) => {
     }
 
     if (!dbConnected) {
-      // Demo mode - just return success
+      // Demo mode - create user in mockUsers array
+      const { username, password, role, name } = req.body;
+      
+      // Check if username already exists
+      const existing = mockUsers.find(u => u.username === username);
+      if (existing) {
+        return res.status(409).json({ message: "Username already exists" });
+      }
+      
+      const newUser = {
+        id: mockUsers.length + 1,
+        username,
+        password: password, // Store plain text for demo
+        role,
+        name,
+      };
+      mockUsers.push(newUser);
+      
       return res.status(201).json({
         message: "User created successfully",
-        user: { username, role, name },
+        user: { id: newUser.id, username: newUser.username, role: newUser.role, name: newUser.name },
       });
     }
 
@@ -1426,17 +1935,35 @@ app.post("/api/users", verifyToken, async (req, res) => {
       return res.status(409).json({ message: "Username already exists" });
     }
 
+    const { subfranchise_id: linkLocationId } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({
       username,
       password: hashedPassword,
       role,
       name,
+      subfranchise_id:
+        linkLocationId && (role === "franchise" || role === "subfranchise")
+          ? linkLocationId
+          : null,
     });
+
+    if (role === "franchise" && linkLocationId) {
+      await SubFranchise.update(
+        { owner_user_id: user.id },
+        { where: { id: linkLocationId } }
+      );
+    }
 
     res.status(201).json({
       message: "User created successfully",
-      user: { username: user.username, role: user.role, name: user.name },
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        name: user.name,
+        subfranchise_id: user.subfranchise_id,
+      },
     });
   } catch (err) {
     res
@@ -1453,14 +1980,13 @@ app.get("/api/users", verifyToken, async (req, res) => {
     }
 
     if (!dbConnected) {
-      // Return default users in demo mode
-      return res.json(
-        Object.keys(defaultUsers).map((username) => ({
-          username,
-          role: defaultUsers[username].role,
-          name: defaultUsers[username].name,
-        })),
-      );
+      // Return mock users in demo mode
+      return res.json(mockUsers.map(user => ({
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        name: user.name,
+      })));
     }
 
     const users = await User.findAll({
@@ -1485,7 +2011,50 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
     const { username, role, name, password } = req.body;
 
     if (!dbConnected) {
-      return res.status(400).json({ message: "Database not connected" });
+      // Demo mode - update user in mockUsers array
+      const userIndex = mockUsers.findIndex(u => u.id === parseInt(id));
+      if (userIndex === -1) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const user = mockUsers[userIndex];
+      
+      // Validate role
+      const validRoles = [
+        "admin",
+        "franchise",
+        "subfranchise",
+        "manager",
+        "waiter",
+        "chef",
+      ];
+      if (role && !validRoles.includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+      
+      if (username && username !== user.username) {
+        const existing = mockUsers.find(u => u.username === username);
+        if (existing) {
+          return res.status(409).json({ message: "Username already exists" });
+        }
+        user.username = username;
+      }
+      
+      if (role) user.role = role;
+      if (name) user.name = name;
+      if (password) {
+        user.password = password; // Store plain text for demo
+      }
+      
+      return res.json({
+        message: "User updated successfully",
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+          name: user.name,
+        },
+      });
     }
 
     const user = await User.findByPk(id);
@@ -1519,8 +2088,19 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
     if (password) {
       user.password = await bcrypt.hash(password, 10);
     }
+    const { subfranchise_id: linkLocationId } = req.body;
+    if (linkLocationId !== undefined) {
+      user.subfranchise_id = linkLocationId || null;
+    }
 
     await user.save();
+
+    if (user.role === "franchise" && linkLocationId) {
+      await SubFranchise.update(
+        { owner_user_id: user.id },
+        { where: { id: linkLocationId } }
+      );
+    }
 
     res.json({
       message: "User updated successfully",
@@ -1529,6 +2109,7 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
         username: user.username,
         role: user.role,
         name: user.name,
+        subfranchise_id: user.subfranchise_id,
       },
     });
   } catch (err) {
@@ -1548,7 +2129,22 @@ app.delete("/api/users/:id", verifyToken, async (req, res) => {
     const { id } = req.params;
 
     if (!dbConnected) {
-      return res.status(400).json({ message: "Database not connected" });
+      // Demo mode - delete user from mockUsers array
+      const userIndex = mockUsers.findIndex(u => u.id === parseInt(id));
+      if (userIndex === -1) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const user = mockUsers[userIndex];
+      
+      // Prevent deleting yourself
+      if (user.username === req.user.username) {
+        return res.status(400).json({ message: "Cannot delete your own account" });
+      }
+      
+      mockUsers.splice(userIndex, 1);
+      
+      return res.json({ message: "User deleted successfully" });
     }
 
     // Prevent deleting yourself
@@ -1841,39 +2437,7 @@ app.post("/api/permissions", verifyToken, async (req, res) => {
 // Get user's permissions
 app.get("/api/my-permissions", verifyToken, async (req, res) => {
   try {
-    const username = req.user.username;
-
-    if (req.user.role === "admin") {
-      return res.json({ permissions: ["*"], role: "admin" });
-    }
-
-    if (!dbConnected) {
-      return res.json({ permissions: [], role: req.user.role });
-    }
-
-    const role = await Role.findOne({ where: { name: req.user.role } });
-    if (!role) {
-      console.log(`❌ Role not found: ${req.user.role}`);
-      return res.json({ permissions: [], role: req.user.role });
-    }
-
-    console.log(`✅ Found role: ${role.name} (ID: ${role.id})`);
-
-    const rolePermissions = await RolePermission.findAll({
-      where: { roleId: role.id },
-      include: [{ model: Permission, as: "Permission" }],
-    });
-
-    console.log(`✅ Found ${rolePermissions.length} role-permission mappings`);
-
-    const permissions = rolePermissions.map((rp) => {
-      console.log(`  - Permission: ${rp.Permission.name}`);
-      return rp.Permission.name;
-    });
-
-    console.log(
-      `✅ Returning ${permissions.length} permissions for role ${req.user.role}`,
-    );
+    const permissions = await getPermissionsForUser(req.user);
     res.json({ permissions, role: req.user.role });
   } catch (err) {
     console.error(`❌ Error fetching permissions:`, err);
@@ -1883,25 +2447,626 @@ app.get("/api/my-permissions", verifyToken, async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`Mock backend running at http://localhost:${port}`);
+// Get all users with their permissions (for Permission Management)
+app.get("/api/users-with-permissions", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only admins can view user permissions" });
+    }
+
+    if (!dbConnected) {
+      // Demo mode - return mock users with role-based permissions
+      const rolePermissions = {
+        admin: ["*"],
+        manager: [
+          "view_dashboard", "view_reports", "manage_qr_codes", "manage_orders", 
+          "create_order", "view_orders", "edit_order", "view_inventory", 
+          "manage_inventory", "edit_inventory", "view_billing", "process_payments", 
+          "view_bills", "kitchen_display", "view_menu", "manage_menu", 
+          "create_menu_item", "edit_menu_item", "delete_menu_item",
+          "mark_order_preparing", "mark_order_ready", "confirm_order_delivery"
+        ],
+        waiter: [
+          "view_dashboard", "manage_qr_codes", "create_order", "view_orders", 
+          "edit_order", "view_billing", "process_payments", "kitchen_display"
+        ],
+        chef: [
+          "view_dashboard", "kitchen_display", "view_orders", 
+          "mark_order_preparing", "mark_order_ready"
+        ],
+        franchise: [
+          "view_dashboard", "view_reports", "manage_qr_codes", "manage_orders", 
+          "create_order", "view_orders", "view_inventory", "view_billing", 
+          "view_bills", "kitchen_display", "view_menu", "manage_subfranchise"
+        ],
+        subfranchise: [
+          "view_dashboard", "manage_qr_codes", "create_order", "view_orders", 
+          "view_inventory", "view_billing", "kitchen_display", "view_menu"
+        ]
+      };
+
+      const usersWithPermissions = mockUsers.map((user) => ({
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        role: user.role,
+        permissions:
+          user.role === "franchise" || user.role === "subfranchise"
+            ? mockUserPermissions[user.id] || []
+            : rolePermissions[user.role] || [],
+      }));
+
+      return res.json(usersWithPermissions.filter((u) => u.role !== "admin"));
+    }
+
+    const users = await User.findAll();
+
+    const usersWithPermissions = await Promise.all(
+      users.map(async (user) => ({
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        role: user.role,
+        permissions: await getPermissionsForUser(user),
+      }))
+    );
+
+    res.json(usersWithPermissions.filter((u) => u.role !== "admin"));
+  } catch (err) {
+    console.error("Error fetching users with permissions:", err);
+    res.status(500).json({ message: "Error fetching users with permissions", error: err.message });
+  }
 });
 
-  // Login API
-  app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: "Username and password required" });
+// Update user permissions (for Permission Management)
+app.put("/api/users/:id/permissions", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only admins can update user permissions" });
     }
-    try {
-      // Query users table
-      const user = await User.findOne({ where: { username, password } });
-      if (user) {
-        return res.json({ success: true, user });
-      } else {
-        return res.status(401).json({ success: false, message: "Invalid username or password" });
+
+    const { id } = req.params;
+    const { permissions } = req.body;
+
+    const user = await User.findByPk(id);
+    if (!user && dbConnected) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const targetUser =
+      user ||
+      mockUsers.find((u) => Number(u.id) === Number(id));
+
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (targetUser.role === "franchise" || targetUser.role === "subfranchise") {
+      if (!dbConnected) {
+        mockUserPermissions[targetUser.id] = permissions || [];
+        return res.json({
+          message: "Permissions updated successfully",
+          userId: id,
+          permissions: permissions || [],
+        });
       }
-    } catch (err) {
-      return res.status(500).json({ success: false, message: "Server error", error: err.message });
+      await UserPermission.destroy({ where: { userId: targetUser.id } });
+      if (permissions && permissions.length > 0) {
+        for (const permName of permissions) {
+          const permission = await Permission.findOne({ where: { name: permName } });
+          if (permission) {
+            await UserPermission.create({
+              userId: targetUser.id,
+              permissionId: permission.id,
+            });
+          }
+        }
+      }
+      return res.json({
+        message: "Permissions updated successfully",
+        userId: id,
+        role: targetUser.role,
+        permissions: permissions || [],
+      });
     }
+
+    if (!dbConnected) {
+      return res.json({
+        message: "Permissions updated (demo mode)",
+        userId: id,
+        permissions: permissions || [],
+      });
+    }
+
+    const role = await Role.findOne({ where: { name: targetUser.role } });
+    if (!role) {
+      return res.status(404).json({ message: "Role not found for user" });
+    }
+
+    await RolePermission.destroy({ where: { roleId: role.id } });
+
+    if (permissions && permissions.length > 0) {
+      for (const permName of permissions) {
+        const permission = await Permission.findOne({ where: { name: permName } });
+        if (permission) {
+          await RolePermission.create({
+            roleId: role.id,
+            permissionId: permission.id,
+          });
+        }
+      }
+    }
+
+    res.json({
+      message: "Permissions updated successfully",
+      userId: id,
+      role: targetUser.role,
+      permissions: permissions || [],
+    });
+  } catch (err) {
+    console.error("Error updating user permissions:", err);
+    res.status(500).json({ message: "Error updating user permissions", error: err.message });
+  }
+});
+
+// ============================================================================
+// SETTINGS API ENDPOINTS
+// ============================================================================
+
+// Get all settings or a specific setting by key
+app.get("/api/settings", async (req, res) => {
+  try {
+    const { key } = req.query;
+    
+    if (!dbConnected) {
+      // Fallback to defaults in demo mode
+      const defaults = {
+        taxPercent: 5,
+        discountPercent: 0
+      };
+      if (key) {
+        return res.json({ key, value: defaults[key] ?? null });
+      }
+      return res.json(defaults);
+    }
+    
+    if (key) {
+      const setting = await Settings.findOne({ where: { key } });
+      if (setting) {
+        return res.json({ key: setting.key, value: JSON.parse(setting.value) });
+      }
+      return res.status(404).json({ message: "Setting not found" });
+    }
+    
+    const allSettings = await Settings.findAll();
+    const settingsMap = {};
+    allSettings.forEach(s => {
+      settingsMap[s.key] = JSON.parse(s.value);
+    });
+    res.json(settingsMap);
+  } catch (err) {
+    console.error("Error fetching settings:", err);
+    res.status(500).json({ message: "Error fetching settings", error: err.message });
+  }
+});
+
+// Update or create a setting (admin only)
+app.put("/api/settings", verifyToken, async (req, res) => {
+  try {
+    // Check if user is admin - req.user is set by verifyToken middleware
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ message: "Only admin can update settings" });
+    }
+    
+    const { key, value, description } = req.body;
+    
+    if (!key || value === undefined) {
+      return res.status(400).json({ message: "Key and value are required" });
+    }
+    
+    if (!dbConnected) {
+      return res.status(503).json({ message: "Database not connected" });
+    }
+    
+    const [setting, created] = await Settings.upsert({
+      key,
+      value: JSON.stringify(value),
+      description: description || '',
+      updated_at: new Date()
+    });
+    
+    res.json({
+      message: created ? "Setting created" : "Setting updated",
+      key,
+      value
+    });
+  } catch (err) {
+    console.error("Error updating setting:", err);
+    res.status(500).json({ message: "Error updating setting", error: err.message });
+  }
+});
+
+// Batch update settings (admin only)
+app.put("/api/settings/batch", verifyToken, async (req, res) => {
+  try {
+    // Check if user is admin - req.user is set by verifyToken middleware
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ message: "Only admin can update settings" });
+    }
+    
+    const settings = req.body; // { taxPercent: 10, discountPercent: 5 }
+    
+    if (!dbConnected) {
+      return res.status(503).json({ message: "Database not connected" });
+    }
+    
+    const results = [];
+    for (const [key, value] of Object.entries(settings)) {
+      const [setting, created] = await Settings.upsert({
+        key,
+        value: JSON.stringify(value),
+        description: `Setting for ${key}`,
+        updated_at: new Date()
+      });
+      results.push({ key, value, created });
+    }
+    
+    res.json({
+      message: "Settings updated successfully",
+      settings: results
+    });
+  } catch (err) {
+    console.error("Error batch updating settings:", err);
+    res.status(500).json({ message: "Error updating settings", error: err.message });
+  }
+});
+
+// ============================================================================
+// SUB-FRANCHISE & FRANCHISE OVERVIEW
+// ============================================================================
+
+const franchiseViewAuth = (req, res, next) => {
+  if (
+    !req.user ||
+    !["admin", "franchise", "subfranchise"].includes(req.user.role)
+  ) {
+    return res.status(403).json({ message: "Franchise access required" });
+  }
+  next();
+};
+
+const franchiseManageAuth = (req, res, next) => {
+  if (!req.user || !["admin", "franchise"].includes(req.user.role)) {
+    return res
+      .status(403)
+      .json({ message: "Only admin or franchise owner can manage locations" });
+  }
+  next();
+};
+
+async function loadFranchiseData() {
+  if (!dbConnected) {
+    return {
+      orders: mockOrders,
+      menuCount: 10,
+      subfranchises: mockSubFranchises,
+      users: mockUsers,
+    };
+  }
+  const [orders, menuCount, subfranchises, users] = await Promise.all([
+    Order.findAll({ order: [["timestamp", "DESC"]] }),
+    MenuItem.count(),
+    SubFranchise.findAll({ order: [["name", "ASC"]] }),
+    User.findAll({ attributes: ["id", "username", "role", "subfranchise_id"] }),
+  ]);
+  return { orders, menuCount, subfranchises, users };
+}
+
+function canAccessLocation(req, locationId) {
+  if (req.user.role === "subfranchise") {
+    return Number(req.user.subfranchise_id) === Number(locationId);
+  }
+  return true;
+}
+
+app.get("/api/subfranchises", verifyToken, franchiseViewAuth, async (req, res) => {
+  try {
+    const { orders, subfranchises, users } = await loadFranchiseData();
+    let list = subfranchises;
+    if (req.user.role === "subfranchise") {
+      list = list.filter(
+        (s) => Number(s.id) === Number(req.user.subfranchise_id)
+      );
+    } else if (req.user.role === "franchise") {
+      const locIds = await getFranchiseLocationIds(req.user);
+      list = list.filter((s) => locIds.includes(Number(s.id)));
+    }
+    const enriched = list.map((sf) => {
+      const loginUser = users.find(
+        (u) => Number(u.subfranchise_id) === Number(sf.id)
+      );
+      return enrichSubFranchise(sf, orders, loginUser);
+    });
+    res.json(enriched);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get(
+  "/api/subfranchises/:id/detail",
+  verifyToken,
+  franchiseViewAuth,
+  async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (req.user.role !== "admin") {
+        return res
+          .status(403)
+          .json({ message: "Only admin can open location drill-down details" });
+      }
+      if (!canAccessLocation(req, id)) {
+        return res.status(403).json({ message: "Access denied for this location" });
+      }
+      const { orders, subfranchises, users } = await loadFranchiseData();
+      const sf = subfranchises.find((s) => Number(s.id) === id);
+      if (!sf) return res.status(404).json({ message: "Location not found" });
+
+      const loginUser = users.find((u) => Number(u.subfranchise_id) === id);
+      const locOrders = orders.filter((o) => Number(o.subfranchise_id) === id);
+      const stats = computeLocationStats(orders, id);
+
+      const recentOrders = locOrders.slice(0, 25).map((o) => {
+        const j = o.toJSON ? o.toJSON() : o;
+        return {
+          id: j.id,
+          table_name: j.table_name,
+          status: j.status,
+          total: j.total,
+          type: j.type,
+          timestamp: j.timestamp,
+        };
+      });
+
+      res.json({
+        location: enrichSubFranchise(sf, orders, loginUser),
+        stats,
+        recentOrders,
+        loginUsername: loginUser?.username || null,
+      });
+    } catch (err) {
+      res.status(500).json({ message: err.message });
+    }
+  }
+);
+
+app.post("/api/subfranchises", verifyToken, franchiseManageAuth, async (req, res) => {
+  try {
+    const {
+      login_username,
+      login_password,
+      name,
+      code,
+      address,
+      city,
+      phone,
+      email,
+      manager_name,
+      status,
+      notes,
+    } = req.body;
+    if (!name || !code) {
+      return res.status(400).json({ message: "Name and code are required" });
+    }
+    const sfData = {
+      name,
+      code,
+      address,
+      city,
+      phone,
+      email,
+      manager_name,
+      status: status || "active",
+      notes,
+    };
+    if (req.user.role === "franchise") {
+      sfData.owner_user_id = req.user.id;
+    } else if (req.body.owner_user_id) {
+      sfData.owner_user_id = req.body.owner_user_id;
+    }
+
+    if (!dbConnected) {
+      const row = {
+        id: mockSubFranchises.length + 1,
+        ...sfData,
+      };
+      mockSubFranchises.push(row);
+      if (login_username && login_password) {
+        mockUsers.push({
+          id: mockUsers.length + 1,
+          username: login_username,
+          password: login_password,
+          role: "subfranchise",
+          name: manager_name || name,
+          subfranchise_id: row.id,
+        });
+      }
+      return res.status(201).json(row);
+    }
+
+    const created = await SubFranchise.create(sfData);
+    if (login_username && login_password) {
+      const existing = await User.findOne({ where: { username: login_username } });
+      if (existing) {
+        return res.status(409).json({ message: "Login username already exists" });
+      }
+      await User.create({
+        username: login_username,
+        password: await bcrypt.hash(login_password, 10),
+        role: "subfranchise",
+        name: manager_name || name,
+        subfranchise_id: created.id,
+      });
+    }
+    res.status(201).json(created);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.put("/api/subfranchises/:id", verifyToken, franchiseManageAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { login_username, login_password, ...updates } = req.body;
+    if (!dbConnected) {
+      const idx = mockSubFranchises.findIndex((s) => s.id === id);
+      if (idx === -1) return res.status(404).json({ message: "Not found" });
+      mockSubFranchises[idx] = { ...mockSubFranchises[idx], ...updates, id };
+      return res.json(mockSubFranchises[idx]);
+    }
+    const row = await SubFranchise.findByPk(id);
+    if (!row) return res.status(404).json({ message: "Not found" });
+    if (
+      req.user.role === "franchise" &&
+      Number(row.owner_user_id) !== Number(req.user.id)
+    ) {
+      return res.status(403).json({ message: "You can only edit your own locations" });
+    }
+    await row.update(updates);
+
+    if (updates.owner_user_id && req.user.role === "admin") {
+      const owner = await User.findByPk(updates.owner_user_id);
+      if (owner?.role === "franchise") {
+        await owner.update({ subfranchise_id: id });
+      }
+    }
+
+    if (login_username) {
+      let loginUser = await User.findOne({ where: { subfranchise_id: id } });
+      if (!loginUser) {
+        loginUser = await User.create({
+          username: login_username,
+          password: await bcrypt.hash(login_password || "pass", 10),
+          role: "subfranchise",
+          name: updates.manager_name || row.name,
+          subfranchise_id: id,
+        });
+      } else {
+        const patch = { username: login_username };
+        if (login_password) patch.password = await bcrypt.hash(login_password, 10);
+        await loginUser.update(patch);
+      }
+    }
+    res.json(row);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.delete("/api/subfranchises/:id", verifyToken, franchiseManageAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!dbConnected) {
+      mockSubFranchises = mockSubFranchises.filter((s) => s.id !== id);
+      return res.json({ message: "Deleted" });
+    }
+    const row = await SubFranchise.findByPk(id);
+    if (!row) return res.status(404).json({ message: "Not found" });
+    await User.destroy({ where: { subfranchise_id: id } });
+    await row.destroy();
+    res.json({ message: "Deleted" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/franchise/overview", verifyToken, franchiseViewAuth, async (req, res) => {
+  try {
+    const { orders, menuCount, subfranchises, users } = await loadFranchiseData();
+
+    let list = subfranchises;
+    if (req.user.role === "subfranchise") {
+      list = list.filter(
+        (s) => Number(s.id) === Number(req.user.subfranchise_id)
+      );
+    } else if (req.user.role === "franchise") {
+      const locIds = await getFranchiseLocationIds(req.user);
+      list = list.filter((s) => locIds.includes(Number(s.id)));
+    }
+
+    const locationStats = list.map((sf) => {
+      const loginUser = users.find(
+        (u) => Number(u.subfranchise_id) === Number(sf.id)
+      );
+      return enrichSubFranchise(sf, orders, loginUser);
+    });
+
+    let scopedOrders = orders;
+    if (req.user.role === "subfranchise") {
+      scopedOrders = orders.filter(
+        (o) => Number(o.subfranchise_id) === Number(req.user.subfranchise_id)
+      );
+    } else if (req.user.role === "franchise") {
+      const locIds = list.map((s) => Number(s.id));
+      scopedOrders = orders.filter((o) =>
+        locIds.includes(Number(o.subfranchise_id))
+      );
+    }
+
+    const globalStats = computeStatsFromOrderList(scopedOrders);
+
+    const unassignedStats =
+      req.user.role === "admin"
+        ? computeLocationStats(orders, null)
+        : null;
+
+    const recentOrders = scopedOrders.slice(0, 40).map((o) => {
+      const j = o.toJSON ? o.toJSON() : o;
+      return {
+        id: j.id,
+        table_name: j.table_name,
+        status: j.status,
+        total: j.total,
+        type: j.type,
+        timestamp: j.timestamp,
+        subfranchise_id: j.subfranchise_id,
+      };
+    });
+
+    res.json({
+      scope: req.user.role,
+      stats: {
+        totalSales: globalStats.totalSales,
+        amountGenerated: globalStats.amountGenerated,
+        todaySales: globalStats.todaySales,
+        activeOrders: globalStats.activeOrders,
+        totalOrders: globalStats.totalOrders,
+        menuItems: menuCount,
+        subfranchiseCount: list.length,
+        pendingAmount: globalStats.pendingAmount,
+      },
+      unassigned: unassignedStats,
+      subfranchises: locationStats,
+      recentOrders,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ============================================================================
+
+const HOST = process.env.HOST || "0.0.0.0";
+
+async function boot() {
+  await startServer();
+  server.listen(PORT, HOST, () => {
+    console.log(`Backend running at http://${HOST}:${PORT}`);
+    console.log(`Local: http://localhost:${PORT}`);
+    console.log(
+      `Database: ${dbConnected ? "connected" : "disconnected (fallback mode)"}`
+    );
   });
+}
+
+boot();

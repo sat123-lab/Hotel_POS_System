@@ -7,6 +7,7 @@ const MenuItem = sequelize.define('MenuItem', {
   price: { type: DataTypes.FLOAT, allowNull: false },
   category: { type: DataTypes.STRING, allowNull: false },
   description: { type: DataTypes.STRING, allowNull: true },
+  image: { type: DataTypes.TEXT('long'), allowNull: true },
   isAvailable: { type: DataTypes.BOOLEAN, defaultValue: true, allowNull: false },
 }, {
   tableName: 'menu_items',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, startTransition, Suspense, lazy } from 'react';
 import ErrorBoundary from './ErrorBoundary';
 import Sidebar from './Sidebar';
 import Login from './Login';
@@ -15,11 +15,26 @@ import MenuManagement from './MenuManagement';
 import QRCodeOrdering from './QRCodeOrdering';
 import UserManagement from './UserManagement';
 import PermissionManagementNew from './PermissionManagementNew';
+import FranchiseDashboard from './FranchiseDashboard';
+import SubFranchiseManagement from './SubFranchiseManagement';
 import CustomerIndex from './CustomerIndex';
+import OrderConfirmation from './OrderConfirmation';
 import NoAccessMessage from './NoAccessMessage';
 import LandingPage from './LandingPage';
 import ProtectedRoute from './ProtectedRoute';
 import RoleBasedRoute from './RoleBasedRoute';
+import PermissionBasedRoute from './PermissionBasedRoute';
+import { getLocationSettingsForCountry } from '../utils/currency';
+
+// Loading component for Suspense fallback - Reference Image Design
+const LoadingSpinner = () => (
+  <div className="min-h-screen flex items-center justify-center bg-[#FFF8F0]">
+    <div className="text-center bg-white rounded-2xl shadow-lg p-8">
+      <div className="animate-spin rounded-full h-16 w-16 border-4 border-orange-100 border-t-orange-500 mx-auto mb-4"></div>
+      <p className="text-gray-600 font-medium">Loading...</p>
+    </div>
+  </div>
+);
 
 // API utility function
 const fetchWithErrorHandling = async (url, options = {}) => {
@@ -49,43 +64,16 @@ const fetchWithErrorHandling = async (url, options = {}) => {
   }
 };
 
-const FranchiseDashboard = ({ currentUser }) => (
-  <div className="p-6 bg-gray-50 min-h-screen rounded-lg shadow-inner">
-    <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Franchise Dashboard - {currentUser?.name}</h2>
-    <div className="text-center text-gray-600">
-      <p className="text-lg">Welcome, {currentUser?.name} ({currentUser?.role}).</p>
-      <p>This area would show aggregated data for all sub-franchises under your management.</p>
-      <p className="mt-4">
-        Examples: Overall sales across all sub-franchises, performance comparisons,
-        management of sub-franchise accounts, etc.
-      </p>
-    </div>
-  </div>
-);
-
-const SubFranchiseManagement = () => (
-  <div className="p-6 bg-gray-50 min-h-screen rounded-lg shadow-inner">
-    <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Sub-Franchise Management</h2>
-    <div className="text-center text-gray-600">
-      <p className="text-lg">This section is for managing sub-franchise details, accessible by the main franchise or admin.</p>
-      <p className="mt-4">
-        Functionality could include adding/editing sub-franchise details, setting up their initial menu,
-        viewing their specific reports, etc.
-      </p>
-      <p className="mt-4 text-red-500">
-        (Note: This is a placeholder. Full CRUD operations for sub-franchises would require a backend.)
-      </p>
-    </div>
-  </div>
-);
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [locationSettings, setLocationSettings] = useState({
-    country: 'India',
-    currencySymbol: '₹',
-    taxRate: 0.05,
-  });
+  const [locationSettings, setLocationSettings] = useState(() =>
+    getLocationSettingsForCountry(
+      typeof window !== 'undefined'
+        ? localStorage.getItem('posCountry') || 'India'
+        : 'India'
+    )
+  );
   const [nextOrderId, setNextOrderId] = useState(6);
   const [currentUser, setCurrentUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -101,16 +89,18 @@ const App = () => {
     if (storedToken && storedUser && !isLoginPage) {
       try {
         const user = JSON.parse(storedUser);
-        setCurrentUser(user);
-        if (user.role === 'chef') {
-          setActiveTab('kds');
-        } else if (user.role === 'waiter') {
-          setActiveTab('dine-in-management');
-        } else if (user.role === 'franchise') {
-          setActiveTab('franchise-dashboard');
-        } else {
-          setActiveTab('dashboard');
-        }
+        startTransition(() => {
+          setCurrentUser(user);
+          if (user.role === 'chef') {
+            setActiveTab('kds');
+          } else if (user.role === 'waiter') {
+            setActiveTab('dine-in-management');
+          } else if (user.role === 'franchise' || user.role === 'subfranchise') {
+            setActiveTab('franchise-dashboard');
+          } else {
+            setActiveTab('dashboard');
+          }
+        });
       } catch (error) {
         console.error('Failed to restore user from localStorage:', error);
         localStorage.removeItem('token');
@@ -118,58 +108,44 @@ const App = () => {
       }
     }
     setIsLoading(false);
-    // Simulate geo-detection or user selection
-    const detectLocation = async () => {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      const mockCountry = 'India';
-      if (mockCountry === 'India') {
-        setLocationSettings({ country: 'India', currencySymbol: '₹', taxRate: 0.05 });
-      } else if (mockCountry === 'US') {
-        setLocationSettings({ country: 'US', currencySymbol: '$', taxRate: 0.07 });
-      } else if (mockCountry === 'UK') {
-        setLocationSettings({ country: 'UK', currencySymbol: '£', taxRate: 0.20 });
-      }
-    };
-    detectLocation();
   }, []);
 
   const handleLogin = (user, token) => {
-    setCurrentUser(user);
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(user));
-    if (user.role === 'chef') {
-      setActiveTab('kds');
-    } else if (user.role === 'waiter') {
-      setActiveTab('dine-in-management');
-    } else if (user.role === 'franchise') {
-      setActiveTab('franchise-dashboard');
-    } else {
-      setActiveTab('dashboard');
-    }
+    startTransition(() => {
+      setCurrentUser(user);
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(user));
+      if (user.role === 'chef') {
+        setActiveTab('kds');
+      } else if (user.role === 'waiter') {
+        setActiveTab('dine-in-management');
+      } else if (user.role === 'franchise' || user.role === 'subfranchise') {
+        setActiveTab('franchise-dashboard');
+      } else {
+        setActiveTab('dashboard');
+      }
+    });
     navigate('/dashboard');
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setActiveTab('dashboard');
+    startTransition(() => {
+      setCurrentUser(null);
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      setActiveTab('dashboard');
+    });
     navigate('/login');
   };
 
   const handleLocationChange = (e) => {
-    const country = e.target.value;
-    if (country === 'India') {
-      setLocationSettings({ country: 'India', currencySymbol: '₹', taxRate: 0.05 });
-    } else if (country === 'US') {
-      setLocationSettings({ country: 'US', currencySymbol: '$', taxRate: 0.07 });
-    } else if (country === 'UK') {
-      setLocationSettings({ country: 'UK', currencySymbol: '£', taxRate: 0.20 });
-    }
+    const settings = getLocationSettingsForCountry(e.target.value);
+    setLocationSettings(settings);
+    localStorage.setItem('posCountry', settings.country);
   };
 
   if (isLoading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    return <LoadingSpinner />;
   }
 
   const renderContent = () => {
@@ -180,21 +156,32 @@ const App = () => {
     const { role } = currentUser;
     switch (activeTab) {
       case 'reports':
-        return (role === 'admin' || role === 'manager') ? <Reports locationSettings={locationSettings} /> : <NoAccessMessage />;
+        return (role === 'admin' || role === 'manager' || role === 'franchise' || role === 'subfranchise') ? (
+          <Reports locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'qr-management':
         return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <QRManagement locationSettings={locationSettings} /> : <NoAccessMessage />;
       case 'dine-in-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
+        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
       case 'takeaway-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
+        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
       case 'inventory':
         return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <InventoryManagement /> : <NoAccessMessage />;
       case 'dashboard':
-        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'manager') ? <Dashboard locationSettings={locationSettings} /> : <NoAccessMessage />;
+        if (role === 'subfranchise' || role === 'franchise') {
+          return <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />;
+        }
+        return (role === 'admin' || role === 'manager') ? (
+          <Dashboard locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'billing':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <BillingPage locationSettings={locationSettings} /> : <NoAccessMessage />;
+        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <BillingPage locationSettings={locationSettings} /> : <NoAccessMessage />;
       case 'kds':
-        return (role === 'admin' || role === 'subfranchise' || role === 'chef' || role === 'manager' || role === 'waiter') ? <KitchenDisplaySystem /> : <NoAccessMessage />;
+        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'chef' || role === 'manager' || role === 'waiter') ? <KitchenDisplaySystem locationSettings={locationSettings} /> : <NoAccessMessage />;
       case 'menu-management':
         return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <MenuManagement locationSettings={locationSettings} /> : <NoAccessMessage />;
       case 'user-management':
@@ -202,13 +189,23 @@ const App = () => {
       case 'permission-management':
         return role === 'admin' ? <PermissionManagementNew token={localStorage.getItem('token')} /> : <NoAccessMessage />;
       case 'franchise-dashboard':
-        return (role === 'admin' || role === 'franchise') ? <FranchiseDashboard currentUser={currentUser} /> : <NoAccessMessage />;
+        return (role === 'admin' || role === 'franchise' || role === 'subfranchise') ? (
+          <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'subfranchise-management':
-        return (role === 'admin' || role === 'franchise') ? <SubFranchiseManagement /> : <NoAccessMessage />;
+        return (role === 'admin' || role === 'franchise') ? (
+          <SubFranchiseManagement currentUser={currentUser} locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       default:
-        if (role === 'chef') return <KitchenDisplaySystem />;
+        if (role === 'chef') return <KitchenDisplaySystem locationSettings={locationSettings} />;
         if (role === 'waiter') return <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />;
-        if (role === 'franchise') return <FranchiseDashboard currentUser={currentUser} />;
+        if (role === 'franchise' || role === 'subfranchise') {
+          return <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />;
+        }
         return <Dashboard locationSettings={locationSettings} />;
     }
   };
@@ -228,7 +225,7 @@ const App = () => {
           handleLocationChange={handleLocationChange}
           handleLogout={handleLogout}
         />
-        <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto">
+        <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto bg-[#FFF8F0]">
           {children}
         </main>
       </div>
@@ -258,7 +255,7 @@ const App = () => {
           handleLocationChange={handleLocationChange}
           handleLogout={handleLogout}
         />
-        <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto">
+        <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto bg-[#FFF8F0]">
           {renderContent()}
         </main>
       </div>
@@ -267,108 +264,156 @@ const App = () => {
 
   return (
     <ErrorBoundary>
-      <Routes>
-        {/* Public Routes */}
-        <Route path="/" element={<LandingPage />} />
-        <Route 
-          path="/login" 
-          element={
-            localStorage.getItem('token') && localStorage.getItem('user') ? 
-            <Navigate to="/dashboard" /> : 
-            <Login onLogin={handleLogin} />
-          } 
-        />
+      <Suspense fallback={<LoadingSpinner />}>
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/" element={<LandingPage />} />
+          <Route 
+            path="/login" 
+            element={
+              localStorage.getItem('token') && localStorage.getItem('user') ? 
+              <Navigate to="/dashboard" replace /> : 
+              <Login onLogin={handleLogin} />
+            } 
+          />
 
-        {/* Protected Routes */}
-        <Route path="/dashboard" element={
-          <ProtectedRoute>
-            <DashboardLayout />
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/menu" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise']}>
-              <MenuLayout>
-                <MenuManagement locationSettings={locationSettings} />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/dinein" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise', 'waiter']}>
-              <MenuLayout>
-                <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/inventory" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise']}>
-              <MenuLayout>
-                <InventoryManagement />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/billing" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise', 'waiter']}>
-              <MenuLayout>
-                <BillingPage locationSettings={locationSettings} />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/reports" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'manager']}>
-              <MenuLayout>
-                <Reports locationSettings={locationSettings} />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/kitchen" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'chef', 'manager', 'waiter']}>
-              <MenuLayout>
-                <KitchenDisplaySystem />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/qr-management" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'manager', 'waiter']}>
-              <MenuLayout>
-                <QRManagement locationSettings={locationSettings} />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/takeaway" element={
-          <ProtectedRoute>
-            <RoleBasedRoute allowedRoles={['admin', 'manager', 'waiter']}>
-              <MenuLayout>
-                <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
-              </MenuLayout>
-            </RoleBasedRoute>
-          </ProtectedRoute>
-        } />
+          {/* Protected Routes */}
+          <Route path="/dashboard" element={
+            <ProtectedRoute>
+              <DashboardLayout />
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/menu" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_menu', 'manage_menu', 'create_menu_item', 'edit_menu_item', 'delete_menu_item']}>
+                <MenuLayout>
+                  <MenuManagement locationSettings={locationSettings} />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/dinein" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
+                <MenuLayout>
+                  <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/inventory" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_inventory', 'manage_inventory', 'edit_inventory']}>
+                <MenuLayout>
+                  <InventoryManagement />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/billing" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise', 'waiter']} requiredPermissions={['view_billing', 'process_payments', 'view_bills']}>
+                <MenuLayout>
+                  <BillingPage locationSettings={locationSettings} />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/reports" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager']} requiredPermissions={['view_reports', 'view_dashboard']}>
+                <MenuLayout>
+                  <Reports locationSettings={locationSettings} />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/kitchen" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'chef', 'manager', 'waiter']} requiredPermissions={['kitchen_display']}>
+                <MenuLayout>
+                  <KitchenDisplaySystem locationSettings={locationSettings} />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/qr-management" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['manage_qr_codes']}>
+                <MenuLayout>
+                  <QRManagement locationSettings={locationSettings} />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/takeaway" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
+                <MenuLayout>
+                  <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
+                </MenuLayout>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
 
-        {/* Fallback route */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          <Route path="/users" element={
+            <ProtectedRoute>
+              <RoleBasedRoute allowedRoles={['admin']}>
+                <MenuLayout>
+                  <UserManagement token={localStorage.getItem('token')} />
+                </MenuLayout>
+              </RoleBasedRoute>
+            </ProtectedRoute>
+          } />
+
+          <Route path="/permissions" element={
+            <ProtectedRoute>
+              <RoleBasedRoute allowedRoles={['admin']}>
+                <MenuLayout>
+                  <PermissionManagementNew token={localStorage.getItem('token')} />
+                </MenuLayout>
+              </RoleBasedRoute>
+            </ProtectedRoute>
+          } />
+
+          <Route path="/franchise-overview" element={
+            <ProtectedRoute>
+              <RoleBasedRoute allowedRoles={['admin', 'franchise']}>
+                <MenuLayout>
+                  <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />
+                </MenuLayout>
+              </RoleBasedRoute>
+            </ProtectedRoute>
+          } />
+
+          <Route path="/manage-sub-franchises" element={
+            <ProtectedRoute>
+              <RoleBasedRoute allowedRoles={['admin', 'franchise']}>
+                <MenuLayout>
+                  <SubFranchiseManagement currentUser={currentUser} />
+                </MenuLayout>
+              </RoleBasedRoute>
+            </ProtectedRoute>
+          } />
+
+          {/* QR Ordering Route - Public */}
+          <Route path="/qr-ordering" element={<QRCodeOrdering locationSettings={locationSettings} />} />
+
+          {/* Order Confirmation Route - Public */}
+          <Route path="/order-confirmation/:tableId?" element={<OrderConfirmation />} />
+
+          {/* Fallback route */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </ErrorBoundary>
   );
 };

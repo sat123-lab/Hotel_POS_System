@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { TrendingUp, Users, DollarSign, Package, Calendar, BarChart3, PieChart as PieChartIcon, ShoppingCart, TrendingDown, Activity, Download, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { io } from 'socket.io-client';
-import { authFetch, API_URL } from '../utils/api';
+import { authFetch, getSocketUrl } from '../utils/api';
+import useCurrency from '../hooks/useCurrency';
 
 
 
@@ -12,7 +13,7 @@ import { authFetch, API_URL } from '../utils/api';
 
 
 const Dashboard = ({ locationSettings }) => {
-
+    const { format: fmt } = useCurrency(locationSettings);
 
     // Authentication check
     const navigate = useNavigate();
@@ -159,24 +160,24 @@ const Dashboard = ({ locationSettings }) => {
             }
 
             const activeOrders = orders.filter(o => o.status !== 'NOT_AVAILABLE');
-            const completedOrders = orders.filter(o => o.status === 'completed');
+            // Include both completed AND delivered orders in sales calculations
+            const reportableOrders = orders.filter(o => o.status === 'completed' || o.status === 'delivered');
             let totalOrdersToday = activeOrders.length;
-            const totalSalesToday = completedOrders.reduce((sum, order) => sum + order.total, 0);
+            const totalSalesToday = reportableOrders.reduce((sum, order) => sum + order.total, 0);
 
-            let liveOrders = 0;
-            if (selectedDate === todayLocalDate) {
-                const liveOrdersRes = await authFetch('/api/orders/live-count');
-                if (liveOrdersRes.ok) {
-                    const liveOrdersData = await liveOrdersRes.json();
-                    liveOrders = liveOrdersData.count || 0;
-                }
-            }
+            // Calculate Live Orders client-side (exclude completed, delivered, NOT_AVAILABLE)
+            const liveOrders = orders.filter(o => 
+                o.status !== 'completed' && 
+                o.status !== 'delivered' && 
+                o.status !== 'NOT_AVAILABLE'
+            ).length;
 
             totalOrdersToday = activeOrders.length;
 
             const itemCounts = {};
             let totalItemsSold = 0;
-            completedOrders.forEach(order => {
+            // Count items from both completed and delivered orders
+            reportableOrders.forEach(order => {
                 (order.items || []).forEach(item => {
                     const quantity = item.quantity || item.qty || 1;
                     itemCounts[item.name] = (itemCounts[item.name] || 0) + quantity;
@@ -249,7 +250,7 @@ const Dashboard = ({ locationSettings }) => {
                 <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
                     <p className="text-sm font-semibold text-gray-800">{label}</p>
                     <p className="text-sm text-gray-600">
-                        {payload[0].name}: <span className="font-bold text-indigo-600">{locationSettings.currencySymbol}{payload[0].value.toFixed(2)}</span>
+                        {payload[0].name}: <span className="font-bold text-indigo-600">{fmt(payload[0].value)}</span>
                     </p>
                 </div>
             );
@@ -278,7 +279,7 @@ const Dashboard = ({ locationSettings }) => {
     }, [fetchDashboardData]);
 
     useEffect(() => {
-        const socket = io(API_URL.replace('https://', 'wss://').replace('http://', 'ws://'));
+        const socket = io(getSocketUrl());
         socket.on('order_status_updated', () => {
             fetchDashboardData();
         });
@@ -323,9 +324,10 @@ const Dashboard = ({ locationSettings }) => {
             hourlySales[displayHour] = 0;
         }
 
-        const completedOrders = ordersData.filter(order => order.status === 'completed');
+        // Include both completed and delivered orders in sales trend
+        const reportableOrders = ordersData.filter(order => order.status === 'completed' || order.status === 'delivered');
 
-        completedOrders.forEach(order => {
+        reportableOrders.forEach(order => {
             const orderDate = new Date(order.timestamp || order.created_at);
             const hour = orderDate.getHours();
             const displayHour = hour === 0 ? '12 AM' : 
@@ -342,38 +344,34 @@ const Dashboard = ({ locationSettings }) => {
 
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-            {/* Header Section */}
-            <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 shadow-2xl">
-                <div className="px-6 py-8">
+        <div className="min-h-screen bg-[#FFF8F0]">
+            {/* Header Section - Orange Theme Matching Reference Image */}
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mx-4 mt-4">
+                <div className="px-6 py-6">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h2 className="text-4xl font-bold text-white mb-2">Dashboard & Analytics</h2>
-                            <p className="text-blue-100 text-lg">Real-time restaurant performance metrics</p>
+                            <h2 className="text-3xl font-bold text-white mb-1">Dashboard & Analytics</h2>
+                            <p className="text-orange-100 text-base">Real-time restaurant performance metrics</p>
                         </div>
-                        <div className="hidden md:flex items-center space-x-4">
-                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-lg backdrop-blur-sm">
+                        <div className="hidden md:flex items-center space-x-3">
+                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
                                 <Activity className="w-4 h-4 text-green-300 animate-pulse" />
                                 <span className="text-white text-sm font-medium">Live</span>
                             </div>
                             <button
                                 onClick={handleRefresh}
-                                className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-lg backdrop-blur-sm hover:bg-white/30 transition-colors"
+                                className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm hover:bg-white/30 transition-colors"
                                 disabled={isRefreshing}
                             >
                                 <RefreshCw className={`w-4 h-4 text-white ${isRefreshing ? 'animate-spin' : ''}`} />
                                 <span className="text-white text-sm font-medium">Refresh</span>
                             </button>
-                            <div className="flex items-center space-x-2">
-                                <BarChart3 className="w-8 h-8 text-blue-200" />
-                                <PieChartIcon className="w-8 h-8 text-purple-200" />
-                            </div>
                         </div>
                     </div>
-                    <div className="mt-4 flex items-center space-x-4">
+                    <div className="mt-3 flex items-center space-x-4">
                         <div className="flex items-center space-x-2">
                             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                            <span className="text-blue-100 text-sm">Last updated: {lastUpdated.toLocaleTimeString()}</span>
+                            <span className="text-orange-100 text-sm">Last updated: {lastUpdated.toLocaleTimeString()}</span>
                         </div>
                         {selectedDate === todayLocalDate && (
                             <div className="flex items-center space-x-2 bg-green-500/20 px-3 py-1 rounded-full">
@@ -387,10 +385,12 @@ const Dashboard = ({ locationSettings }) => {
 
             {/* Date Picker Section */}
             <div className="px-6 py-4">
-                <div className="bg-white/80 backdrop-blur-sm border border-white/20 rounded-2xl shadow-lg p-6">
+                <div className="bg-white rounded-2xl shadow-lg p-6">
                     <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-6">
                         <div className="flex items-center space-x-3">
-                            <Calendar className="w-5 h-5 text-indigo-600" />
+                            <div className="p-2 bg-orange-100 rounded-xl">
+                                <Calendar className="w-5 h-5 text-orange-500" />
+                            </div>
                             <label htmlFor="date-picker" className="text-lg font-semibold text-gray-700">
                                 Select Date:
                             </label>
@@ -400,10 +400,10 @@ const Dashboard = ({ locationSettings }) => {
                             id="date-picker"
                             value={selectedDate}
                             onChange={(e) => setSelectedDate(e.target.value)}
-                            className="px-4 py-3 border-2 border-indigo-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white shadow-sm transition-all duration-200"
+                            className="px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white shadow-sm transition-all duration-200"
                             max={todayLocalDate}
                         />
-                        <span className="text-sm text-gray-600 bg-indigo-50 px-4 py-2 rounded-lg font-medium">
+                        <span className="text-sm text-gray-600 bg-orange-50 px-4 py-2 rounded-lg font-medium">
                             {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { 
                                 weekday: 'long', 
                                 year: 'numeric', 
@@ -419,73 +419,65 @@ const Dashboard = ({ locationSettings }) => {
 
             <div className="px-6 pb-8">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <div className="group relative bg-gradient-to-br from-orange-400 to-orange-600 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                        <div className="relative z-10">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                    <ShoppingCart className="w-6 h-6 text-white" />
-                                </div>
-                                <span className="text-white/80 text-sm font-medium">Live</span>
+                    {/* Live Orders Card - Orange */}
+                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="p-3 bg-orange-100 rounded-xl">
+                                <ShoppingCart className="w-6 h-6 text-orange-500" />
                             </div>
-                            <p className="text-white/90 text-sm font-medium mb-1">Live Orders</p>
-                            <p className="text-4xl font-bold text-white">{salesData.liveOrders}</p>
+                            <span className="text-orange-500 text-sm font-medium bg-orange-50 px-3 py-1 rounded-full">Live</span>
                         </div>
+                        <p className="text-gray-500 text-sm font-medium mb-1">Live Orders</p>
+                        <p className="text-3xl font-bold text-gray-800">{salesData.liveOrders}</p>
                     </div>
 
-                    <div className="group relative bg-gradient-to-br from-blue-500 to-blue-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                        <div className="relative z-10">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                    <Users className="w-6 h-6 text-white" />
-                                </div>
-                                <span className="text-white/80 text-sm font-medium">Today</span>
+                    {/* Total Orders Card - Blue */}
+                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="p-3 bg-blue-100 rounded-xl">
+                                <Users className="w-6 h-6 text-blue-500" />
                             </div>
-                            <p className="text-white/90 text-sm font-medium mb-1">Total Orders</p>
-                            <p className="text-4xl font-bold text-white">{salesData.totalOrdersToday}</p>
+                            <span className="text-blue-500 text-sm font-medium bg-blue-50 px-3 py-1 rounded-full">Today</span>
                         </div>
+                        <p className="text-gray-500 text-sm font-medium mb-1">Total Orders</p>
+                        <p className="text-3xl font-bold text-gray-800">{salesData.totalOrdersToday}</p>
                     </div>
 
-                    <div className="group relative bg-gradient-to-br from-green-500 to-green-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                        <div className="relative z-10">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                    <DollarSign className="w-6 h-6 text-white" />
-                                </div>
-                                <span className="text-white/80 text-sm font-medium">Revenue</span>
+                    {/* Total Sales Card - Green */}
+                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="p-3 bg-green-100 rounded-xl">
+                                <DollarSign className="w-6 h-6 text-green-500" />
                             </div>
-                            <p className="text-white/90 text-sm font-medium mb-1">Total Sales</p>
-                            <p className="text-4xl font-bold text-white">{locationSettings.currencySymbol}{salesData.totalSalesToday}</p>
+                            <span className="text-green-500 text-sm font-medium bg-green-50 px-3 py-1 rounded-full">Revenue</span>
                         </div>
+                        <p className="text-gray-500 text-sm font-medium mb-1">Total Sales</p>
+                        <p className="text-3xl font-bold text-gray-800">{fmt(salesData.totalSalesToday)}</p>
                     </div>
 
-                    <div className="group relative bg-gradient-to-br from-purple-500 to-purple-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                        <div className="relative z-10">
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                    <Package className="w-6 h-6 text-white" />
-                                </div>
-                                <span className="text-white/80 text-sm font-medium">Items</span>
+                    {/* Total Items Card - Purple */}
+                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="p-3 bg-purple-100 rounded-xl">
+                                <Package className="w-6 h-6 text-purple-500" />
                             </div>
-                            <p className="text-white/90 text-sm font-medium mb-1">Total Items</p>
-                            <p className="text-4xl font-bold text-white">{salesData.totalItemsSold}</p>
+                            <span className="text-purple-500 text-sm font-medium bg-purple-50 px-3 py-1 rounded-full">Items</span>
                         </div>
+                        <p className="text-gray-500 text-sm font-medium mb-1">Total Items</p>
+                        <p className="text-3xl font-bold text-gray-800">{salesData.totalItemsSold}</p>
                     </div>
                 </div>
             </div>
 
-            {/* Charts Section */}
+            {/* Charts Section - Reference Image Style: White cards */}
             <div className="px-6 pb-8">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     {/* Orders by Type Pie Chart */}
-                    <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-xl p-6">
+                    <div className="bg-white rounded-2xl shadow-lg p-6">
                         <div className="flex items-center justify-between mb-6">
                             <div className="flex items-center">
-                                <div className="p-2 bg-indigo-100 rounded-lg mr-3">
-                                    <PieChartIcon className="w-5 h-5 text-indigo-600" />
+                                <div className="p-2 bg-orange-100 rounded-xl mr-3">
+                                    <PieChartIcon className="w-5 h-5 text-orange-500" />
                                 </div>
                                 <h3 className="text-xl font-bold text-gray-800">Orders by Type</h3>
                             </div>
@@ -526,11 +518,11 @@ const Dashboard = ({ locationSettings }) => {
                     </div>
 
                     {/* Sales Trend Line Chart */}
-                    <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-xl p-6">
+                    <div className="bg-white rounded-2xl shadow-lg p-6">
                         <div className="flex items-center justify-between mb-6">
                             <div className="flex items-center">
-                                <div className="p-2 bg-green-100 rounded-lg mr-3">
-                                    <TrendingUp className="w-5 h-5 text-green-600" />
+                                <div className="p-2 bg-green-100 rounded-xl mr-3">
+                                    <TrendingUp className="w-5 h-5 text-green-500" />
                                 </div>
                                 <h3 className="text-xl font-bold text-gray-800">Sales Trend ({new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})</h3>
                             </div>
@@ -552,16 +544,16 @@ const Dashboard = ({ locationSettings }) => {
                                     <YAxis 
                                         stroke="#6b7280"
                                         tick={{ fontSize: 12 }}
-                                        tickFormatter={(value) => `${locationSettings.currencySymbol}${value}`}
+                                        tickFormatter={(value) => fmt(value)}
                                     />
                                     <RechartsTooltip content={<CustomTooltip />} />
                                     <Legend />
                                     <Line 
                                         type="monotone" 
                                         dataKey="sales" 
-                                        stroke="#6366f1" 
+                                        stroke="#f59e42" 
                                         strokeWidth={3} 
-                                        dot={{ r: 5, fill: '#6366f1' }}
+                                        dot={{ r: 5, fill: '#f59e42' }}
                                         activeDot={{ r: 7 }}
                                         name="Sales"
                                     />
@@ -574,13 +566,13 @@ const Dashboard = ({ locationSettings }) => {
 
 
 
-            {/* Top Selling Items Section */}
+            {/* Top Selling Items Section - Reference Image Style */}
             <div className="px-6 pb-8">
-                <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-xl p-6">
+                <div className="bg-white rounded-2xl shadow-lg p-6">
                     <div className="flex items-center justify-between mb-6">
                         <div className="flex items-center">
-                            <div className="p-2 bg-purple-100 rounded-lg mr-3">
-                                <Package className="w-5 h-5 text-purple-600" />
+                            <div className="p-2 bg-orange-100 rounded-xl mr-3">
+                                <Package className="w-5 h-5 text-orange-500" />
                             </div>
                             <h3 className="text-xl font-bold text-gray-800">Top-Selling Items ({new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})</h3>
                         </div>
@@ -591,9 +583,9 @@ const Dashboard = ({ locationSettings }) => {
                     {isLoading ? (
                         <div className="space-y-3">
                             {[1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
                                     <div className="flex items-center space-x-4">
-                                        <div className="w-10 h-10 bg-gray-200 rounded-lg animate-pulse"></div>
+                                        <div className="w-10 h-10 bg-gray-200 rounded-xl animate-pulse"></div>
                                         <div>
                                             <div className="w-32 h-4 bg-gray-200 rounded animate-pulse mb-2"></div>
                                             <div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div>
@@ -608,8 +600,8 @@ const Dashboard = ({ locationSettings }) => {
                         </div>
                     ) : salesData.topSellingItems.length === 0 ? (
                         <div className="text-center py-12">
-                            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <Package className="w-8 h-8 text-gray-400" />
+                            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Package className="w-8 h-8 text-orange-400" />
                             </div>
                             <p className="text-gray-500 text-lg">No sales data yet.</p>
                             <p className="text-gray-400 text-sm mt-2">Start taking orders to see your best-selling items here</p>
@@ -617,18 +609,18 @@ const Dashboard = ({ locationSettings }) => {
                     ) : (
                         <div className="space-y-3">
                             {salesData.topSellingItems.map((item, index) => (
-                                <div key={index} className="group flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-all duration-200 hover:shadow-md">
+                                <div key={index} className="group flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-orange-50 transition-all duration-200 hover:shadow-md">
                                     <div className="flex items-center space-x-4">
-                                        <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold shadow-lg">
+                                        <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg">
                                             {index + 1}
                                         </div>
                                         <div>
                                             <p className="text-lg font-semibold text-gray-900">{item.name}</p>
-                                            <p className="text-sm text-gray-500">Best seller</p>
+                                            <p className="text-sm text-orange-500 font-medium">Best seller</p>
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-xl font-bold text-gray-900">{item.count}</p>
+                                        <p className="text-xl font-bold text-orange-600">{item.count}</p>
                                         <p className="text-sm text-gray-500">items sold</p>
                                     </div>
                                 </div>

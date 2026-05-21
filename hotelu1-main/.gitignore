@@ -49,17 +49,27 @@ ehthumbs.db
 *.bak
 *.temp
 .cache/
+node_modules/.cache/
+
+# React specific
+.eslintcache
+
+# Service worker
+*.worker.js
+service-worker.js
+sw.js
 
 # Documentation files (optional - uncomment if needed)
 # DOCUMENTATION_INDEX.md
 # QUICK_START_GUIDE.md
 # README.md
 
-# Test files (optional - uncomment if needed)
-# test-*.js
-# test-*.ps1
-# *-test.js
-# *.test.js
+# Local debug / one-off scripts
+backend/check-*.js
+backend/test-*.js
+backend/clear-demo-data.js
+backend/delete-all-menu.js
+*.backup
 
 # Database
 *.db

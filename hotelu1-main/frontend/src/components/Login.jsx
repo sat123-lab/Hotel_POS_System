@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-
 import { useNavigate } from "react-router-dom";
+import { getAPI_URL } from '../utils/api';
 
 
 
@@ -28,11 +28,7 @@ const Login = ({ onLogin }) => {
 
         try {
 
-            const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3002';
-
-            console.log("Attempting login to:", API_URL);
-
-            const response = await fetch(`${API_URL}/api/login`, {
+            const response = await fetch(`${getAPI_URL()}/api/login`, {
 
                 method: "POST",
 
@@ -109,34 +105,20 @@ const Login = ({ onLogin }) => {
 
 
     return (
-
-        <div className="min-h-screen relative flex items-center justify-center">
-
-            {/* Background Image */}
-
-            <div className="fixed inset-0 z-0">
-
-                <img 
-
-                    src="/restaurant-bg.jpg" 
-
-                    alt="Restaurant Background" 
-
-                    className="w-full h-full object-cover"
-
-                />
-
-                <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-gray-900/80 to-black/90"></div>
-
+        <div className="min-h-screen relative flex items-center justify-center bg-[#FFF8F0]">
+            {/* Background Pattern */}
+            <div className="absolute inset-0 opacity-30">
+                <div className="absolute inset-0 bg-gradient-to-br from-orange-200/50 via-orange-100/30 to-amber-200/50"></div>
+                {/* Subtle pattern overlay */}
+                <div className="absolute inset-0" style={{
+                    backgroundImage: `radial-gradient(circle at 25% 25%, rgba(249, 115, 22, 0.1) 0%, transparent 50%), 
+                                      radial-gradient(circle at 75% 75%, rgba(251, 146, 60, 0.1) 0%, transparent 50%)`
+                }}></div>
             </div>
 
-            
-
-            {/* Login Form Container */}
-
-            <div className="relative z-10 w-full max-w-md mx-4">
-
-                <div className="bg-white/10 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/20 overflow-hidden">
+            {/* Login Card */}
+            <div className="relative w-full max-w-md mx-4 animate-slide-up">
+                <div className="bg-white rounded-3xl shadow-2xl border border-orange-100 overflow-hidden">
 
                     {/* Header */}
 
@@ -194,7 +176,7 @@ const Login = ({ onLogin }) => {
 
                                     onChange={(e) => setUsername(e.target.value)}
 
-                                    className="w-full px-5 py-4 bg-white/10 border-2 border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 transition-all duration-500 backdrop-blur-sm"
+                                    className="w-full px-5 py-4 bg-white/95 border-2 border-gray-300 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400 transition-all duration-500"
 
                                     placeholder="Enter your username"
 
@@ -226,7 +208,7 @@ const Login = ({ onLogin }) => {
 
                                     onChange={(e) => setPassword(e.target.value)}
 
-                                    className="w-full px-5 py-4 bg-white/10 border-2 border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400/50 transition-all duration-500 backdrop-blur-sm"
+                                    className="w-full px-5 py-4 bg-white/95 border-2 border-gray-300 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400 transition-all duration-500"
 
                                     placeholder="Enter your password"
 
@@ -298,41 +280,53 @@ const Login = ({ onLogin }) => {
 
                         {/* Demo Credentials */}
 
-                        <div className="mt-8 p-6 bg-white/5 backdrop-blur-md rounded-2xl border border-white/10">
+                        <div className="mt-8 p-6 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-md rounded-2xl border-2 border-orange-400/50 shadow-lg shadow-orange-500/20">
 
-                            <p className="text-sm font-bold text-white/90 mb-4 text-center tracking-wide">🔑 Demo Credentials:</p>
+                            <p className="text-base font-bold text-orange-300 mb-4 text-center tracking-wide">🔑 Demo Credentials (Click to Auto-fill):</p>
 
                             <div className="space-y-3">
 
-                                <div className="flex justify-between items-center bg-white/10 p-3 rounded-xl border border-white/10 backdrop-blur-sm">
+                                <div 
+                                    onClick={() => { setUsername('admin'); setPassword('admin'); }}
+                                    className="flex justify-between items-center bg-gradient-to-r from-orange-500/30 to-red-500/30 p-4 rounded-xl border-2 border-orange-400/50 backdrop-blur-sm cursor-pointer hover:from-orange-500/50 hover:to-red-500/50 hover:scale-[1.02] hover:shadow-lg hover:shadow-orange-500/30 transition-all duration-300 group"
+                                >
 
-                                    <span className="font-semibold text-white/80 text-sm">Admin:</span>
+                                    <span className="font-bold text-white text-base">👤 Admin:</span>
 
-                                    <span className="text-orange-300 font-mono text-sm bg-black/20 px-3 py-1 rounded-lg">admin / admin</span>
-
-                                </div>
-
-                                <div className="flex justify-between items-center bg-white/10 p-3 rounded-xl border border-white/10 backdrop-blur-sm">
-
-                                    <span className="font-semibold text-white/80 text-sm">Manager:</span>
-
-                                    <span className="text-orange-300 font-mono text-sm bg-black/20 px-3 py-1 rounded-lg">manager / pass2</span>
+                                    <span className="text-yellow-300 font-mono text-base font-bold bg-black/40 px-4 py-2 rounded-lg border border-orange-400/30 group-hover:bg-black/60 transition-all">admin / admin</span>
 
                                 </div>
 
-                                <div className="flex justify-between items-center bg-white/10 p-3 rounded-xl border border-white/10 backdrop-blur-sm">
+                                <div 
+                                    onClick={() => { setUsername('manager'); setPassword('pass2'); }}
+                                    className="flex justify-between items-center bg-white/15 p-3 rounded-xl border border-white/20 backdrop-blur-sm cursor-pointer hover:bg-white/25 hover:scale-[1.02] hover:shadow-lg transition-all duration-300 group"
+                                >
 
-                                    <span className="font-semibold text-white/80 text-sm">Waiter:</span>
+                                    <span className="font-semibold text-white/90 text-sm">👤 Manager:</span>
 
-                                    <span className="text-orange-300 font-mono text-sm bg-black/20 px-3 py-1 rounded-lg">waiter / pass</span>
+                                    <span className="text-orange-300 font-mono text-sm font-bold bg-black/30 px-3 py-1 rounded-lg group-hover:bg-black/50 transition-all">manager / pass2</span>
 
                                 </div>
 
-                                <div className="flex justify-between items-center bg-white/10 p-3 rounded-xl border border-white/10 backdrop-blur-sm">
+                                <div 
+                                    onClick={() => { setUsername('waiter'); setPassword('pass'); }}
+                                    className="flex justify-between items-center bg-white/15 p-3 rounded-xl border border-white/20 backdrop-blur-sm cursor-pointer hover:bg-white/25 hover:scale-[1.02] hover:shadow-lg transition-all duration-300 group"
+                                >
 
-                                    <span className="font-semibold text-white/80 text-sm">Chef:</span>
+                                    <span className="font-semibold text-white/90 text-sm">👤 Waiter:</span>
 
-                                    <span className="text-orange-300 font-mono text-sm bg-black/20 px-3 py-1 rounded-lg">chef / pass1</span>
+                                    <span className="text-orange-300 font-mono text-sm font-bold bg-black/30 px-3 py-1 rounded-lg group-hover:bg-black/50 transition-all">waiter / pass</span>
+
+                                </div>
+
+                                <div 
+                                    onClick={() => { setUsername('chef'); setPassword('pass1'); }}
+                                    className="flex justify-between items-center bg-white/15 p-3 rounded-xl border border-white/20 backdrop-blur-sm cursor-pointer hover:bg-white/25 hover:scale-[1.02] hover:shadow-lg transition-all duration-300 group"
+                                >
+
+                                    <span className="font-semibold text-white/90 text-sm">👤 Chef:</span>
+
+                                    <span className="text-orange-300 font-mono text-sm font-bold bg-black/30 px-3 py-1 rounded-lg group-hover:bg-black/50 transition-all">chef / pass1</span>
 
                                 </div>
 

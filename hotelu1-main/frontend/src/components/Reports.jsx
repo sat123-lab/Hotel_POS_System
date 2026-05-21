@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { authFetch } from '../utils/api';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, BarChart, Bar } from 'recharts';
 import { TrendingUp, DollarSign, Package, Calendar, Download, FileText, BarChart3, PieChart as PieChartIcon, Filter, RefreshCw, Activity } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import useCurrency from '../hooks/useCurrency';
 
 const Reports = ({ locationSettings }) => {
+    const { format: fmt } = useCurrency(locationSettings);
     const [reportType, setReportType] = useState('daily');
     const [startDate, setStartDate] = useState(() => {
         const today = new Date();
@@ -58,7 +61,7 @@ const Reports = ({ locationSettings }) => {
                 <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
                     <p className="text-sm font-semibold text-gray-800">{label}</p>
                     <p className="text-sm text-gray-600">
-                        Sales: <span className="font-bold text-indigo-600">{locationSettings.currencySymbol}{payload[0].value.toFixed(2)}</span>
+                        Sales: <span className="font-bold text-indigo-600">{fmt(payload[0].value)}</span>
                     </p>
                 </div>
             );
@@ -168,18 +171,18 @@ const Reports = ({ locationSettings }) => {
         return formatYMD(d); // weekly + monthly
     };
 
-    const exportReportToExcel = useCallback((type, start, end, summary, orders, currencySymbol) => {
+    const exportReportToExcel = useCallback((type, start, end, summary, orders, formatAmount) => {
         const workbook = XLSX.utils.book_new();
 
         const summaryRows = [
             { Metric: 'Report Type', Value: type },
             { Metric: 'Start Date', Value: start },
             { Metric: 'End Date', Value: end },
-            { Metric: 'Total Sales', Value: `${currencySymbol || ''}${summary.totalSales}` },
+            { Metric: 'Total Sales', Value: formatAmount(summary.totalSales) },
             { Metric: 'Total Orders', Value: summary.totalOrders },
             { Metric: 'Total Items Sold', Value: summary.totalItems },
-            { Metric: 'Avg. Order Value', Value: `${currencySymbol || ''}${summary.avgOrderValue}` },
-            { Metric: 'Profit/Loss', Value: `${currencySymbol || ''}${summary.profitLoss}` },
+            { Metric: 'Avg. Order Value', Value: formatAmount(summary.avgOrderValue) },
+            { Metric: 'Profit/Loss', Value: formatAmount(summary.profitLoss) },
         ];
         const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
         XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
@@ -332,7 +335,7 @@ const Reports = ({ locationSettings }) => {
         try {
             if (!isRefreshing) setIsLoading(true);
             console.log('Fetching report data for dates:', { startDate, endDate, reportType });
-            const res = await fetch(`https://hotel-pos-system.onrender.com/api/orders?startDate=${startDate}&endDate=${endDate}`);
+            const res = await authFetch(`/api/orders?startDate=${startDate}&endDate=${endDate}`);
             if (!res.ok) {
                 console.error('Server error:', res.status, res.statusText);
                 setReportData({
@@ -455,7 +458,7 @@ const Reports = ({ locationSettings }) => {
                         avgOrderValue: avgOrderValue.toFixed(2),
                     },
                     reportableOrders,
-                    locationSettings?.currencySymbol,
+                    (n) => fmt(n),
                 );
             }
             setIsLoading(false);
@@ -465,7 +468,7 @@ const Reports = ({ locationSettings }) => {
             setIsLoading(false);
             setIsRefreshing(false);
         }
-    }, [startDate, endDate, reportType, locationSettings?.currencySymbol, exportReportToExcel, isRefreshing]);
+    }, [startDate, endDate, reportType, locationSettings?.country, exportReportToExcel, isRefreshing, fmt]);
 
     const getSalesTrend = (orders, type) => {
         const trendData = {};
@@ -600,35 +603,31 @@ const Reports = ({ locationSettings }) => {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-            {/* Header Section */}
-            <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 shadow-2xl">
-                <div className="px-6 py-8">
+        <div className="min-h-screen bg-[#FFF8F0]">
+            {/* Header Section - Orange Theme */}
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mx-4 mt-4">
+                <div className="px-6 py-6">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h2 className="text-4xl font-bold text-white mb-2">Sales Reports</h2>
-                            <p className="text-blue-100 text-lg">Comprehensive business analytics & insights</p>
+                            <h2 className="text-3xl font-bold text-white mb-1">Sales Reports</h2>
+                            <p className="text-orange-100 text-base">Comprehensive business analytics & insights</p>
                         </div>
-                        <div className="hidden md:flex items-center space-x-4">
-                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-lg backdrop-blur-sm">
-                                <FileText className="w-4 h-4 text-green-300" />
+                        <div className="hidden md:flex items-center space-x-3">
+                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
+                                <FileText className="w-4 h-4 text-white" />
                                 <span className="text-white text-sm font-medium">Reports</span>
                             </div>
                             <button
                                 onClick={handleRefresh}
-                                className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-lg backdrop-blur-sm hover:bg-white/30 transition-colors"
+                                className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm hover:bg-white/30 transition-colors"
                                 disabled={isRefreshing}
                             >
                                 <RefreshCw className={`w-4 h-4 text-white ${isRefreshing ? 'animate-spin' : ''}`} />
                                 <span className="text-white text-sm font-medium">Refresh</span>
                             </button>
-                            <div className="flex items-center space-x-2">
-                                <BarChart3 className="w-8 h-8 text-blue-200" />
-                                <PieChartIcon className="w-8 h-8 text-purple-200" />
-                            </div>
                         </div>
                     </div>
-                    <div className="mt-4 flex items-center space-x-4">
+                    <div className="mt-3 flex items-center space-x-4">
                         <div className="flex items-center space-x-2">
                             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
                             <span className="text-blue-100 text-sm">Last updated: {lastUpdated.toLocaleTimeString()}</span>
@@ -637,11 +636,11 @@ const Reports = ({ locationSettings }) => {
                 </div>
             </div>
 
-            {/* Report Controls */}
+            {/* Report Controls - Orange Theme */}
             <div className="px-6 py-4">
-                <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-lg p-6">
+                <div className="bg-white rounded-2xl shadow-lg p-6">
                     <div className="flex items-center mb-6">
-                        <Filter className="w-5 h-5 text-indigo-600 mr-2" />
+                        <Filter className="w-5 h-5 text-orange-500 mr-2" />
                         <h3 className="text-lg font-semibold text-gray-800">Report Filters</h3>
                     </div>
                     
@@ -656,7 +655,7 @@ const Reports = ({ locationSettings }) => {
                                 type="date"
                                 value={startDate}
                                 onChange={(e) => handleStartDateChange(e.target.value)}
-                                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white shadow-sm transition-all duration-200"
+                                className="w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white shadow-sm transition-all duration-200"
                                 max={todayLocalDate}
                             />
                         </div>
@@ -670,12 +669,12 @@ const Reports = ({ locationSettings }) => {
                                 type="date"
                                 value={endDate}
                                 onChange={(e) => handleEndDateChange(e.target.value)}
-                                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white shadow-sm transition-all duration-200"
+                                className="w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white shadow-sm transition-all duration-200"
                                 max={todayLocalDate}
                             />
                         </div>
 
-                        {/* Quick Date Range Buttons */}
+                        {/* Quick Date Range Buttons - Orange */}
                         <div>
                             <label className="flex items-center text-sm font-semibold text-gray-700 mb-2">
                                 <Activity className="w-4 h-4 mr-2" />
@@ -684,25 +683,25 @@ const Reports = ({ locationSettings }) => {
                             <div className="grid grid-cols-2 gap-2">
                                 <button
                                     onClick={() => setQuickDateRange('today')}
-                                    className="px-3 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors text-sm font-medium"
+                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
                                 >
                                     Today
                                 </button>
                                 <button
                                     onClick={() => setQuickDateRange('week')}
-                                    className="px-3 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors text-sm font-medium"
+                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
                                 >
                                     This Week
                                 </button>
                                 <button
                                     onClick={() => setQuickDateRange('month')}
-                                    className="px-3 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors text-sm font-medium"
+                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
                                 >
                                     This Month
                                 </button>
                                 <button
                                     onClick={() => setQuickDateRange('year')}
-                                    className="px-3 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors text-sm font-medium"
+                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
                                 >
                                     This Year
                                 </button>
@@ -718,7 +717,7 @@ const Reports = ({ locationSettings }) => {
                         </div>
                     )}
 
-                    {/* Action Buttons */}
+                    {/* Action Buttons - Orange */}
                     <div className="flex justify-center mt-6">
                         <button
                             onClick={() => fetchReportData(true)}
@@ -726,7 +725,7 @@ const Reports = ({ locationSettings }) => {
                             className={`w-full sm:w-auto font-bold py-3 px-8 rounded-xl transition-all duration-200 flex items-center justify-center ${
                                 isLoading 
                                     ? 'bg-gray-400 text-gray-200 cursor-not-allowed' 
-                                    : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5'
+                                    : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5'
                             }`}
                         >
                             {isLoading ? (
@@ -747,12 +746,12 @@ const Reports = ({ locationSettings }) => {
 
             {/* Report Title */}
             <div className="px-6 py-4">
-                <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-lg p-6 text-center">
+                <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl shadow-lg p-6 text-center">
                     <div className="flex items-center justify-center mb-2">
-                        <FileText className="w-6 h-6 text-indigo-600 mr-2" />
-                        <h3 className="text-2xl font-bold text-gray-800">{getReportTitle()}</h3>
+                        <FileText className="w-6 h-6 text-white mr-2" />
+                        <h3 className="text-2xl font-bold text-white">{getReportTitle()}</h3>
                     </div>
-                    <p className="text-gray-600">Business performance analytics for selected period</p>
+                    <p className="text-orange-100">Business performance analytics for selected period</p>
                 </div>
             </div>
 
@@ -768,7 +767,7 @@ const Reports = ({ locationSettings }) => {
                         </>
                     ) : (
                         <>
-                            <div className="group relative bg-gradient-to-br from-green-500 to-green-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
+                            <div className="group relative bg-gradient-to-br from-orange-500 to-orange-600 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
                                 <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
                                 <div className="relative z-10">
                                     <div className="flex items-center justify-between mb-4">
@@ -778,11 +777,11 @@ const Reports = ({ locationSettings }) => {
                                         <span className="text-white/80 text-sm font-medium">Revenue</span>
                                     </div>
                                     <p className="text-white/90 text-sm font-medium mb-1">Total Sales</p>
-                                    <p className="text-4xl font-bold text-white">{locationSettings.currencySymbol}{reportData.totalSales}</p>
+                                    <p className="text-4xl font-bold text-white">{fmt(reportData.totalSales)}</p>
                                 </div>
                             </div>
 
-                            <div className="group relative bg-gradient-to-br from-blue-500 to-blue-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
+                            <div className="group relative bg-gradient-to-br from-orange-400 to-orange-500 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
                                 <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
                                 <div className="relative z-10">
                                     <div className="flex items-center justify-between mb-4">
@@ -796,7 +795,7 @@ const Reports = ({ locationSettings }) => {
                                 </div>
                             </div>
 
-                            <div className="group relative bg-gradient-to-br from-purple-500 to-purple-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
+                            <div className="group relative bg-gradient-to-br from-amber-500 to-orange-500 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
                                 <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
                                 <div className="relative z-10">
                                     <div className="flex items-center justify-between mb-4">
@@ -810,7 +809,7 @@ const Reports = ({ locationSettings }) => {
                                 </div>
                             </div>
 
-                            <div className="group relative bg-gradient-to-br from-orange-500 to-orange-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
+                            <div className="group relative bg-gradient-to-br from-orange-600 to-orange-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
                                 <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
                                 <div className="relative z-10">
                                     <div className="flex items-center justify-between mb-4">
@@ -820,7 +819,7 @@ const Reports = ({ locationSettings }) => {
                                         <span className="text-white/80 text-sm font-medium">Average</span>
                                     </div>
                                     <p className="text-white/90 text-sm font-medium mb-1">Avg Order Value</p>
-                                    <p className="text-4xl font-bold text-white">{locationSettings.currencySymbol}{reportData.avgOrderValue}</p>
+                                    <p className="text-4xl font-bold text-white">{fmt(reportData.avgOrderValue)}</p>
                                 </div>
                             </div>
                         </>
@@ -832,16 +831,16 @@ const Reports = ({ locationSettings }) => {
             <div className="px-6 pb-8">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     {/* Orders by Type Pie Chart */}
-                    <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-xl p-6">
+                    <div className="bg-white rounded-2xl border-2 border-orange-100 shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
                         <div className="flex items-center justify-between mb-6">
                             <div className="flex items-center">
-                                <div className="p-2 bg-indigo-100 rounded-lg mr-3">
-                                    <PieChartIcon className="w-5 h-5 text-indigo-600" />
+                                <div className="p-2 bg-orange-100 rounded-xl mr-3">
+                                    <PieChartIcon className="w-5 h-5 text-orange-600" />
                                 </div>
                                 <h3 className="text-xl font-bold text-gray-800">Orders by Type</h3>
                             </div>
-                            <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                                <Download className="w-4 h-4 text-gray-600" />
+                            <button className="p-2 hover:bg-orange-50 rounded-lg transition-colors">
+                                <Download className="w-4 h-4 text-orange-600" />
                             </button>
                         </div>
                         {isLoading ? (
@@ -861,9 +860,9 @@ const Reports = ({ locationSettings }) => {
                                         labelLine={false}
                                         minAngle={15}
                                     >
-                                        <Cell key="dinein" fill="#34d399" />
-                                        <Cell key="takeaway" fill="#60a5fa" />
-                                        <Cell key="qr" fill="#f59e42" />
+                                        <Cell key="dinein" fill="#f97316" />
+                                        <Cell key="takeaway" fill="#fb923c" />
+                                        <Cell key="qr" fill="#fdba74" />
                                     </Pie>
                                     <RechartsTooltip content={<CustomPieTooltip />} />
                                     <Legend 
@@ -877,16 +876,16 @@ const Reports = ({ locationSettings }) => {
                     </div>
 
                     {/* Sales Trend Chart */}
-                    <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-xl p-6">
+                    <div className="bg-white rounded-2xl border-2 border-orange-100 shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
                         <div className="flex items-center justify-between mb-6">
                             <div className="flex items-center">
-                                <div className="p-2 bg-green-100 rounded-lg mr-3">
-                                    <TrendingUp className="w-5 h-5 text-green-600" />
+                                <div className="p-2 bg-orange-100 rounded-xl mr-3">
+                                    <TrendingUp className="w-5 h-5 text-orange-600" />
                                 </div>
                                 <h3 className="text-xl font-bold text-gray-800">Sales Trend</h3>
                             </div>
-                            <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                                <Download className="w-4 h-4 text-gray-600" />
+                            <button className="p-2 hover:bg-orange-50 rounded-lg transition-colors">
+                                <Download className="w-4 h-4 text-orange-600" />
                             </button>
                         </div>
                         {isLoading ? (
@@ -904,16 +903,16 @@ const Reports = ({ locationSettings }) => {
                                         <YAxis 
                                             stroke="#6b7280"
                                             tick={{ fontSize: 12 }}
-                                            tickFormatter={(value) => `${locationSettings.currencySymbol}${value}`}
+                                            tickFormatter={(value) => fmt(value)}
                                         />
                                         <RechartsTooltip content={<CustomTooltip />} />
                                         <Legend />
                                         <Line 
                                             type="monotone" 
                                             dataKey="sales" 
-                                            stroke="#6366f1" 
+                                            stroke="#f97316" 
                                             strokeWidth={3} 
-                                            dot={{ r: 5, fill: '#6366f1' }}
+                                            dot={{ r: 5, fill: '#f97316' }}
                                             activeDot={{ r: 7 }}
                                             name="Sales"
                                         />
@@ -929,13 +928,13 @@ const Reports = ({ locationSettings }) => {
                                         <YAxis 
                                             stroke="#6b7280"
                                             tick={{ fontSize: 12 }}
-                                            tickFormatter={(value) => `${locationSettings.currencySymbol}${value}`}
+                                            tickFormatter={(value) => fmt(value)}
                                         />
                                         <RechartsTooltip content={<CustomTooltip />} />
                                         <Legend />
                                         <Bar 
                                             dataKey="sales" 
-                                            fill="#6366f1" 
+                                            fill="#f97316" 
                                             name="Sales"
                                             radius={[8, 8, 0, 0]}
                                         />
@@ -949,60 +948,60 @@ const Reports = ({ locationSettings }) => {
 
             {/* Top Selling Items Section */}
             <div className="px-6 pb-8">
-                <div className="bg-white/90 backdrop-blur-sm border border-white/20 rounded-2xl shadow-xl p-6">
+                <div className="bg-white rounded-2xl border-2 border-orange-100 shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
                     <div className="flex items-center justify-between mb-6">
                         <div className="flex items-center">
-                            <div className="p-2 bg-purple-100 rounded-lg mr-3">
-                                <Package className="w-5 h-5 text-purple-600" />
+                            <div className="p-2 bg-orange-100 rounded-xl mr-3">
+                                <Package className="w-5 h-5 text-orange-600" />
                             </div>
                             <h3 className="text-xl font-bold text-gray-800">Top Selling Items</h3>
                         </div>
-                        <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                            <Download className="w-4 h-4 text-gray-600" />
+                        <button className="p-2 hover:bg-orange-50 rounded-lg transition-colors">
+                            <Download className="w-4 h-4 text-orange-600" />
                         </button>
                     </div>
                     {isLoading ? (
                         <div className="space-y-3">
                             {[1, 2, 3, 4, 5, 6].map((i) => (
-                                <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                <div key={i} className="flex items-center justify-between p-4 bg-orange-50 rounded-xl">
                                     <div className="flex items-center space-x-4">
-                                        <div className="w-10 h-10 bg-gray-200 rounded-lg animate-pulse"></div>
+                                        <div className="w-10 h-10 bg-orange-200 rounded-xl animate-pulse"></div>
                                         <div>
-                                            <div className="w-32 h-4 bg-gray-200 rounded animate-pulse mb-2"></div>
-                                            <div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div>
+                                            <div className="w-32 h-4 bg-orange-200 rounded animate-pulse mb-2"></div>
+                                            <div className="w-16 h-3 bg-orange-200 rounded animate-pulse"></div>
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="w-16 h-6 bg-gray-200 rounded animate-pulse mb-2"></div>
-                                        <div className="w-20 h-3 bg-gray-200 rounded animate-pulse"></div>
+                                        <div className="w-16 h-6 bg-orange-200 rounded animate-pulse mb-2"></div>
+                                        <div className="w-20 h-3 bg-orange-200 rounded animate-pulse"></div>
                                     </div>
                                 </div>
                             ))}
                         </div>
                     ) : reportData.topSellingItems.length === 0 ? (
                         <div className="text-center py-12">
-                            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <Package className="w-8 h-8 text-gray-400" />
+                            <div className="w-16 h-16 bg-gradient-to-br from-orange-100 to-orange-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Package className="w-8 h-8 text-orange-500" />
                             </div>
-                            <p className="text-gray-500 text-lg">No sales data for the selected period.</p>
-                            <p className="text-gray-400 text-sm mt-2">Try adjusting the date range to see your best-selling items</p>
+                            <p className="text-gray-700 font-semibold text-lg">No sales data for the selected period.</p>
+                            <p className="text-gray-500 text-sm mt-2">Try adjusting the date range to see your best-selling items</p>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {reportData.topSellingItems.map((item, index) => (
-                                <div key={index} className="group bg-gradient-to-br from-gray-50 to-gray-100 p-4 rounded-xl border border-gray-200 hover:shadow-lg transition-all duration-200 hover:from-purple-50 hover:to-purple-100">
+                                <div key={index} className="group bg-gradient-to-br from-orange-50 to-white p-4 rounded-xl border-2 border-orange-100 hover:shadow-lg transition-all duration-200 hover:from-orange-100 hover:to-orange-50">
                                     <div className="flex justify-between items-start mb-3">
-                                        <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-lg">
+                                        <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-md">
                                             {index + 1}
                                         </div>
                                         <div className="text-right">
-                                            <p className="text-2xl font-bold text-gray-900">{item.count}</p>
-                                            <p className="text-xs text-gray-500">units sold</p>
+                                            <p className="text-2xl font-bold text-orange-600">{item.count}</p>
+                                            <p className="text-xs text-orange-500 font-medium">units sold</p>
                                         </div>
                                     </div>
                                     <div>
-                                        <p className="text-lg font-semibold text-gray-900 truncate">{item.name}</p>
-                                        <p className="text-sm text-gray-600 mt-1">Best seller</p>
+                                        <p className="text-lg font-bold text-gray-800 truncate">{item.name}</p>
+                                        <p className="text-sm text-orange-600 mt-1 font-medium">Best seller</p>
                                     </div>
                                 </div>
                             ))}

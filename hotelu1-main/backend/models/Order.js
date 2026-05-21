@@ -21,10 +21,12 @@ const Order = sequelize.define(
     total: { type: DataTypes.FLOAT, allowNull: false },
     timestamp: { type: DataTypes.DATE, allowNull: false },
     type: { type: DataTypes.STRING, allowNull: false },
+    token: { type: DataTypes.STRING, allowNull: true }, // For takeaway orders
     bill_requested: { type: DataTypes.BOOLEAN, defaultValue: false },
     delivered_at: { type: DataTypes.DATE, allowNull: true },
     bill_generated: { type: DataTypes.BOOLEAN, defaultValue: false },
     payment_method: { type: DataTypes.STRING, allowNull: true },
+    subfranchise_id: { type: DataTypes.INTEGER, allowNull: true },
   },
   {
     tableName: "orders",

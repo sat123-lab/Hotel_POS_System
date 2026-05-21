@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Notification from './Notification';
+import { getAPI_URL } from '../utils/api';
 
 const PermissionManagement = ({ token }) => {
   const [activeTab, setActiveTab] = useState('roles');
@@ -18,7 +19,7 @@ const PermissionManagement = ({ token }) => {
   const fetchRoles = async () => {
     try {
       setLoading(true);
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/roles', {
+      const response = await fetch(`${getAPI_URL()}/api/roles`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
@@ -33,7 +34,7 @@ const PermissionManagement = ({ token }) => {
   // Fetch permissions
   const fetchPermissions = async () => {
     try {
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/permissions', {
+      const response = await fetch(`${getAPI_URL()}/api/permissions`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
@@ -52,7 +53,7 @@ const PermissionManagement = ({ token }) => {
     }
 
     try {
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/roles', {
+      const response = await fetch(`${getAPI_URL()}/api/roles`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -83,7 +84,7 @@ const PermissionManagement = ({ token }) => {
   // Update role permissions
   const handleUpdateRolePermissions = async (roleId) => {
     try {
-      const response = await fetch(`https://hotel-pos-system.onrender.com/api/roles/${roleId}/permissions`, {
+      const response = await fetch(`${getAPI_URL()}/api/roles/${roleId}/permissions`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -134,7 +135,27 @@ const PermissionManagement = ({ token }) => {
   }, [activeTab]);
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="min-h-screen p-6 bg-[#FFF8F0]">
+      {/* Header Section - Orange Theme */}
+      <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-6">
+        <div className="px-6 py-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-white mb-1">Permission Management</h1>
+              <p className="text-orange-100 text-base">Manage roles and permissions</p>
+            </div>
+            <div className="hidden md:flex items-center space-x-3">
+              <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                <span className="text-white text-sm font-medium">Security</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="max-w-6xl mx-auto">
         {notification && (
           <Notification
@@ -144,16 +165,14 @@ const PermissionManagement = ({ token }) => {
           />
         )}
 
-        <h1 className="text-4xl font-bold text-gray-800 mb-8">Permission Management</h1>
-
         {/* Tabs */}
-        <div className="flex space-x-4 mb-8 border-b border-gray-300">
+        <div className="flex space-x-4 mb-8 border-b border-orange-200">
           <button
             onClick={() => setActiveTab('roles')}
             className={`px-6 py-3 font-medium transition-colors ${
               activeTab === 'roles'
                 ? 'text-orange-600 border-b-2 border-orange-600'
-                : 'text-gray-600 hover:text-gray-800'
+                : 'text-gray-600 hover:text-orange-600'
             }`}
           >
             Manage Roles
@@ -163,7 +182,7 @@ const PermissionManagement = ({ token }) => {
             className={`px-6 py-3 font-medium transition-colors ${
               activeTab === 'permissions'
                 ? 'text-orange-600 border-b-2 border-orange-600'
-                : 'text-gray-600 hover:text-gray-800'
+                : 'text-gray-600 hover:text-orange-600'
             }`}
           >
             View Permissions

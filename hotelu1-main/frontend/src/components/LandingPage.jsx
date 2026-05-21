@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Menu, X, Clock, Zap, MapPin, Users, QrCode, TrendingUp, Utensils, CreditCard } from 'lucide-react';
+import QRCodeOrdering from './QRCodeOrdering';
 
 const LandingPage = () => {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  
+  // Check for tableId in URL (from QR code scan)
+  const params = new URLSearchParams(window.location.search);
+  const tableId = params.get('tableId');
 
   useEffect(() => {
     // Handle scroll effect
@@ -19,6 +24,12 @@ const LandingPage = () => {
   const handleNavigateToLogin = () => {
     navigate('/login');
   };
+
+  // If tableId is present (QR scan), show the ordering page directly
+  if (tableId) {
+    const defaultLocationSettings = { country: 'India', currencySymbol: '₹', taxRate: 0.05 };
+    return <QRCodeOrdering tableId={tableId} locationSettings={defaultLocationSettings} />;
+  }
 
   return (
     <div className="min-h-screen relative">

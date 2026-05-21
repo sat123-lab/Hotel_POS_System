@@ -8,22 +8,19 @@ import {
   BarChart2,
   Settings,
   Lock,
-  Crown,
-  Briefcase,
-  UserCheck,
   Check,
   X,
   Edit2,
   ChevronDown,
   ChevronRight,
-  Plus,
 } from 'lucide-react';
 
-// Permission descriptions in simple language
+import { getAPI_URL } from '../utils/api';
+
 const PERMISSION_GROUPS = {
   user_management: {
     title: 'User Management',
-    icon: <Users className="inline-block mr-2 text-blue-500" />,
+    icon: <Users className="inline-block mr-2 text-orange-500" />,
     description: 'Control who can access the system',
     permissions: [
       { name: 'view_users', label: 'View Staff List', simple: 'See all employees in the system' },
@@ -35,7 +32,7 @@ const PERMISSION_GROUPS = {
   },
   menu_management: {
     title: 'Menu Management',
-    icon: <Box className="inline-block mr-2 text-amber-500" />,
+    icon: <Box className="inline-block mr-2 text-orange-500" />,
     description: 'Manage restaurant menu items',
     permissions: [
       { name: 'view_menu', label: 'View Menu', simple: 'See all dishes and items' },
@@ -46,7 +43,7 @@ const PERMISSION_GROUPS = {
   },
   order_management: {
     title: 'Order Management',
-    icon: <Clipboard className="inline-block mr-2 text-emerald-500" />,
+    icon: <Clipboard className="inline-block mr-2 text-orange-500" />,
     description: 'Handle customer orders',
     permissions: [
       { name: 'view_orders', label: 'View Orders', simple: 'See all customer orders' },
@@ -61,7 +58,7 @@ const PERMISSION_GROUPS = {
   },
   inventory_management: {
     title: 'Inventory Management',
-    icon: <Box className="inline-block mr-2 text-violet-500" />,
+    icon: <Box className="inline-block mr-2 text-orange-500" />,
     description: 'Track stock and ingredients',
     permissions: [
       { name: 'view_inventory', label: 'Check Stock', simple: 'See what items are in stock' },
@@ -70,7 +67,7 @@ const PERMISSION_GROUPS = {
   },
   billing: {
     title: 'Billing & Payments',
-    icon: <CreditCard className="inline-block mr-2 text-indigo-500" />,
+    icon: <CreditCard className="inline-block mr-2 text-orange-500" />,
     description: 'Process payments and bills',
     permissions: [
       { name: 'view_billing', label: 'View Bills', simple: 'See billing information' },
@@ -80,7 +77,7 @@ const PERMISSION_GROUPS = {
   },
   reporting: {
     title: 'Dashboard & Reports',
-    icon: <BarChart2 className="inline-block mr-2 text-sky-500" />,
+    icon: <BarChart2 className="inline-block mr-2 text-orange-500" />,
     description: 'View business analytics',
     permissions: [
       { name: 'view_dashboard', label: 'View Dashboard', simple: 'See sales, orders, and business overview' },
@@ -90,7 +87,7 @@ const PERMISSION_GROUPS = {
   },
   settings: {
     title: 'System Settings',
-    icon: <Settings className="inline-block mr-2 text-gray-600" />,
+    icon: <Settings className="inline-block mr-2 text-orange-500" />,
     description: 'Configure system features',
     permissions: [
       { name: 'manage_settings', label: 'System Settings', simple: 'Configure system preferences' },
@@ -99,64 +96,29 @@ const PERMISSION_GROUPS = {
   },
 };
 
-const ROLE_PRESETS = {
-  admin: {
-    title: 'Super Admin',
-    description: 'Full access to everything',
-    icon: <Crown className="text-red-500" />,
-    color: 'from-red-500 to-red-600',
-  },
-  manager: {
-    title: 'Restaurant Manager',
-    description: 'Manage daily operations',
-    icon: <Briefcase className="text-blue-500" />,
-    color: 'from-blue-500 to-blue-600',
-  },
-  waiter: {
-    title: 'Waiter/Server',
-    description: 'Take orders and process payments',
-    icon: <UserCheck className="text-green-500" />,
-    color: 'from-green-500 to-green-600',
-  },
-  chef: {
-    title: 'Chef/Kitchen',
-    description: 'Prepare food and track orders',
-    icon: <Briefcase className="text-orange-500" />,
-    color: 'from-orange-500 to-orange-600',
-  },
-  franchise: {
-    title: 'Franchise Owner',
-    description: 'View all locations and reports',
-    icon: <Briefcase className="text-purple-500" />,
-    color: 'from-purple-500 to-purple-600',
-  },
-};
-
 const PermissionManagementNew = ({ token }) => {
   const [activeTab, setActiveTab] = useState('roles');
-  const [roles, setRoles] = useState([]);
+  const [users, setUsers] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [notification, setNotification] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [expandedRole, setExpandedRole] = useState(null);
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [newRoleName, setNewRoleName] = useState('');
-  const [newRoleDesc, setNewRoleDesc] = useState('');
+  const [expandedUser, setExpandedUser] = useState(null);
   const [selectedPermissions, setSelectedPermissions] = useState([]);
-  const [editingRoleId, setEditingRoleId] = useState(null);
+  const [editingUserId, setEditingUserId] = useState(null);
 
-  // Fetch roles
-  const fetchRoles = async () => {
+  // Fetch users with permissions
+  const fetchUsersWithPermissions = async () => {
     try {
       setLoading(true);
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/roles', {
+      const API_URL = getAPI_URL();
+      const response = await fetch(`${API_URL}/api/users-with-permissions`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) throw new Error('Failed to fetch roles');
+      if (!response.ok) throw new Error('Failed to fetch users');
       const data = await response.json();
-      setRoles(data);
+      setUsers(data.filter((u) => u.role !== "admin"));
     } catch (err) {
-      setNotification({ message: 'Could not load roles', type: 'error' });
+      setNotification({ message: 'Could not load users', type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -165,7 +127,8 @@ const PermissionManagementNew = ({ token }) => {
   // Fetch permissions
   const fetchPermissions = async () => {
     try {
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/permissions', {
+      const API_URL = getAPI_URL();
+      const response = await fetch(`${API_URL}/api/permissions`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) throw new Error('Failed to fetch permissions');
@@ -177,47 +140,12 @@ const PermissionManagementNew = ({ token }) => {
   };
 
   useEffect(() => {
-    fetchRoles();
+    fetchUsersWithPermissions();
     fetchPermissions();
   }, []);
 
-  // Create role
-  const handleCreateRole = async (e) => {
-    e.preventDefault();
-    if (!newRoleName.trim()) {
-      setNotification({ message: 'Please enter a role name', type: 'error' });
-      return;
-    }
-
-    try {
-      const response = await fetch('https://hotel-pos-system.onrender.com/api/roles', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: newRoleName,
-          description: newRoleDesc,
-          permissions: selectedPermissions,
-        }),
-      });
-
-      if (response.ok) {
-        setNotification({ message: 'Role created successfully! ✓', type: 'success' });
-        setNewRoleName('');
-        setNewRoleDesc('');
-        setSelectedPermissions([]);
-        setShowCreateForm(false);
-        fetchRoles();
-      } else {
-        const error = await response.json();
-        setNotification({ message: error.message || 'Error creating role', type: 'error' });
-      }
-    } catch (err) {
-      setNotification({ message: err.message, type: 'error' });
-    }
-  };
+  // Create role - REMOVED as per user request
+  // Roles are now managed through User Management only
 
   const togglePermission = (permName) => {
     setSelectedPermissions((prev) =>
@@ -227,15 +155,16 @@ const PermissionManagementNew = ({ token }) => {
     );
   };
 
-  const startEditingRole = (role) => {
-    setEditingRoleId(role.id);
-    setSelectedPermissions(role.permissions || []);
-    setExpandedRole(role.id);
+  const startEditingUser = (user) => {
+    setEditingUserId(user.id);
+    setSelectedPermissions(user.permissions || []);
+    setExpandedUser(user.id);
   };
 
-  const handleUpdateRolePermissions = async (roleId) => {
+  const handleUpdateUserPermissions = async (userId) => {
     try {
-      const response = await fetch(`https://hotel-pos-system.onrender.com/api/roles/${roleId}/permissions`, {
+      const API_URL = getAPI_URL();
+      const response = await fetch(`${API_URL}/api/users/${userId}/permissions`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -246,8 +175,8 @@ const PermissionManagementNew = ({ token }) => {
 
       if (response.ok) {
         setNotification({ message: 'Permissions updated successfully! ✓', type: 'success' });
-        setEditingRoleId(null);
-        fetchRoles();
+        setEditingUserId(null);
+        fetchUsersWithPermissions();
       } else {
         const error = await response.json();
         setNotification({ message: error.message, type: 'error' });
@@ -258,7 +187,7 @@ const PermissionManagementNew = ({ token }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8">
+    <div className="min-h-screen bg-[#FFF8F0] p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         {notification && (
           <Notification
@@ -269,169 +198,117 @@ const PermissionManagementNew = ({ token }) => {
         )}
 
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2 flex items-center">
-            <Lock className="mr-3 text-blue-600" /> System Access Control
+        <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-8 p-6">
+          <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 flex items-center">
+            <Lock className="mr-3 text-white" /> System Access Control
           </h1>
-          <p className="text-gray-700 text-lg">Manage who can do what in your restaurant</p>
+          <p className="text-orange-100 text-lg">Manage who can do what in your restaurant</p>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-8 border-b border-gray-200">
+        <div className="flex gap-2 mb-8 border-b-2 border-orange-200">
           <button
             onClick={() => setActiveTab('roles')}
-            className={`px-6 py-3 font-semibold transition-all ${
+            className={`px-6 py-3 font-semibold transition-all rounded-t-lg ${
               activeTab === 'roles'
-                ? 'text-blue-600 border-b-2 border-blue-500 bg-blue-50'
-                : 'text-gray-600 hover:text-gray-800'
+                ? 'text-orange-600 border-b-2 border-orange-500 bg-orange-50'
+                : 'text-gray-600 hover:text-orange-600 hover:bg-orange-50/50'
             }`}
           >
-            <span className="inline-flex items-center gap-2"><Users className="text-blue-500" /> Manage Roles (Jobs)</span>
+            <span className="inline-flex items-center gap-2"><Users className="text-orange-500" /> Manage Roles (Jobs)</span>
           </button>
           <button
             onClick={() => setActiveTab('permissions')}
-            className={`px-6 py-3 font-semibold transition-all ${
+            className={`px-6 py-3 font-semibold transition-all rounded-t-lg ${
               activeTab === 'permissions'
-                ? 'text-blue-600 border-b-2 border-blue-500 bg-blue-50'
-                : 'text-gray-600 hover:text-gray-800'
+                ? 'text-orange-600 border-b-2 border-orange-500 bg-orange-50'
+                : 'text-gray-600 hover:text-orange-600 hover:bg-orange-50/50'
             }`}
           >
-            <span className="inline-flex items-center gap-2"><Clipboard className="text-emerald-500" /> View Permissions</span>
+            <span className="inline-flex items-center gap-2"><Clipboard className="text-orange-500" /> View Permissions</span>
           </button>
         </div>
 
-        {/* Roles Tab */}
+        {/* Roles Tab - Now showing Users */}
         {activeTab === 'roles' && (
           <div className="space-y-6">
-            {/* Create New Role Button */}
-            {!showCreateForm && (
-              <button
-                onClick={() => setShowCreateForm(true)}
-                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-4 px-6 rounded-lg transition-all transform hover:scale-105 text-lg flex items-center justify-center gap-3"
-              >
-                <Plus className="w-5 h-5" /> Create New Role / Job Title
-              </button>
-            )}
-
-            {/* Create Role Form */}
-            {showCreateForm && (
-              <div className="bg-white rounded-lg p-6 border border-gray-200">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Create New Role</h2>
-                <form onSubmit={handleCreateRole} className="space-y-6">
-                  <div>
-                    <label className="block text-gray-900 font-semibold mb-2">Role/Job Title Name</label>
-                    <input
-                      type="text"
-                      value={newRoleName}
-                      onChange={(e) => setNewRoleName(e.target.value)}
-                      placeholder="e.g., Senior Waiter, Assistant Chef"
-                      className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-white font-semibold mb-2">Description</label>
-                    <textarea
-                      value={newRoleDesc}
-                      onChange={(e) => setNewRoleDesc(e.target.value)}
-                      placeholder="What does this person do? e.g., Takes orders, manages tables, handles payments"
-                      className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-gray-400 focus:border-blue-500 focus:outline-none"
-                      rows="3"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-gray-900 font-semibold mb-4">What can they do? (Select all that apply)</label>
-                    <div className="grid md:grid-cols-2 gap-4">
-                      {Object.values(PERMISSION_GROUPS).map((group) => (
-                        <div key={group.title} className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                          <h3 className="font-semibold text-gray-900 mb-3">{group.icon} {group.title}</h3>
-                          <div className="space-y-2">
-                            {group.permissions.map((perm) => (
-                              <label key={perm.name} className="flex items-start gap-3 cursor-pointer hover:bg-slate-600 p-2 rounded transition">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedPermissions.includes(perm.name)}
-                                  onChange={() => togglePermission(perm.name)}
-                                  className="w-5 h-5 mt-0.5 rounded accent-blue-500"
-                                />
-                                <div>
-                                  <div className="font-medium text-gray-900">{perm.label}</div>
-                                  <div className="text-xs text-gray-600">{perm.simple}</div>
-                                </div>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3">
-                    <button
-                      type="submit"
-                      className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition inline-flex items-center justify-center gap-2"
-                    >
-                      <Check className="w-4 h-4" /> Create Role
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowCreateForm(false)}
-                      className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-3 px-4 rounded-lg transition inline-flex items-center justify-center gap-2"
-                    >
-                      <X className="w-4 h-4" /> Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* Existing Roles */}
+            {/* Users with Permissions */}
             <div className="space-y-4">
-              <h2 className="text-2xl font-bold text-gray-900">Existing Roles</h2>
+              <h2 className="text-2xl font-bold text-gray-900">Manage User Permissions</h2>
+              <p className="text-gray-600">Click on a user to view and edit their permissions. Administrator has full access and is not listed here.</p>
               {loading ? (
-                <div className="text-center text-gray-600">Loading roles...</div>
-              ) : roles.length === 0 ? (
-                <div className="text-center text-gray-600 py-8">No roles created yet</div>
+                <div className="text-center py-8">
+                  <div className="w-12 h-12 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-orange-600 font-medium">Loading users...</p>
+                </div>
+              ) : users.length === 0 ? (
+                <div className="text-center bg-white rounded-2xl shadow-lg p-12 border border-orange-100">
+                  <div className="w-16 h-16 bg-gradient-to-br from-orange-100 to-orange-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Users className="w-8 h-8 text-orange-500" />
+                  </div>
+                  <p className="text-gray-700 font-semibold text-lg">No users found</p>
+                  <p className="text-gray-500 text-sm mt-1">Create users in User Management first</p>
+                </div>
               ) : (
-                roles.map((role) => (
+                users.map((user) => (
                   <div
-                    key={role.id}
-                    className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:border-gray-300 transition"
+                    key={user.id}
+                    className="bg-white rounded-2xl border-2 border-orange-100 overflow-hidden hover:border-orange-300 hover:shadow-xl transition-all duration-300"
                   >
                     <button
-                      onClick={() => setExpandedRole(expandedRole === role.id ? null : role.id)}
-                      className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition"
+                      onClick={() => setExpandedUser(expandedUser === user.id ? null : user.id)}
+                      className="w-full px-6 py-5 flex items-center justify-between hover:bg-gradient-to-r hover:from-orange-50 hover:to-orange-100/50 transition-all duration-300"
                     >
-                      <div className="text-left">
-                        <h3 className="text-lg font-bold text-gray-900 capitalize">{role.name}</h3>
-                        <p className="text-gray-600 text-sm">{role.description}</p>
+                      <div className="text-left flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-orange-500 flex items-center justify-center shadow-md">
+                          <span className="text-lg font-bold text-white">{user.name.charAt(0).toUpperCase()}</span>
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold text-gray-900">{user.name} <span className="text-gray-500 font-normal">({user.username})</span></h3>
+                          <p className="text-gray-600 text-sm mt-1">
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${
+                              user.role === 'admin' ? 'bg-red-100 text-red-700 border border-red-200' :
+                              user.role === 'manager' ? 'bg-purple-100 text-purple-700 border border-purple-200' :
+                              user.role === 'waiter' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                              user.role === 'chef' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
+                              user.role === 'franchise' ? 'bg-gray-100 text-gray-700 border border-gray-200' :
+                              'bg-green-100 text-green-700 border border-green-200'
+                            }`}>
+                              {user.role}
+                            </span>
+                            <span className="ml-3 text-orange-600 font-medium bg-orange-50 px-2 py-1 rounded-full text-xs">
+                              {user.permissions?.length || 0} permissions
+                            </span>
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-gray-500">{expandedRole === role.id ? <ChevronDown /> : <ChevronRight />}</div>
+                      <div className="text-gray-500">{expandedUser === user.id ? <ChevronDown /> : <ChevronRight />}</div>
                     </button>
 
-                    {expandedRole === role.id && (
+                    {expandedUser === user.id && (
                       <div className="bg-gray-50 border-t border-gray-100 p-6">
                         <div>
-                          <h4 className="font-semibold text-gray-900 mb-4">Current Permissions: {role.permissions?.length || 0}</h4>
-                          {editingRoleId === role.id ? (
+                          <h4 className="font-semibold text-gray-900 mb-4">Current Permissions: {user.permissions?.length || 0}</h4>
+                          {editingUserId === user.id ? (
                             <div className="space-y-6">
                               <div className="grid md:grid-cols-2 gap-4">
                                 {Object.values(PERMISSION_GROUPS).map((group) => (
-                                  <div key={group.title} className="bg-white rounded-lg p-4 border border-gray-100">
-                                    <h3 className="font-semibold text-gray-900 mb-3">{group.icon} {group.title}</h3>
+                                  <div key={group.title} className="bg-white rounded-xl p-4 border-2 border-orange-100 shadow-sm hover:shadow-md transition-all duration-300">
+                                    <h3 className="font-semibold text-orange-700 mb-3 flex items-center gap-2 pb-2 border-b border-orange-100">
+                                      {group.icon} {group.title}
+                                    </h3>
                                     <div className="space-y-2">
                                       {group.permissions.map((perm) => (
-                                        <label key={perm.name} className="flex items-start gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition">
+                                        <label key={perm.name} className="flex items-start gap-3 cursor-pointer hover:bg-orange-50 p-2 rounded-lg transition-all duration-200">
                                           <input
                                             type="checkbox"
                                             checked={selectedPermissions.includes(perm.name)}
                                             onChange={() => togglePermission(perm.name)}
-                                            className="w-5 h-5 mt-0.5 rounded accent-blue-500"
+                                            className="w-5 h-5 mt-0.5 rounded accent-orange-500 cursor-pointer"
                                           />
                                           <div>
-                                            <div className="font-medium text-gray-900">{perm.label}</div>
-                                            <div className="text-xs text-gray-600">{perm.simple}</div>
+                                            <div className="font-medium text-gray-800">{perm.label}</div>
+                                            <div className="text-xs text-gray-500">{perm.simple}</div>
                                           </div>
                                         </label>
                                       ))}
@@ -441,34 +318,43 @@ const PermissionManagementNew = ({ token }) => {
                               </div>
                               <div className="flex gap-3">
                                 <button
-                                  onClick={() => handleUpdateRolePermissions(role.id)}
-                                  className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded transition inline-flex items-center justify-center gap-2"
+                                  onClick={() => handleUpdateUserPermissions(user.id)}
+                                  className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold py-3 px-4 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 inline-flex items-center justify-center gap-2"
                                 >
-                                  <Check className="w-4 h-4" /> Save Changes
+                                  <Check className="w-5 h-5" /> Save Changes
                                 </button>
                                 <button
-                                  onClick={() => setEditingRoleId(null)}
-                                  className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded transition inline-flex items-center justify-center gap-2"
+                                  onClick={() => setEditingUserId(null)}
+                                  className="flex-1 bg-gradient-to-r from-gray-200 to-gray-300 hover:from-gray-300 hover:to-gray-400 text-gray-700 font-bold py-3 px-4 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 inline-flex items-center justify-center gap-2"
                                 >
-                                  <X className="w-4 h-4" /> Cancel
+                                  <X className="w-5 h-5" /> Cancel
                                 </button>
                               </div>
                             </div>
                           ) : (
                             <div>
                               <div className="flex flex-wrap gap-2 mb-4">
-                                {role.permissions?.map((perm) => (
-                                  <span
-                                    key={perm}
-                                    className="inline-flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-800 rounded-full text-sm border border-gray-200"
-                                  >
-                                    <Check className="w-3 h-3 text-green-600" /> {perm.replace(/_/g, ' ')}
-                                  </span>
-                                ))}
+                                {user.permissions?.length > 0 ? (
+                                  user.permissions.map((perm) => (
+                                    <span
+                                      key={perm}
+                                      className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-green-50 to-emerald-50 text-emerald-700 rounded-full text-sm border border-emerald-200 font-medium"
+                                    >
+                                      <Check className="w-4 h-4 text-emerald-500" /> {perm.replace(/_/g, ' ')}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <div className="flex items-center gap-2 text-gray-500 bg-gray-50 px-4 py-2 rounded-lg">
+                                    <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span className="text-sm">No permissions assigned</span>
+                                  </div>
+                                )}
                               </div>
                               <button
-                                onClick={() => startEditingRole(role)}
-                                className="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-md inline-flex items-center gap-2"
+                                onClick={() => startEditingUser(user)}
+                                className="px-6 py-2.5 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all duration-200 inline-flex items-center gap-2"
                               >
                                 <Edit2 className="w-4 h-4" /> Edit Permissions
                               </button>
@@ -490,14 +376,22 @@ const PermissionManagementNew = ({ token }) => {
             <h2 className="text-2xl font-bold text-gray-900 mb-6">All Available Permissions</h2>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {Object.values(PERMISSION_GROUPS).map((group) => (
-                <div key={group.title} className="bg-white rounded-lg p-6 border border-gray-100">
-                  <h3 className="text-xl font-bold text-gray-900 mb-2">{group.icon} {group.title}</h3>
+                <div key={group.title} className="bg-white rounded-2xl p-6 border-2 border-orange-100 shadow-sm hover:shadow-lg hover:border-orange-200 transition-all duration-300">
+                  <h3 className="text-xl font-bold text-orange-600 mb-2 flex items-center gap-2 pb-3 border-b border-orange-100">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-orange-500 flex items-center justify-center shadow-md">
+                      {React.cloneElement(group.icon, { className: "w-5 h-5 text-white mr-0" })}
+                    </div>
+                    {group.title}
+                  </h3>
                   <p className="text-gray-600 text-sm mb-4">{group.description}</p>
                   <div className="space-y-3">
                     {group.permissions.map((perm) => (
-                      <div key={perm.name} className="bg-gray-50 rounded p-3 border border-gray-100">
-                        <div className="font-semibold text-gray-900">{perm.label}</div>
-                        <div className="text-sm text-gray-600">{perm.simple}</div>
+                      <div key={perm.name} className="bg-gradient-to-r from-orange-50 to-white rounded-xl p-3 border border-orange-100 hover:border-orange-200 transition-colors duration-200">
+                        <div className="font-semibold text-gray-800 flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-orange-400"></div>
+                          {perm.label}
+                        </div>
+                        <div className="text-sm text-gray-500 ml-4">{perm.simple}</div>
                       </div>
                     ))}
                   </div>

@@ -3,11 +3,16 @@ import React, { useState, useEffect } from 'react';
 import Notification from './Notification';
 
 import { X } from 'lucide-react';
-import { authFetch } from '../utils/api';
+import { authFetch, getSocketUrl } from '../utils/api';
+import { io } from 'socket.io-client';
+import { getLocationSettingsForCountry } from '../utils/currency';
+import useCurrency from '../hooks/useCurrency';
 
-
-
-const KitchenDisplaySystem = () => {
+const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
+    const locationSettings =
+        locationSettingsProp ||
+        getLocationSettingsForCountry(localStorage.getItem('posCountry') || 'India');
+    const { format: fmt } = useCurrency(locationSettings);
 
     const [orders, setOrders] = useState([]);
 
@@ -18,6 +23,7 @@ const KitchenDisplaySystem = () => {
     const [permissions, setPermissions] = useState([]);
 
     const [userRole, setUserRole] = useState('');
+    const [socket, setSocket] = useState(null);
 
 
 
@@ -26,6 +32,10 @@ const KitchenDisplaySystem = () => {
         fetchPermissions();
 
         fetchOrders();
+        
+        // Initialize socket connection
+        const newSocket = io(getSocketUrl());
+        setSocket(newSocket);
 
         // Refresh orders every 2 seconds
 
@@ -40,6 +50,7 @@ const KitchenDisplaySystem = () => {
             clearInterval(orderInterval);
 
             clearInterval(permissionInterval);
+            newSocket.disconnect();
 
         };
 
@@ -255,6 +266,11 @@ const KitchenDisplaySystem = () => {
 
                 newStatus = 'delivered';
 
+                // Emit socket event to notify Dashboard to refresh
+                if (socket) {
+                    socket.emit('order_status_updated', { orderId, newStatus: 'delivered' });
+                }
+
             } else {
 
                 // For other status changes, use the regular update endpoint
@@ -263,6 +279,11 @@ const KitchenDisplaySystem = () => {
                     method: 'PUT',
                     body: JSON.stringify({ status: newStatus })
                 });
+
+                // Emit socket event for all status updates
+                if (socket && newStatus !== 'delivered') {
+                    socket.emit('order_status_updated', { orderId, newStatus });
+                }
 
             }
 
@@ -392,13 +413,13 @@ const KitchenDisplaySystem = () => {
 
         switch(status) {
 
-            case 'pending': return 'bg-rose-950/40 border-rose-900/40';
+            case 'pending': return 'bg-white border-rose-200 shadow-md';
 
-            case 'preparing': return 'bg-amber-950/30 border-amber-900/40';
+            case 'preparing': return 'bg-white border-amber-200 shadow-md';
 
-            case 'ready': return 'bg-emerald-950/30 border-emerald-900/40';
+            case 'ready': return 'bg-white border-emerald-200 shadow-md';
 
-            default: return 'bg-gray-100 border-gray-300';
+            default: return 'bg-white border-gray-200 shadow-sm';
 
         }
 
@@ -410,13 +431,13 @@ const KitchenDisplaySystem = () => {
 
         switch(status) {
 
-            case 'pending': return { icon: '', label: 'PENDING', color: 'bg-rose-600/20 text-rose-200 border border-rose-900/40' };
+            case 'pending': return { icon: '⏳', label: 'PENDING', color: 'bg-gradient-to-r from-rose-500 to-rose-600 text-white border-0 shadow-sm' };
 
-            case 'preparing': return { icon: '', label: 'PREPARING', color: 'bg-amber-600/20 text-amber-200 border border-amber-900/40' };
+            case 'preparing': return { icon: '🔥', label: 'PREPARING', color: 'bg-gradient-to-r from-amber-500 to-orange-500 text-white border-0 shadow-sm' };
 
-            case 'ready': return { icon: '', label: 'READY', color: 'bg-emerald-600/20 text-emerald-200 border border-emerald-900/40' };
+            case 'ready': return { icon: '✓', label: 'READY', color: 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white border-0 shadow-sm' };
 
-            default: return { icon: '', label: 'UNKNOWN', color: 'bg-slate-600/20 text-slate-200 border border-slate-700/40' };
+            default: return { icon: '', label: 'UNKNOWN', color: 'bg-gray-100 text-gray-700 border border-gray-300' };
 
         }
 
@@ -430,29 +451,41 @@ const KitchenDisplaySystem = () => {
 
         return (
 
-            <div className={`rounded-xl border p-5 flex flex-col justify-between h-full transition-colors duration-200 ${getStatusColor(order.status)}`}>
+            <div className={`rounded-2xl border-2 p-5 flex flex-col justify-between h-full transition-all duration-300 hover:shadow-lg hover:scale-[1.02] ${getStatusColor(order.status)}`}>
 
                 <div>
 
                     {/* Order Header with Table and Status */}
 
-                    <div className="flex justify-between items-start mb-3">
+                    <div className="flex justify-between items-start mb-4">
 
                         <div>
 
-                            <p className="text-xs font-semibold text-slate-300">Order #{order.id}</p>
+                            <div className="flex items-center gap-2 mb-1">
+                                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-orange-400 to-orange-500 flex items-center justify-center">
+                                    <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M10 2a4 4 0 00-4 4v1H5a2 2 0 00-2 2v9a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1V6a4 4 0 00-4-4zm2 5V6a2 2 0 10-4 0v1h4z" />
+                                    </svg>
+                                </div>
+                                <p className="text-xs font-bold text-orange-600">Order #{order.id}</p>
+                            </div>
 
                             {order.parentOrderId && (
 
-                                <p className="text-xs text-sky-300 font-medium">Additional to Order #{order.parentOrderId}</p>
+                                <p className="text-xs text-blue-500 font-medium mb-1">Additional to Order #{order.parentOrderId}</p>
 
                             )}
 
-                            <p className="text-lg font-semibold text-white">Table <span className="text-xl text-white">{order.table_name}</span></p>
+                            <div className="flex items-center gap-2">
+                                <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                                </svg>
+                                <p className="text-lg font-bold text-gray-800">{order.table_name}</p>
+                            </div>
 
                         </div>
 
-                        <div className={`${statusBadge.color} px-3 py-2 rounded-lg font-semibold text-center`}>
+                        <div className={`${statusBadge.color} px-4 py-2 rounded-xl font-bold text-center shadow-sm`}>
 
                             <div className="text-xs tracking-wide">{statusBadge.label}</div>
 
@@ -464,35 +497,41 @@ const KitchenDisplaySystem = () => {
 
                     {/* Time Info */}
 
-                    <p className="text-xs text-slate-400 mb-4">
-
-                        {new Date(order.timestamp).toLocaleTimeString()} 
-
-                        {' '} • {Math.floor((Date.now() - new Date(order.timestamp).getTime()) / 60000)}m ago
-
-                    </p>
+                    <div className="flex items-center gap-2 text-xs text-gray-500 mb-4 bg-gray-50 px-3 py-2 rounded-lg">
+                        <svg className="w-4 h-4 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="font-medium">{new Date(order.timestamp).toLocaleTimeString()}</span>
+                        <span className="text-gray-300">•</span>
+                        <span>{Math.floor((Date.now() - new Date(order.timestamp).getTime()) / 60000)}m ago</span>
+                    </div>
 
 
 
                     {/* Order Items */}
 
-                    <div className="bg-slate-900/30 border border-slate-700/40 rounded-lg p-3 mb-3">
+                    <div className="bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 rounded-xl p-4 mb-4">
 
-                        <h4 className="font-semibold text-slate-200 mb-2 text-sm">Items</h4>
+                        <h4 className="font-bold text-gray-700 mb-3 text-sm flex items-center gap-2">
+                            <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                            Items ({order.items?.length || 0})
+                        </h4>
 
-                        <ul className="space-y-1">
+                        <ul className="space-y-2">
 
                             {(order.items || []).map((item, idx) => (
 
-                                <li key={idx} className="text-slate-100 flex justify-between items-center text-sm">
+                                <li key={idx} className="flex justify-between items-center text-sm bg-white rounded-lg px-3 py-2 shadow-sm">
 
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-3">
 
                                         <button
 
                                             onClick={() => handleRemoveItem(order.id, idx, item.name)}
 
-                                            className="text-red-400 hover:text-red-300 transition-colors duration-200 p-1 rounded hover:bg-red-900/20"
+                                            className="text-red-400 hover:text-white hover:bg-red-500 transition-all duration-200 p-1.5 rounded-lg hover:shadow-md"
 
                                             title="Remove item (not available)"
 
@@ -502,11 +541,11 @@ const KitchenDisplaySystem = () => {
 
                                         </button>
 
-                                        <span><strong>{item.qty || item.quantity}x</strong> {item.name}</span>
+                                        <span className="text-gray-700"><span className="font-bold text-orange-600">{item.qty || item.quantity}x</span> {item.name}</span>
 
                                     </div>
 
-                                    <span className="text-xs bg-slate-800 px-2 py-1 rounded border border-slate-700/50 text-slate-200">₹{item.price}</span>
+                                    <span className="text-xs bg-gradient-to-r from-orange-100 to-orange-200 px-3 py-1.5 rounded-lg font-semibold text-orange-700">{fmt(item.price)}</span>
 
                                 </li>
 
@@ -514,11 +553,11 @@ const KitchenDisplaySystem = () => {
 
                         </ul>
 
-                        <div className="border-t border-slate-700/40 pt-2 mt-2 font-semibold text-right text-white">
+                        <div className="border-t-2 border-orange-100 pt-3 mt-3 font-bold text-right">
 
-                            <div className="text-xs text-slate-400">Amount</div>
+                            <div className="text-xs text-gray-500 mb-1">Total Amount</div>
 
-                            <div className="text-base">₹{order.total}</div>
+                            <div className="text-xl text-orange-600">{fmt(order.total)}</div>
 
                         </div>
 
@@ -530,23 +569,31 @@ const KitchenDisplaySystem = () => {
 
                 {/* Action Buttons */}
 
-                <div className="pt-3 border-t border-slate-700/40 space-y-2">
+                <div className="pt-4 border-t border-gray-200 space-y-3">
 
                     {order.status === 'pending' && (
 
                         <>
 
-                            <button
+                            {/* Not Available button - hide for takeaway orders */}
 
-                                onClick={() => onStatusChange(order.id, 'NOT_AVAILABLE')}
+                            {order.type !== 'TAKEAWAY' && order.table_name !== 'Takeaway' && (
 
-                                className="w-full bg-rose-600 hover:bg-rose-700 text-white font-semibold py-3 rounded-lg shadow-sm transition-colors duration-200 cursor-pointer mb-2 focus:outline-none focus:ring-2 focus:ring-rose-600/20"
+                                <button
 
-                            >
+                                    onClick={() => onStatusChange(order.id, 'NOT_AVAILABLE')}
 
-                                Not available
+                                    className="w-full bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer flex items-center justify-center gap-2"
 
-                            </button>
+                                >
+                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                    Not Available
+
+                                </button>
+
+                            )}
 
                             <button
 
@@ -554,21 +601,23 @@ const KitchenDisplaySystem = () => {
 
                                 disabled={!hasPermission('mark_order_preparing')}
 
-                                className={`w-full text-white font-semibold py-3 rounded-lg shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-600/20 ${
+                                className={`w-full text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 ${
 
                                     hasPermission('mark_order_preparing')
 
-                                        ? 'bg-amber-600 hover:bg-amber-700 cursor-pointer'
+                                        ? 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 cursor-pointer'
 
-                                        : 'bg-gray-400 cursor-not-allowed opacity-60'
+                                        : 'bg-gray-300 cursor-not-allowed opacity-60'
 
                                 }`}
 
                                 title={!hasPermission('mark_order_preparing') ? 'No permission to mark as preparing' : ''}
 
                             >
-
-                                Mark preparing
+                                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                                Start Preparing
 
                             </button>
 
@@ -584,21 +633,23 @@ const KitchenDisplaySystem = () => {
 
                             disabled={!hasPermission('mark_order_ready')}
 
-                            className={`w-full text-white font-semibold py-3 rounded-lg shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-600/20 ${
+                            className={`w-full text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 ${
 
                                 hasPermission('mark_order_ready')
 
-                                    ? 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'
+                                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 cursor-pointer'
 
-                                    : 'bg-gray-400 cursor-not-allowed opacity-60'
+                                    : 'bg-gray-300 cursor-not-allowed opacity-60'
 
                             }`}
 
                             title={!hasPermission('mark_order_ready') ? 'No permission to mark as ready' : ''}
 
                         >
-
-                            Mark ready
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Mark Ready
 
                         </button>
 
@@ -612,21 +663,23 @@ const KitchenDisplaySystem = () => {
 
                             disabled={!hasPermission('confirm_order_delivery')}
 
-                            className={`w-full text-white font-semibold py-3 rounded-lg shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-600/20 ${
+                            className={`w-full text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 ${
 
                                 hasPermission('confirm_order_delivery')
 
-                                    ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
+                                    ? 'bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 cursor-pointer'
 
-                                    : 'bg-gray-400 cursor-not-allowed opacity-60'
+                                    : 'bg-gray-300 cursor-not-allowed opacity-60'
 
                             }`}
 
                             title={!hasPermission('confirm_order_delivery') ? 'No permission to confirm delivery' : ''}
 
                         >
-
-                            Mark delivered
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                            </svg>
+                            Mark Delivered
 
                         </button>
 
@@ -652,28 +705,20 @@ const KitchenDisplaySystem = () => {
 
     return (
 
-        <div className="min-h-screen bg-slate-900 p-6">
+        <div className="min-h-screen bg-[#FFF8F0] p-6">
 
-            {/* Header */}
-
-            <div className="mb-8 text-center">
-
-                <h1 className="text-3xl font-semibold text-white mb-2">Kitchen Display</h1>
-
-                <p className="text-gray-300">Manage orders in real-time • Auto-refreshing every 3 seconds</p>
-
-                <button
-
-                    onClick={() => setAutoRefresh(!autoRefresh)}
-
-                    className="mt-2 text-xs text-slate-300 hover:text-white underline"
-
-                >
-
-                    {autoRefresh ? 'Auto-refresh on' : 'Auto-refresh off'}
-
-                </button>
-
+            {/* Header Section - Orange Theme */}
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-8">
+                <div className="px-6 py-6 text-center">
+                    <h1 className="text-3xl font-bold text-white mb-2">Kitchen Display</h1>
+                    <p className="text-orange-100 text-base">Manage orders in real-time • Auto-refreshing every 3 seconds</p>
+                    <button
+                        onClick={() => setAutoRefresh(!autoRefresh)}
+                        className="mt-3 text-sm text-white/80 hover:text-white underline"
+                    >
+                        {autoRefresh ? 'Auto-refresh on' : 'Auto-refresh off'}
+                    </button>
+                </div>
             </div>
 
 
@@ -684,25 +729,36 @@ const KitchenDisplaySystem = () => {
 
                 {/* NEW ORDERS - Red/Pending */}
 
-                <div className="rounded-xl shadow-sm overflow-hidden border border-slate-700 bg-slate-800">
+                <div className="rounded-2xl shadow-lg overflow-hidden border-2 border-rose-200 bg-white">
 
-                    <div className="p-4 text-center border-b border-slate-700">
+                    <div className="p-5 text-center bg-gradient-to-r from-rose-500 to-rose-600 border-b-0">
 
-                        <h2 className="text-lg font-semibold text-white">New orders</h2>
+                        <div className="flex items-center justify-center gap-2 mb-1">
+                            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <h2 className="text-xl font-bold text-white">New Orders</h2>
+                        </div>
 
-                        <p className="text-slate-300 text-sm mt-1">{pendingOrders.length} waiting</p>
+                        <p className="text-rose-100 text-sm font-medium">{pendingOrders.length} waiting</p>
 
                     </div>
 
-                    <div className="p-4 space-y-3 max-h-[calc(100vh-200px)] overflow-y-auto">
+                    <div className="p-4 space-y-4 max-h-[calc(100vh-220px)] overflow-y-auto bg-rose-50/30">
 
                         {pendingOrders.length === 0 ? (
 
                             <div className="text-center py-12">
 
-                                <p className="text-slate-200 text-base font-medium">All caught up</p>
+                                <div className="w-16 h-16 bg-gradient-to-br from-rose-100 to-rose-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <svg className="w-8 h-8 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
 
-                                <p className="text-slate-400 text-sm mt-2">No pending orders</p>
+                                <p className="text-gray-700 text-base font-semibold">All caught up!</p>
+
+                                <p className="text-gray-500 text-sm mt-1">No pending orders</p>
 
                             </div>
 
@@ -724,25 +780,36 @@ const KitchenDisplaySystem = () => {
 
                 {/* IN PROGRESS - Yellow/Preparing */}
 
-                <div className="rounded-xl shadow-sm overflow-hidden border border-slate-700 bg-slate-800">
+                <div className="rounded-2xl shadow-lg overflow-hidden border-2 border-amber-200 bg-white">
 
-                    <div className="p-4 text-center border-b border-slate-700">
+                    <div className="p-5 text-center bg-gradient-to-r from-amber-500 to-orange-500 border-b-0">
 
-                        <h2 className="text-lg font-semibold text-white">Preparing</h2>
+                        <div className="flex items-center justify-center gap-2 mb-1">
+                            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            <h2 className="text-xl font-bold text-white">Preparing</h2>
+                        </div>
 
-                        <p className="text-slate-300 text-sm mt-1">{preparingOrders.length} in progress</p>
+                        <p className="text-amber-100 text-sm font-medium">{preparingOrders.length} in progress</p>
 
                     </div>
 
-                    <div className="p-4 space-y-3 max-h-[calc(100vh-200px)] overflow-y-auto">
+                    <div className="p-4 space-y-4 max-h-[calc(100vh-220px)] overflow-y-auto bg-amber-50/30">
 
                         {preparingOrders.length === 0 ? (
 
                             <div className="text-center py-12">
 
-                                <p className="text-slate-200 text-base font-medium">No orders in progress</p>
+                                <div className="w-16 h-16 bg-gradient-to-br from-amber-100 to-amber-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                </div>
 
-                                <p className="text-slate-400 text-sm mt-2">All items are prepared</p>
+                                <p className="text-gray-700 text-base font-semibold">No orders in progress</p>
+
+                                <p className="text-gray-500 text-sm mt-1">All items are prepared</p>
 
                             </div>
 
@@ -764,25 +831,36 @@ const KitchenDisplaySystem = () => {
 
                 {/* READY - Green/Ready */}
 
-                <div className="rounded-xl shadow-sm overflow-hidden border border-slate-700 bg-slate-800">
+                <div className="rounded-2xl shadow-lg overflow-hidden border-2 border-emerald-200 bg-white">
 
-                    <div className="p-4 text-center border-b border-slate-700">
+                    <div className="p-5 text-center bg-gradient-to-r from-emerald-500 to-teal-500 border-b-0">
 
-                        <h2 className="text-lg font-semibold text-white">Ready</h2>
+                        <div className="flex items-center justify-center gap-2 mb-1">
+                            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            <h2 className="text-xl font-bold text-white">Ready</h2>
+                        </div>
 
-                        <p className="text-slate-300 text-sm mt-1">{readyOrders.length} ready</p>
+                        <p className="text-emerald-100 text-sm font-medium">{readyOrders.length} ready</p>
 
                     </div>
 
-                    <div className="p-4 space-y-3 max-h-[calc(100vh-200px)] overflow-y-auto">
+                    <div className="p-4 space-y-4 max-h-[calc(100vh-220px)] overflow-y-auto bg-emerald-50/30">
 
                         {readyOrders.length === 0 ? (
 
                             <div className="text-center py-12">
 
-                                <p className="text-slate-200 text-base font-medium">No ready orders</p>
+                                <div className="w-16 h-16 bg-gradient-to-br from-emerald-100 to-emerald-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <svg className="w-8 h-8 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
 
-                                <p className="text-slate-400 text-sm mt-2">Waiting for items</p>
+                                <p className="text-gray-700 text-base font-semibold">No ready orders</p>
+
+                                <p className="text-gray-500 text-sm mt-1">Waiting for items</p>
 
                             </div>
 

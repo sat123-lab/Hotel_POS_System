@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import API_URL from '../utils/api';
+import { getAPI_URL } from '../utils/api';
+import { getLocationSettingsForCountry } from '../utils/currency';
+import useCurrency from '../hooks/useCurrency';
 
-const CustomerOrderTracker = ({ orderId, tableId }) => {
+const CustomerOrderTracker = ({ orderId, tableId, locationSettings: locationSettingsProp }) => {
+  const locationSettings =
+    locationSettingsProp ||
+    getLocationSettingsForCountry(localStorage.getItem('posCountry') || 'India');
+  const { format: fmt } = useCurrency(locationSettings);
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -14,7 +20,7 @@ const CustomerOrderTracker = ({ orderId, tableId }) => {
 
   const fetchOrderStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/orders?table_name=${tableId}`);
+      const response = await fetch(`${getAPI_URL()}/api/orders?table_name=${tableId}`);
       const orders = await response.json();
       const currentOrder = orders.find(o => o.id === orderId);
       if (currentOrder) {
@@ -86,13 +92,13 @@ const CustomerOrderTracker = ({ orderId, tableId }) => {
               <span className="text-gray-700">
                 <span className="font-semibold">{item.qty || item.quantity}x</span> {item.name}
               </span>
-              <span className="text-gray-600 font-semibold">₹{(item.price * (item.qty || item.quantity)).toFixed(2)}</span>
+              <span className="text-gray-600 font-semibold">{fmt(item.price * (item.qty || item.quantity))}</span>
             </div>
           ))}
         </div>
         <div className="border-t pt-3 mt-3 flex justify-between items-center font-bold text-lg">
           <span>Total:</span>
-          <span className="text-orange-600">₹{order.total.toFixed(2)}</span>
+          <span className="text-orange-600">{fmt(order.total)}</span>
         </div>
       </div>
 

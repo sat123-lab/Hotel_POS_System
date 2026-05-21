@@ -3,9 +3,10 @@ const sequelize = require('./sequelize');
 
 const Inventory = sequelize.define('Inventory', {
   id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-  name: { type: DataTypes.STRING, allowNull: false },
-  currentStock: { type: DataTypes.FLOAT, allowNull: false },
-  minStock: { type: DataTypes.FLOAT, allowNull: false },
+  material_name: { type: DataTypes.STRING, allowNull: true },
+  current_stock: { type: DataTypes.FLOAT, allowNull: true },
+  min_stock: { type: DataTypes.FLOAT, allowNull: true },
+  status: { type: DataTypes.STRING, allowNull: true },
 }, {
   tableName: 'inventory',
   timestamps: false,

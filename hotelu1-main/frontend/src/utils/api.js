@@ -1,21 +1,36 @@
-const API_URL = "https://hotel-pos-system.onrender.com";
+const BACKEND_PORT = process.env.REACT_APP_API_PORT || "3001";
+
+/** Backend base URL — works on localhost and LAN (mobile QR). */
+export const getAPI_URL = () => {
+  const envUrl = process.env.REACT_APP_API_URL;
+  if (envUrl) return envUrl.replace(/\/$/, "");
+  const protocol = window.location.protocol;
+  const host = window.location.hostname;
+  return `${protocol}//${host}:${BACKEND_PORT}`;
+};
+
+export const getSocketUrl = () =>
+  getAPI_URL().replace("https://", "wss://").replace("http://", "ws://");
+
+const handleUnauthorized = () => {
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  window.location.href = "/login";
+};
 
 export const authFetch = (url, options = {}) => {
   const token = localStorage.getItem("token");
 
-  return fetch(`${API_URL}${url}`, {
+  return fetch(`${getAPI_URL()}${url}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
-      ...options.headers
-    }
-  }).then(response => {
+      Authorization: `Bearer ${token}`,
+      ...options.headers,
+    },
+  }).then((response) => {
     if (response.status === 401) {
-      // Clear token and redirect to login
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+      handleUnauthorized();
       throw new Error("Session expired. Please login again.");
     }
     return response;
@@ -31,23 +46,16 @@ export const fetchWithErrorHandling = async (url, options = {}) => {
     };
 
     if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+      headers.Authorization = `Bearer ${token}`;
     }
 
-    console.log(`API Request: ${API_URL}${url}`, { method: options.method || 'GET', headers: { ...headers, Authorization: headers.Authorization ? '***' : undefined } });
-
-    const response = await fetch(`${API_URL}${url}`, {
+    const response = await fetch(`${getAPI_URL()}${url}`, {
       ...options,
       headers,
     });
 
-    console.log(`API Response: ${response.status} ${response.statusText}`, response.url);
-
     if (response.status === 401) {
-      // Clear token and redirect to login
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+      handleUnauthorized();
       throw new Error("Session expired. Please login again.");
     }
 
@@ -57,12 +65,13 @@ export const fetchWithErrorHandling = async (url, options = {}) => {
       throw error;
     }
 
-    // Check if response is JSON before parsing
     const contentType = response.headers.get("content-type");
     if (!contentType || !contentType.includes("application/json")) {
       const text = await response.text();
       console.error("Expected JSON but got:", text.substring(0, 200));
-      throw new Error("Invalid response format: Expected JSON but received HTML or text");
+      throw new Error(
+        "Invalid response format: Expected JSON but received HTML or text"
+      );
     }
 
     const data = await response.json();
@@ -76,5 +85,4 @@ export const fetchWithErrorHandling = async (url, options = {}) => {
   }
 };
 
-export { API_URL };
-export default API_URL;
+export default getAPI_URL;

@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { authFetch } from '../utils/api';
-import API_URL from '../utils/api';
+import { authFetch, getAPI_URL } from '../utils/api';
 import Notification from './Notification';
 import QRCode from 'qrcode';
 import { getUPIConfig } from '../config/upiConfig';
 import { CheckCircle, Printer, Tag, CreditCard, DollarSign, Smartphone, Globe, Utensils } from 'lucide-react';
-
-
+import useCurrency from '../hooks/useCurrency';
 
 const BillingPage = ({ locationSettings }) => {
+    const { format: fmt } = useCurrency(locationSettings);
 
     const [orders, setOrders] = useState([]);
 
@@ -21,10 +20,44 @@ const BillingPage = ({ locationSettings }) => {
     const [notification, setNotification] = useState(null);
 
     const [discountPercent, setDiscountPercent] = useState(0);
-
     const [discountType, setDiscountType] = useState('percent'); // 'percent' or 'fixed'
-
     const [manualTaxRate, setManualTaxRate] = useState(5); // Manual tax rate in percent
+
+    // Fetch settings from API on mount
+    useEffect(() => {
+        fetchSettings();
+    }, []);
+
+    // Fetch settings from database API
+    const fetchSettings = async () => {
+        try {
+            const response = await fetch(`${getAPI_URL()}/api/settings`);
+            if (response.ok) {
+                const data = await response.json();
+                setDiscountPercent(data.discountPercent ?? 0);
+                setManualTaxRate(data.taxPercent ?? 5);
+                // Save to localStorage as backup
+                localStorage.setItem('globalTaxDiscount', JSON.stringify(data));
+            } else {
+                // Fallback to localStorage
+                const saved = localStorage.getItem('globalTaxDiscount');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    setDiscountPercent(parsed.discountPercent ?? 0);
+                    setManualTaxRate(parsed.taxPercent ?? 5);
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching settings:', error);
+            // Fallback to localStorage
+            const saved = localStorage.getItem('globalTaxDiscount');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                setDiscountPercent(parsed.discountPercent ?? 0);
+                setManualTaxRate(parsed.taxPercent ?? 5);
+            }
+        }
+    };
 
     const [isLoaded, setIsLoaded] = useState(false);
 
@@ -52,10 +85,9 @@ const BillingPage = ({ locationSettings }) => {
         return () => clearTimeout(timer);
     }, []);
 
-
-
     const fetchDeliveredOrders = () => {
         // Fetch orders that are ready for billing (ready or delivered status)
+        // EXCLUDE takeaway orders - they go directly to dashboard after payment
         authFetch('/api/orders?status=ready')
             .then(res => res.json())
             .then(readyOrders => {
@@ -67,8 +99,10 @@ const BillingPage = ({ locationSettings }) => {
                     .then(deliveredOrders => {
                         const delivered = Array.isArray(deliveredOrders) ? deliveredOrders : [];
                         
-                        // Combine both ready and delivered orders
-                        const allBillableOrders = [...ready, ...delivered];
+                        // Combine both ready and delivered orders, but EXCLUDE takeaway orders
+                        const allBillableOrders = [...ready, ...delivered].filter(
+                            order => order.type !== 'TAKEAWAY' && order.table_name !== 'Takeaway'
+                        );
                         setOrders(allBillableOrders);
                     });
             })
@@ -258,9 +292,12 @@ const BillingPage = ({ locationSettings }) => {
 
 
 
-        const takeawayOrders = orders.filter(order => order.table_name === 'Takeaway');
+        // Filter out takeaway orders - they don't go through billing
+        const billableOrders = orders.filter(order => 
+            order.type !== 'TAKEAWAY' && order.table_name !== 'Takeaway'
+        );
 
-        const dineInOrders = orders.filter(order => order.table_name !== 'Takeaway');
+        const dineInOrders = billableOrders;
 
 
 
@@ -334,38 +371,12 @@ const BillingPage = ({ locationSettings }) => {
 
         }
 
+        // Takeaway orders are handled separately - they skip billing entirely
+        // (Payment → Token receipt → Dashboard, no billing page)
 
-
-        // Add Takeaway orders as individual bills (not consolidated)
-
-        takeawayOrders.forEach(order => {
-
-            consolidatedBills.push({
-
-                orderIds: [order.id],
-
-                items: groupItemsByName(order.items || []),
-
-                grandTotal: order.total || 0,
-
-                table_name: order.table_name,
-
-                orderCount: 1,
-
-                isConsolidated: false // Mark as not consolidated
-
-            });
-
-        });
-
-
-
-        // If there's only one bill (either dine-in or takeaway), return it directly
-
+        // If there's only one bill, return it directly
         if (consolidatedBills.length === 1) {
-
             return consolidatedBills[0];
-
         }
 
 
@@ -396,11 +407,13 @@ const BillingPage = ({ locationSettings }) => {
 
         setSelectedOrder(order);
 
-        setDiscountPercent(0);
-
+        // Load global settings instead of hardcoded defaults
+        const savedSettings = localStorage.getItem('globalTaxDiscount');
+        const settings = savedSettings ? JSON.parse(savedSettings) : { taxPercent: 5, discountPercent: 0 };
+        
+        setDiscountPercent(settings.discountPercent || 0);
         setDiscountType('percent');
-
-        setManualTaxRate(5); // Reset to default 5%
+        setManualTaxRate(settings.taxPercent || 5);
 
         const bill = await fetchBillForOrder(order.id);
 
@@ -576,12 +589,9 @@ const BillingPage = ({ locationSettings }) => {
 
         if (selectedOrder) {
 
-            // Calculate total amount for QR code
-
+            // Calculate total amount for QR code using proper calculation
             const totals = selectedOrder.orderIds 
-
-                ? { total: ((discountPercent > 0 ? (selectedOrder.grandTotal * 0.95) - ((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95))) : (selectedOrder.grandTotal * 0.95)) * (1 + (manualTaxRate / 100))) }
-
+                ? calculateTotals(selectedOrder, discountPercent, discountType)
                 : currentOrderTotals;
 
             
@@ -680,9 +690,9 @@ const BillingPage = ({ locationSettings }) => {
 
                                         <td style="text-align: right;">${item.quantity}</td>
 
-                                        <td style="text-align: right;">${locationSettings.currencySymbol}${item.price.toFixed(2)}</td>
+                                        <td style="text-align: right;">${fmt(item.price)}</td>
 
-                                        <td style="text-align: right;">${locationSettings.currencySymbol}${item.totalPrice.toFixed(2)}</td>
+                                        <td style="text-align: right;">${fmt(item.totalPrice)}</td>
 
                                     </tr>
 
@@ -697,51 +707,28 @@ const BillingPage = ({ locationSettings }) => {
                     <div class="dashed-line"></div>
 
                     <div class="bill-summary">
-
                         <div>
-
                             <span>Subtotal:</span>
-
-                            <span>${locationSettings.currencySymbol}${(selectedOrder.grandTotal * 0.95).toFixed(2)}</span>
-
+                            <span>${fmt(totals.subtotal)}</span>
                         </div>
-
                         ${discountPercent > 0 ? `
-
                         <div>
-
-                            <span>Discount (${discountType === 'percent' ? discountPercent + '%' : locationSettings.currencySymbol + discountPercent}):</span>
-
-                            <span>-${locationSettings.currencySymbol}${((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95))).toFixed(2)}</span>
-
+                            <span>Discount (${discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
+                            <span>-${fmt(totals.discountAmount)}</span>
                         </div>
-
                         <div>
-
                             <span>After Discount:</span>
-
-                            <span>${locationSettings.currencySymbol}${((selectedOrder.grandTotal * 0.95) - ((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95)))).toFixed(2)}</span>
-
+                            <span>${fmt(totals.afterDiscount)}</span>
                         </div>
-
                         ` : ''}
-
                         <div>
-
                             <span>Tax (${manualTaxRate}%):</span>
-
-                            <span>${locationSettings.currencySymbol}${(((discountPercent > 0 ? (selectedOrder.grandTotal * 0.95) - ((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95))) : (selectedOrder.grandTotal * 0.95)) * (manualTaxRate / 100))).toFixed(2)}</span>
-
+                            <span>${fmt(totals.tax)}</span>
                         </div>
-
                         <div class="total">
-
                             <span>TOTAL:</span>
-
-                            <span>${locationSettings.currencySymbol}${totals.total.toFixed(2)}</span>
-
+                            <span>${fmt(totals.total)}</span>
                         </div>
-
                     </div>
 
                     <div class="dashed-line"></div>
@@ -752,7 +739,7 @@ const BillingPage = ({ locationSettings }) => {
 
                         <img src="${qrCodeDataUrl}" alt="UPI Payment QR Code" />
 
-                        <p>Amount: ${locationSettings.currencySymbol}${totals.total.toFixed(2)}</p>
+                        <p>Amount: ${fmt(totals.total)}</p>
 
                     </div>
 
@@ -812,9 +799,9 @@ const BillingPage = ({ locationSettings }) => {
 
                                         <td style="text-align: right;">${item.quantity}</td>
 
-                                        <td style="text-align: right;">${locationSettings.currencySymbol}${item.price.toFixed(2)}</td>
+                                        <td style="text-align: right;">${fmt(item.price)}</td>
 
-                                        <td style="text-align: right;">${locationSettings.currencySymbol}${item.totalPrice.toFixed(2)}</td>
+                                        <td style="text-align: right;">${fmt(item.totalPrice)}</td>
 
                                     </tr>
 
@@ -834,7 +821,7 @@ const BillingPage = ({ locationSettings }) => {
 
                             <span>Subtotal:</span>
 
-                            <span>${locationSettings.currencySymbol}${totals.subtotal.toFixed(2)}</span>
+                            <span>${fmt(totals.subtotal)}</span>
 
                         </div>
 
@@ -842,9 +829,9 @@ const BillingPage = ({ locationSettings }) => {
 
                         <div>
 
-                            <span>Discount (${discountType === 'percent' ? discountPercent + '%' : locationSettings.currencySymbol + discountPercent}):</span>
+                            <span>Discount (${discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
 
-                            <span>-${locationSettings.currencySymbol}${totals.discountAmount.toFixed(2)}</span>
+                            <span>-${fmt(totals.discountAmount)}</span>
 
                         </div>
 
@@ -852,7 +839,7 @@ const BillingPage = ({ locationSettings }) => {
 
                             <span>After Discount:</span>
 
-                            <span>${locationSettings.currencySymbol}${totals.afterDiscount.toFixed(2)}</span>
+                            <span>${fmt(totals.afterDiscount)}</span>
 
                         </div>
 
@@ -862,7 +849,7 @@ const BillingPage = ({ locationSettings }) => {
 
                             <span>Tax (${manualTaxRate}%):</span>
 
-                            <span>${locationSettings.currencySymbol}${totals.tax.toFixed(2)}</span>
+                            <span>${fmt(totals.tax)}</span>
 
                         </div>
 
@@ -870,7 +857,7 @@ const BillingPage = ({ locationSettings }) => {
 
                             <span>TOTAL:</span>
 
-                            <span>${locationSettings.currencySymbol}${totals.total.toFixed(2)}</span>
+                            <span>${fmt(totals.total)}</span>
 
                         </div>
 
@@ -892,7 +879,7 @@ const BillingPage = ({ locationSettings }) => {
 
                         <img src="${qrCodeDataUrl}" alt="UPI Payment QR Code" />
 
-                        <p>Amount: ${locationSettings.currencySymbol}${totals.total.toFixed(2)}</p>
+                        <p>Amount: ${fmt(totals.total)}</p>
 
                     </div>
 
@@ -942,71 +929,88 @@ const BillingPage = ({ locationSettings }) => {
 
     return (
 
-        <div className="p-6 bg-gradient-to-br from-slate-50 via-emerald-50 to-blue-50 min-h-screen" style={{ perspective: '1000px' }}>
+        <div className="p-6 bg-[#FFF8F0] min-h-screen" style={{ perspective: '1000px' }}>
 
-            <div className="mb-6">
-                <div className="flex items-center mb-2">
-                    <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-blue-600 rounded-xl flex items-center justify-center mr-4 shadow-lg">
-                        <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-6">
+
+                <div className="px-6 py-6">
+
+                    <div className="flex items-center justify-between">
+
+                        <div>
+
+                            <h2 className="text-3xl font-bold text-white mb-1">Billing</h2>
+
+                            <p className="text-orange-100 text-base">Generate bills for completed orders</p>
+
+                        </div>
+
+                        <div className="hidden md:flex items-center space-x-3">
+
+                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
+
+                                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14h6v-4h6v10H3V10h6v4z" />
+
+                                </svg>
+
+                                <span className="text-white text-sm font-medium">Payments</span>
+
+                            </div>
+
+                        </div>
+
                     </div>
-                    <div>
-                        <h2 className="text-3xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent mb-1 animate-fade-in">Billing</h2>
-                        <p className="text-sm text-slate-600">
-                            {orders.length === 0 
-                                ? (<span className="inline-flex items-center gap-2"><CheckCircle className="text-emerald-600" size={16} />No pending bills</span>)
-                                : `${orders.length} order(s) ready for payment`}
-                        </p>
-                    </div>
+
                 </div>
+
             </div>
 
             {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-8" style={{ transformStyle: 'preserve-3d' }}>
 
-                <div className={`bg-gradient-to-br from-white to-emerald-50/30 p-4 lg:p-8 rounded-2xl border border-emerald-200 shadow-xl backdrop-blur-sm ${
+                <div className={`bg-white p-4 lg:p-8 rounded-2xl border border-orange-100 shadow-xl ${
                     isLoaded ? 'animate-slide-up opacity-100' : 'opacity-0'
                 }`}
                     style={{
                         transform: isLoaded ? 'translateZ(0) rotateX(0deg)' : 'translateZ(-20px) rotateX(5deg)',
                         transformStyle: 'preserve-3d',
-                        transitionDelay: '100ms',
-                        boxShadow: '0 20px 25px -5px rgba(16, 185, 129, 0.1), 0 10px 10px -5px rgba(16, 185, 129, 0.04)'
+                        transitionDelay: '100ms'
                     }}
                     onMouseEnter={(e) => {
                         e.currentTarget.style.transform = 'translateZ(10px) rotateX(-2deg) scale(1.02)';
-                        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(16, 185, 129, 0.25)';
+                        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(255, 107, 53, 0.25)';
                     }}
                     onMouseLeave={(e) => {
                         e.currentTarget.style.transform = 'translateZ(0) rotateX(0deg) scale(1)';
-                        e.currentTarget.style.boxShadow = '0 20px 25px -5px rgba(16, 185, 129, 0.1), 0 10px 10px -5px rgba(16, 185, 129, 0.04)';
+                        e.currentTarget.style.boxShadow = '';
                     }}
                 >
 
-                    <h3 className="text-xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent mb-6">Orders</h3>
+                    <h3 className="text-xl font-bold text-orange-600 mb-6">Orders</h3>
 
                     {orders.length === 0 ? (
-                        <div className="text-center py-12 border-2 border-emerald-200 rounded-2xl bg-gradient-to-br from-emerald-50 to-blue-50/50">
+                        <div className="text-center py-12 border-2 border-orange-200 rounded-2xl bg-orange-50/50">
                             <div className="mb-4">
-                                <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 to-blue-600 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                                <div className="w-16 h-16 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center mx-auto animate-pulse">
                                     <CheckCircle size={32} className="text-white" />
                                 </div>
                             </div>
-                            <p className="text-lg font-bold text-slate-800 mb-2">No active orders</p>
-                            <p className="text-sm text-slate-600">Orders will appear here when created.</p>
+                            <p className="text-lg font-bold text-gray-800 mb-2">No active orders</p>
+                            <p className="text-sm text-gray-500">Orders will appear here when created.</p>
                         </div>
                     ) : (
 
-                        <div className="divide-y divide-emerald-200">
+                        <div className="divide-y divide-orange-100">
                             {orders.map((order, index) => (
                                 <div
                                     key={order.id}
                                     className={`px-4 py-4 cursor-pointer transition-all duration-300 rounded-xl ${
                                         selectedOrder?.id === order.id 
-                                            ? 'bg-gradient-to-r from-emerald-100 to-blue-100 border-2 border-emerald-300 shadow-md' 
-                                            : 'hover:bg-gradient-to-r from-emerald-50 to-blue-50 hover:border-emerald-200 border-2 border-transparent'
+                                            ? 'bg-orange-50 border-2 border-orange-300 shadow-md' 
+                                            : 'hover:bg-orange-50/50 hover:border-orange-200 border-2 border-transparent'
                                     }`}
                                     style={{
                                         transform: isLoaded ? 'translateZ(0)' : 'translateZ(-10px)',
@@ -1029,7 +1033,7 @@ const BillingPage = ({ locationSettings }) => {
                                             </p>
                                         </div>
                                         <div className="text-right">
-                                            <p className="text-lg font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent">{locationSettings.currencySymbol}{order.total.toFixed(2)}</p>
+                                            <p className="text-lg font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent">{fmt(order.total)}</p>
                                             <span className="inline-flex items-center gap-1 mt-2 bg-emerald-100 text-emerald-800 px-2 py-1 rounded-full text-xs font-medium">
                                                 <CheckCircle size={12} />
                                                 Delivered
@@ -1044,31 +1048,30 @@ const BillingPage = ({ locationSettings }) => {
 
                 </div>
 
-                <div className={`bg-gradient-to-br from-white to-blue-50/30 p-4 lg:p-8 rounded-2xl border border-blue-200 shadow-xl backdrop-blur-sm ${
+                <div className={`bg-white p-4 lg:p-8 rounded-2xl border border-orange-100 shadow-xl ${
                     isLoaded ? 'animate-slide-up opacity-100' : 'opacity-0'
                 }`}
                     style={{
                         transform: isLoaded ? 'translateZ(0) rotateX(0deg)' : 'translateZ(-20px) rotateX(5deg)',
                         transformStyle: 'preserve-3d',
-                        transitionDelay: '200ms',
-                        boxShadow: '0 20px 25px -5px rgba(59, 130, 246, 0.1), 0 10px 10px -5px rgba(59, 130, 246, 0.04)'
+                        transitionDelay: '200ms'
                     }}
                     onMouseEnter={(e) => {
                         e.currentTarget.style.transform = 'translateZ(10px) rotateX(-2deg) scale(1.02)';
-                        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(59, 130, 246, 0.25)';
+                        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(255, 107, 53, 0.25)';
                     }}
                     onMouseLeave={(e) => {
                         e.currentTarget.style.transform = 'translateZ(0) rotateX(0deg) scale(1)';
-                        e.currentTarget.style.boxShadow = '0 20px 25px -5px rgba(59, 130, 246, 0.1), 0 10px 10px -5px rgba(59, 130, 246, 0.04)';
+                        e.currentTarget.style.boxShadow = '';
                     }}
                     ref={billRef}>
 
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Invoice</h3>
+                        <h3 className="text-xl font-bold text-orange-600">Invoice</h3>
                         {consolidatedBill && !consolidatedBill.multipleTables && consolidatedBill.isConsolidated && (
                             <button
                                 onClick={() => setSelectedOrder(consolidatedBill)}
-                                className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
                             >
                                 <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
@@ -1083,34 +1086,34 @@ const BillingPage = ({ locationSettings }) => {
                     {!selectedOrder ? (
                         <div className="text-center py-12">
                             <div className="mb-6">
-                                <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto shadow-lg animate-pulse">
+                                <div className="w-20 h-20 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center mx-auto shadow-lg animate-pulse">
                                     <Printer size={40} className="text-white" />
                                 </div>
                             </div>
-                            <p className="text-lg font-bold text-slate-800 mb-2">Select an order to view invoice details</p>
-                            <p className="text-sm text-slate-600">Choose an order from the list to generate invoice</p>
+                            <p className="text-lg font-bold text-gray-800 mb-2">Select an order to view invoice details</p>
+                            <p className="text-sm text-gray-500">Choose an order from the list to generate invoice</p>
 
                             {consolidatedBill && consolidatedBill.multipleTables && (
-                                <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-purple-50/50 rounded-2xl border-2 border-blue-200 text-left">
-                                    <p className="text-lg font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-4">
+                                <div className="mt-6 p-6 bg-orange-50/50 rounded-2xl border-2 border-orange-200 text-left">
+                                    <p className="text-lg font-bold text-orange-600 mb-4">
                                         Multiple tables with pending orders
                                     </p>
                                     <div className="space-y-3">
                                         {consolidatedBill.tables.map((tableBill, index) => (
-                                            <div key={index} className="p-4 bg-white rounded-xl border-2 border-blue-200 hover:shadow-md transition-all duration-300">
-                                                <p className="font-bold text-slate-900 text-base">
+                                            <div key={index} className="p-4 bg-white rounded-xl border-2 border-orange-200 hover:shadow-md transition-all duration-300">
+                                                <p className="font-bold text-gray-900 text-base">
                                                     {tableBill.table_name === 'Takeaway'
                                                         ? `Takeaway - Order ID: ${tableBill.orderIds[0]}`
                                                         : `Table ${tableBill.table_name}: ${tableBill.orderCount} Orders (Consolidated)`
                                                     }
                                                 </p>
                                                 <div className="flex justify-between items-center mt-3">
-                                                    <p className="text-lg font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                                                        Total: {locationSettings.currencySymbol}{tableBill.grandTotal.toFixed(2)}
+                                                    <p className="text-lg font-bold text-orange-600">
+                                                        Total: {fmt(tableBill.grandTotal)}
                                                     </p>
                                                     <button
                                                         onClick={() => setSelectedOrder(tableBill)}
-                                                        className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                                                        className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
                                                     >
                                                         <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -1159,7 +1162,7 @@ const BillingPage = ({ locationSettings }) => {
 
                                             <span>{item.quantity}x {item.name}</span>
 
-                                            <span className="font-semibold">{locationSettings.currencySymbol}{item.totalPrice.toFixed(2)}</span>
+                                            <span className="font-semibold">{fmt(item.totalPrice)}</span>
 
                                         </div>
 
@@ -1169,222 +1172,56 @@ const BillingPage = ({ locationSettings }) => {
 
                             </div>
 
+                            {/* Global Settings - Read Only Display */}
                             <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-
-                                <h4 className="text-sm font-semibold text-slate-900 mb-3 inline-flex items-center gap-2"><Tag size={16} className="text-slate-500" /> Discount</h4>
-
-                                <div className="flex gap-4 mb-3 text-sm">
-
-                                    <label className="flex items-center">
-
-                                        <input
-
-                                            type="radio"
-
-                                            checked={discountType === 'percent'}
-
-                                            onChange={() => setDiscountType('percent')}
-
-                                            className="mr-2"
-
-                                        />
-
-                                        <span className="text-slate-700">Percentage (%)</span>
-
-                                    </label>
-
-                                    <label className="flex items-center">
-
-                                        <input
-
-                                            type="radio"
-
-                                            checked={discountType === 'fixed'}
-
-                                            onChange={() => setDiscountType('fixed')}
-
-                                            className="mr-2"
-
-                                        />
-
-                                        <span className="text-slate-700">Fixed amount</span>
-
-                                    </label>
-
-                                </div>
-
-                                <div className="flex flex-col sm:flex-row gap-2">
-
-                                    <input
-
-                                        type="text"
-
-                                        value={discountPercent > 0 ? discountPercent : ''}
-
-                                        onChange={(e) => {
-
-                                            const value = e.target.value === '' ? 0 : Math.max(0, parseFloat(e.target.value) || 0);
-
-                                            if (discountType === 'percent' && value > 100) {
-
-                                                setDiscountPercent(100);
-
-                                            } else if (discountType === 'fixed' && value > (selectedOrder.grandTotal * 0.95)) {
-
-                                                setDiscountPercent(selectedOrder.grandTotal * 0.95);
-
-                                            } else {
-
-                                                setDiscountPercent(value);
-
-                                            }
-
-                                        }}
-
-                                        placeholder={discountType === 'percent' ? 'Enter %' : 'Enter amount'}
-
-                                        className="flex-1 border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
-
-                                    />
-
-                                    <button
-
-                                        onClick={() => setDiscountPercent(0)}
-
-                                        className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-colors duration-200 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-600/20 whitespace-nowrap"
-
-                                    >
-
-                                        Clear
-
-                                    </button>
-
-                                </div>
-
+                                <h4 className="text-sm font-semibold text-slate-900 mb-2 inline-flex items-center gap-2"><Tag size={16} className="text-slate-500" /> Discount</h4>
+                                <p className="text-xs text-slate-500">Applied: {discountPercent}% (from global settings)</p>
                                 {discountPercent > 0 && (
-
-                                        <p className="text-xs text-slate-500 mt-2">
-
-                                        Discount Amount: {locationSettings.currencySymbol}{((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : 1) * (discountType === 'fixed' ? discountPercent / (selectedOrder.grandTotal * 0.95) : 1)).toFixed(2)}
-
+                                    <p className="text-xs text-slate-600 mt-1">
+                                        Amount: -{fmt(currentOrderTotals.discountAmount)}
                                     </p>
-
                                 )}
-
                             </div>
 
-                            <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-
-                                <h4 className="text-sm font-semibold text-slate-900 mb-3 inline-flex items-center gap-2"><DollarSign size={16} className="text-slate-500" /> Tax</h4>
-
-                                <div className="flex flex-col sm:flex-row gap-2">
-
-                                    <input
-
-                                        type="text"
-
-                                        value={manualTaxRate !== 5 ? manualTaxRate : ''}
-
-                                        onChange={(e) => {
-
-                                            const value = e.target.value === '' ? 5 : Math.max(0, parseFloat(e.target.value) || 0);
-
-                                            if (value > 100) {
-
-                                                setManualTaxRate(100);
-
-                                            } else {
-
-                                                setManualTaxRate(value);
-
-                                            }
-
-                                        }}
-
-                                        placeholder="Enter tax %"
-
-                                        className="flex-1 border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
-
-                                    />
-
-                                    <div className="flex items-center px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
-
-                                        <span className="text-sm font-medium text-slate-600">%</span>
-
-                                    </div>
-
-                                    <button
-
-                                        onClick={() => setManualTaxRate(5)}
-
-                                        className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-colors duration-200 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-
-                                    >
-
-                                        Reset
-
-                                    </button>
-
-                                </div>
-
-                                <p className="text-xs text-slate-500 mt-2">
-
-                                    Tax Amount: {locationSettings.currencySymbol}{((selectedOrder.grandTotal * 0.95) * (manualTaxRate / 100) / (1 + (manualTaxRate / 100))).toFixed(2)}
-
+                            <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                                <h4 className="text-sm font-semibold text-slate-900 mb-2 inline-flex items-center gap-2"><DollarSign size={16} className="text-slate-500" /> Tax</h4>
+                                <p className="text-xs text-slate-500">Applied: {manualTaxRate}% (from global settings)</p>
+                                <p className="text-xs text-slate-600 mt-1">
+                                    Amount: +{fmt(currentOrderTotals.tax)}
                                 </p>
+                            </div>
 
+                            <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 p-3">
+                                <p className="text-xs text-blue-600">
+                                    <strong>Note:</strong> Tax & Discount are set in Sidebar → Settings
+                                </p>
                             </div>
 
                             <div className="border-t border-slate-200 pt-4 mt-4 space-y-2 text-sm">
-
                                 <div className="flex justify-between">
-
                                     <span className="text-gray-700">Subtotal:</span>
-
-                                    <span className="font-semibold text-gray-900">{locationSettings.currencySymbol}{(selectedOrder.grandTotal * 0.95).toFixed(2)}</span>
-
+                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.subtotal)}</span>
                                 </div>
-
                                 {discountPercent > 0 && (
-
                                     <>
-
                                         <div className="flex justify-between text-red-600">
-
-                                            <span className="text-gray-700">Discount ({discountType === 'percent' ? discountPercent + '%' : locationSettings.currencySymbol + discountPercent}):</span>
-
-                                            <span className="font-semibold">-{locationSettings.currencySymbol}{((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95))).toFixed(2)}</span>
-
+                                            <span className="text-gray-700">Discount ({discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
+                                            <span className="font-semibold">-{fmt(currentOrderTotals.discountAmount)}</span>
                                         </div>
-
                                         <div className="flex justify-between text-gray-800">
-
                                             <span>After Discount:</span>
-
-                                            <span className="font-semibold">{locationSettings.currencySymbol}{((selectedOrder.grandTotal * 0.95) - ((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95)))).toFixed(2)}</span>
-
+                                            <span className="font-semibold">{fmt(currentOrderTotals.afterDiscount)}</span>
                                         </div>
-
                                     </>
-
                                 )}
-
                                 <div className="flex justify-between">
-
                                     <span className="text-gray-700">Tax ({manualTaxRate}%):</span>
-
-                                    <span className="font-semibold text-gray-900">{locationSettings.currencySymbol}{(((discountPercent > 0 ? (selectedOrder.grandTotal * 0.95) - ((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95))) : (selectedOrder.grandTotal * 0.95)) * (manualTaxRate / 100))).toFixed(2)}</span>
-
+                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.tax)}</span>
                                 </div>
-
                                 <div className="flex justify-between text-xl font-semibold pt-3 border-t border-slate-200">
-
                                     <span className="text-gray-800">Grand Total:</span>
-
-                                    <span className="text-slate-900">{locationSettings.currencySymbol}{(((discountPercent > 0 ? (selectedOrder.grandTotal * 0.95) - ((selectedOrder.grandTotal * 0.95) * (discountType === 'percent' ? discountPercent / 100 : discountPercent / (selectedOrder.grandTotal * 0.95))) : (selectedOrder.grandTotal * 0.95)) * (1 + (manualTaxRate / 100)))).toFixed(2)}</span>
-
+                                    <span className="text-slate-900">{fmt(currentOrderTotals.total)}</span>
                                 </div>
-
                             </div>
 
                             <div className="mt-6">
@@ -1473,7 +1310,7 @@ const BillingPage = ({ locationSettings }) => {
                                         </span>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">{locationSettings.currencySymbol}{selectedOrder.total.toFixed(2)}</p>
+                                        <p className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">{fmt(selectedOrder.total)}</p>
                                     </div>
                                 </div>
                             </div>
@@ -1493,7 +1330,7 @@ const BillingPage = ({ locationSettings }) => {
                                                 <span className="font-medium text-slate-900">{item.name}</span>
                                             </div>
                                             <div className="bg-gradient-to-r from-blue-600 to-emerald-600 text-white px-3 py-1 rounded-full text-sm font-bold shadow">
-                                                {locationSettings.currencySymbol}{item.totalPrice.toFixed(2)}
+                                                {fmt(item.totalPrice)}
                                             </div>
                                         </div>
                                     ))}
@@ -1506,7 +1343,7 @@ const BillingPage = ({ locationSettings }) => {
 
                                     <span className="text-gray-700">Subtotal:</span>
 
-                                    <span className="font-semibold text-gray-900">{locationSettings.currencySymbol}{currentOrderTotals.subtotal.toFixed(2)}</span>
+                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.subtotal)}</span>
 
                                 </div>
 
@@ -1516,9 +1353,9 @@ const BillingPage = ({ locationSettings }) => {
 
                                         <div className="flex justify-between text-red-600">
 
-                                            <span className="text-gray-700">Discount ({discountType === 'percent' ? discountPercent + '%' : locationSettings.currencySymbol + discountPercent}):</span>
+                                            <span className="text-gray-700">Discount ({discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
 
-                                            <span className="font-semibold">-{locationSettings.currencySymbol}{currentOrderTotals.discountAmount.toFixed(2)}</span>
+                                            <span className="font-semibold">-{fmt(currentOrderTotals.discountAmount)}</span>
 
                                         </div>
 
@@ -1526,7 +1363,7 @@ const BillingPage = ({ locationSettings }) => {
 
                                             <span>After Discount:</span>
 
-                                            <span className="font-semibold">{locationSettings.currencySymbol}{currentOrderTotals.afterDiscount.toFixed(2)}</span>
+                                            <span className="font-semibold">{fmt(currentOrderTotals.afterDiscount)}</span>
 
                                         </div>
 
@@ -1538,7 +1375,7 @@ const BillingPage = ({ locationSettings }) => {
 
                                     <span className="text-gray-700">Tax ({taxRate * 100}%):</span>
 
-                                    <span className="font-semibold text-gray-900">{locationSettings.currencySymbol}{currentOrderTotals.tax.toFixed(2)}</span>
+                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.tax)}</span>
 
                                 </div>
 
@@ -1546,175 +1383,9 @@ const BillingPage = ({ locationSettings }) => {
 
                                     <span className="text-gray-800">Total:</span>
 
-                                    <span className="text-slate-900">{locationSettings.currencySymbol}{currentOrderTotals.total.toFixed(2)}</span>
+                                    <span className="text-slate-900">{fmt(currentOrderTotals.total)}</span>
 
                                 </div>
-
-                            </div>
-
-                            <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-
-                                <h4 className="text-sm font-semibold text-slate-900 mb-3 inline-flex items-center gap-2"><Tag size={16} className="text-slate-500" /> Discount</h4>
-
-                                <div className="flex gap-4 mb-3 text-sm">
-
-                                    <label className="flex items-center">
-
-                                        <input
-
-                                            type="radio"
-
-                                            checked={discountType === 'percent'}
-
-                                            onChange={() => setDiscountType('percent')}
-
-                                            className="mr-2"
-
-                                        />
-
-                                        <span className="text-slate-700">Percentage (%)</span>
-
-                                    </label>
-
-                                    <label className="flex items-center">
-
-                                        <input
-
-                                            type="radio"
-
-                                            checked={discountType === 'fixed'}
-
-                                            onChange={() => setDiscountType('fixed')}
-
-                                            className="mr-2"
-
-                                        />
-
-                                        <span className="text-slate-700">Fixed amount</span>
-
-                                    </label>
-
-                                </div>
-
-                                <div className="flex flex-col sm:flex-row gap-2">
-
-                                    <input
-
-                                        type="text"
-
-                                        value={discountPercent > 0 ? discountPercent : ''}
-
-                                        onChange={(e) => {
-
-                                            const value = e.target.value === '' ? 0 : Math.max(0, parseFloat(e.target.value) || 0);
-
-                                            if (discountType === 'percent' && value > 100) {
-
-                                                setDiscountPercent(100);
-
-                                            } else if (discountType === 'fixed' && value > currentOrderTotals.subtotal) {
-
-                                                setDiscountPercent(currentOrderTotals.subtotal);
-
-                                            } else {
-
-                                                setDiscountPercent(value);
-
-                                            }
-
-                                        }}
-
-                                        placeholder={discountType === 'percent' ? 'Enter %' : 'Enter amount'}
-
-                                        className="flex-1 border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
-
-                                    />
-
-                                    <button
-
-                                        onClick={() => setDiscountPercent(0)}
-
-                                        className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-colors duration-200 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-
-                                    >
-
-                                        Clear
-
-                                    </button>
-
-                                </div>
-
-                                {discountPercent > 0 && (
-
-                                        <p className="text-xs text-slate-500 mt-2">
-
-                                        Discount Amount: {locationSettings.currencySymbol}{currentOrderTotals.discountAmount.toFixed(2)}
-
-                                    </p>
-
-                                )}
-
-                            </div>
-
-                            <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-
-                                <h4 className="text-sm font-semibold text-slate-900 mb-3 inline-flex items-center gap-2"><DollarSign size={16} className="text-slate-500" /> Tax</h4>
-
-                                <div className="flex flex-col sm:flex-row gap-2">
-
-                                    <input
-
-                                        type="text"
-
-                                        value={manualTaxRate !== 5 ? manualTaxRate : ''}
-
-                                        onChange={(e) => {
-
-                                            const value = e.target.value === '' ? 5 : Math.max(0, parseFloat(e.target.value) || 0);
-
-                                            if (value > 100) {
-
-                                                setManualTaxRate(100);
-
-                                            } else {
-
-                                                setManualTaxRate(value);
-
-                                            }
-
-                                        }}
-
-                                        placeholder="Enter tax %"
-
-                                        className="flex-1 border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
-
-                                    />
-
-                                    <div className="flex items-center px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
-
-                                        <span className="text-sm font-medium text-slate-600">%</span>
-
-                                    </div>
-
-                                    <button
-
-                                        onClick={() => setManualTaxRate(5)}
-
-                                        className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-colors duration-200 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-
-                                    >
-
-                                        Reset
-
-                                    </button>
-
-                                </div>
-
-                                <p className="text-xs text-slate-500 mt-2">
-
-                                    Tax Amount: {locationSettings.currencySymbol}{currentOrderTotals.tax.toFixed(2)}
-
-                                </p>
 
                             </div>
 

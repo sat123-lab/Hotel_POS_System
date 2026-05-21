@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import SimpleMenu from './SimpleMenu';
 import CustomerOrderTracker from './CustomerOrderTracker';
 import Notification from './Notification';
+import useCurrency from '../hooks/useCurrency';
 
 const QRCodeOrdering = ({ locationSettings, onOrderPlacedWithId, tableId: propTableId }) => {
+    const { format: fmt } = useCurrency(locationSettings);
+    const navigate = useNavigate();
     const [tableId, setTableId] = useState('Unknown Table/Takeaway');
     const [currentOrderId, setCurrentOrderId] = useState(null);
     const [notification, setNotification] = useState(null);
@@ -24,15 +28,15 @@ const QRCodeOrdering = ({ locationSettings, onOrderPlacedWithId, tableId: propTa
 
     const handleOrderPlaced = (order) => {
         setCurrentOrderId(order.id);
-        setShowTracker(true);
         setNotification({
-            message: `✅ Order #${order.id} placed successfully! Total: ₹${order.total}`,
+            message: `✅ Order #${order.id} placed! ${fmt(order.total)} — you can add more items below.`,
             type: 'success',
-            duration: 5000
+            duration: 6000
         });
         if (onOrderPlacedWithId) {
             onOrderPlacedWithId(order.id);
         }
+        // Stay on menu so customer can add more items (no redirect)
     };
 
     const handleNewOrder = () => {
@@ -54,7 +58,7 @@ const QRCodeOrdering = ({ locationSettings, onOrderPlacedWithId, tableId: propTa
             
             {showTracker && currentOrderId ? (
                 <div className="max-w-2xl mx-auto py-8">
-                    <CustomerOrderTracker orderId={currentOrderId} tableId={tableId} />
+                    <CustomerOrderTracker orderId={currentOrderId} tableId={tableId} locationSettings={locationSettings} />
                     
                     <div className="text-center mt-8">
                         <button
@@ -69,6 +73,7 @@ const QRCodeOrdering = ({ locationSettings, onOrderPlacedWithId, tableId: propTa
                 <SimpleMenu 
                     tableId={tableId}
                     onOrderPlaced={handleOrderPlaced}
+                    locationSettings={locationSettings}
                 />
             )}
         </div>

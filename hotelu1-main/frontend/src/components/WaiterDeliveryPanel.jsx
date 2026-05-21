@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import Notification from './Notification';
+import { getAPI_URL } from '../utils/api';
+import useCurrency from '../hooks/useCurrency';
 
 const WaiterDeliveryPanel = ({ locationSettings }) => {
+  const { format: fmt } = useCurrency(locationSettings);
   const [readyOrders, setReadyOrders] = useState([]);
   const [notification, setNotification] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -14,8 +17,8 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
   }, []);
 
   const fetchReadyOrders = () => {
-    const token = localStorage.getItem('authToken');
-    fetch('https://hotel-pos-system.onrender.com/api/orders?status=ready', {
+    const token = localStorage.getItem('token');
+    fetch(`${getAPI_URL()}/api/orders?status=ready`, {
       headers: {
         'Authorization': token ? `Bearer ${token}` : ''
       }
@@ -34,9 +37,9 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
   };
 
   const handleConfirmDelivery = async (orderId) => {
-    const token = localStorage.getItem('authToken');
+    const token = localStorage.getItem('token');
     try {
-      const response = await fetch(`https://hotel-pos-system.onrender.com/api/orders/${orderId}/confirm-delivery`, {
+      const response = await fetch(`${getAPI_URL()}/api/orders/${orderId}/confirm-delivery`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -99,13 +102,13 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
                   <span className="text-slate-700">{item.name}</span>
                 </span>
                 <span className="text-xs bg-white px-2 py-1 rounded border border-slate-200 text-slate-600">
-                  {locationSettings.currencySymbol}{item.price}
+                  {fmt(item.price)}
                 </span>
               </li>
             ))}
           </ul>
           <div className="border-t border-slate-200 pt-3 mt-3 font-semibold text-right text-slate-900 text-base">
-            Total: {locationSettings.currencySymbol}{order.total}
+            Total: {fmt(order.total)}
           </div>
         </div>
 
@@ -177,7 +180,7 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
             </div>
             <div className="bg-slate-50 rounded-xl p-4 text-center border border-slate-200">
               <div className="text-2xl font-semibold text-slate-900">
-                {locationSettings.currencySymbol}{readyOrders.reduce((sum, o) => sum + o.total, 0).toFixed(2)}
+                {fmt(readyOrders.reduce((sum, o) => sum + o.total, 0))}
               </div>
               <div className="text-slate-500 text-xs">Total amount</div>
             </div>

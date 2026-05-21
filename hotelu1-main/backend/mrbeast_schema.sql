@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
     price FLOAT NOT NULL,
     category VARCHAR(100) NOT NULL,
     description VARCHAR(255),
+    image TEXT,
     isAvailable BOOLEAN DEFAULT TRUE
 );
 

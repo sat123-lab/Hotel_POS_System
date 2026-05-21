@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../utils/api';
-import API_URL from '../utils/api';
 import Notification from './Notification';
 import OrderEntryModal from './OrderEntryModal';
 import { Utensils, Clock, CheckCircle, Truck } from 'lucide-react';
+import useCurrency from '../hooks/useCurrency';
 
 const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => {
+    const { format: fmt } = useCurrency(locationSettings);
     const navigate = useNavigate();
     
     // Check authentication
@@ -63,12 +64,12 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
                 return;
             }
 
-            const filteredOrders = data.filter(o => o.status !== 'completed' && o.status !== 'delivered');
-
+            // Active orders for display (not completed)
+            const filteredOrders = data.filter(o => o.status !== 'completed');
             setActiveOrders(filteredOrders);
 
-            // Update table statuses based on orders
-            updateTableStatuses(filteredOrders);
+            // Update table statuses based on ALL orders (including delivered but not paid)
+            updateTableStatuses(data);
 
         } catch (err) {
 
@@ -83,54 +84,38 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
     // Update table statuses based on active orders and billing status
 
+    // Helper to match table ID with order table_name (handles T1, Table 1, 1 formats)
+    const tableIdMatches = (tableId, tableName) => {
+        if (!tableName) return false;
+        const normalizedTableId = tableId.replace(/^T/i, '');
+        const normalizedTableName = tableName.replace(/Table\s*/i, '');
+        return normalizedTableId === normalizedTableName || tableId === tableName;
+    };
+
     const updateTableStatuses = (orders) => {
-
         setTables(prevTables => 
-
             prevTables.map(table => {
+                // Find any active order for this table (not completed and not paid)
+                const tableOrder = orders.find(o => 
+                    tableIdMatches(table.id, o.table_name) && 
+                    o.status !== 'completed' && 
+                    o.bill_status !== 'paid'
+                );
 
-                const tableOrder = orders.find(o => o.table_name === table.id);
-
-                
-
-                // If no order for this table, it's available
-
+                // If no active order, table is available
                 if (!tableOrder) {
-
                     return { ...table, status: 'available' };
-
                 }
 
-
-
-                // If order exists and not delivered yet, table is occupied
-
-                if (tableOrder.status !== 'delivered') {
-
-                    return { ...table, status: 'occupied' };
-
-                }
-
-
-
-                // If order is delivered but not paid, table is waiting for payment
-
+                // If order is delivered but not paid, waiting for payment
                 if (tableOrder.status === 'delivered' && tableOrder.bill_status !== 'paid') {
-
                     return { ...table, status: 'waiting_payment' };
-
                 }
 
-
-
-                // If order is delivered and paid, table can be cleaned
-
+                // Order is pending/preparing/ready - table is occupied
                 return { ...table, status: 'occupied' };
-
             })
-
         );
-
     };
 
 
@@ -305,7 +290,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
 
 
-                const table = tables.find(t => t.id === order.table_name);
+                const table = tables.find(t => tableIdMatches(t.id, order.table_name));
 
                 if (table) {
 
@@ -383,7 +368,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                         total: 0
 
-                    })
+                    }) 
 
                 });
 
@@ -566,7 +551,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
         try {
 
-            const tableOrder = activeOrders.find(order => order.table_name === tableId);
+            const tableOrder = activeOrders.find(order => tableIdMatches(tableId, order.table_name));
 
             
 
@@ -634,31 +619,40 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
     return (
 
-        <div className="p-6 bg-slate-50 min-h-screen" style={{ perspective: '1000px' }}>
+        <div className="p-6 bg-[#FFF8F0] min-h-screen" style={{ perspective: '1000px' }}>
 
-            <div className="mb-6">
-
-                <h2 className="text-2xl font-semibold text-slate-900 mb-1">Dine-In</h2>
-
-                <p className="text-sm text-slate-500">
-
-                {activeOrders.length === 0 ? 'No active orders' : `${activeOrders.length} active order(s)`}
-
-                </p>
-
+            {/* Header Section - Orange Theme */}
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-6">
+                <div className="px-6 py-6">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h2 className="text-3xl font-bold text-white mb-1">Dine-In Orders</h2>
+                            <p className="text-orange-100 text-base">Manage table orders and service</p>
+                        </div>
+                        <div className="hidden md:flex items-center space-x-3">
+                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
+                                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span className="text-white text-sm font-medium">Table Service</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
 
-            
-
-            <h3 className="text-lg font-semibold text-slate-900 mb-4 animate-fade-in">Table Overview</h3>
+            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                <span className="w-2 h-8 bg-orange-500 rounded-full mr-3"></span>
+                Table Overview
+            </h3>
 
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 mb-8" style={{ transformStyle: 'preserve-3d' }}>
 
                         {tables.map((table, index) => {
 
-                    const tableOrder = activeOrders.find(o => o.table_name === table.id);
+                    const tableOrder = activeOrders.find(o => tableIdMatches(table.id, o.table_name));
 
                     return (
 
@@ -712,17 +706,17 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                             </div>
 
-                            {activeOrders.find(o => o.table_name === table.id) && (
+                            {activeOrders.find(o => tableIdMatches(table.id, o.table_name)) && (
 
                                 <p className="text-xs mt-3 text-slate-500 animate-pulse-slow">
 
-                                    Order #{activeOrders.find(o => o.table_name === table.id).id} · {activeOrders.find(o => o.table_name === table.id).status}
+                                    Order #{activeOrders.find(o => tableIdMatches(table.id, o.table_name)).id} · {activeOrders.find(o => tableIdMatches(table.id, o.table_name)).status}
 
                                 </p>
 
                             )}
 
-                            {table.status === 'occupied' && activeOrders.find(o => o.table_name === table.id && o.status !== 'NOT_AVAILABLE') && (
+                            {table.status === 'occupied' && activeOrders.find(o => tableIdMatches(table.id, o.table_name) && o.status !== 'NOT_AVAILABLE') && (
 
                                 <button
 
@@ -892,7 +886,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                                                 <div className="flex items-center gap-2">
 
-                                                    <span className="text-gray-600">{locationSettings.currencySymbol}{item.price}</span>
+                                                    <span className="text-gray-600">{fmt(item.price)}</span>
 
                                                     {order.status !== 'delivered' && order.status !== 'completed' && order.status !== 'preparing' && (
 
@@ -924,7 +918,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                                 <p className="text-right text-sm font-semibold text-slate-900 mb-3">
 
-                                    Total: {locationSettings.currencySymbol}{(typeof order.total === 'number' && !isNaN(order.total) ? order.total : 0).toFixed(2)}
+                                    Total: {fmt(typeof order.total === 'number' && !isNaN(order.total) ? order.total : 0)}
 
                                 </p>
 
@@ -1020,7 +1014,15 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
 
                     table={editingOrder ? { id: editingOrder.table_name, status: 'occupied', capacity: 0 } : selectedTable}
 
-                    onClose={() => { setShowOrderModal(false); setEditingOrder(null); setSelectedTable(null); }}
+                    onClose={() => { 
+                        // If closing with empty items, delete the order to prevent empty orders
+                        if (editingOrder && (!editingOrder.items || editingOrder.items.length === 0)) {
+                            handleDeleteEmptyOrder(editingOrder);
+                        }
+                        setShowOrderModal(false); 
+                        setEditingOrder(null); 
+                        setSelectedTable(null); 
+                    }}
 
                     onOrderPlaced={editingOrder ? (orderData => {
 

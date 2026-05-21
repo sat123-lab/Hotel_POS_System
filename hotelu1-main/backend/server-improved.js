@@ -227,11 +227,12 @@ app.get("/api/orders", async (req, res) => {
       return res.status(503).json({ message: "Database not connected" });
     }
 
-    const { status, type, table_name } = req.query;
+    const { status, type, table_name, tableId } = req.query;
     const where = {};
     if (status) where.status = status;
     if (type) where.type = type;
     if (table_name) where.table_name = table_name;
+    if (tableId) where.table_name = tableId; // Support both table_name and tableId
 
     const orders = await Order.findAll({
       where,
@@ -512,8 +513,11 @@ app.get("/api/users", verifyToken, async (req, res) => {
 // SERVER START
 // ============================================================================
 
-app.listen(PORT, () => {
-  console.log(`\n✅ Backend server running at http://localhost:${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
+  console.log(`\n✅ Backend server running at http://${HOST}:${PORT}`);
+  console.log(`   Local: http://localhost:${PORT}`);
+  console.log(`   Network: http://192.168.x.x:${PORT} (your IP)`);
   console.log("\n📚 API Documentation: See API_TESTING_GUIDE.md");
   console.log("🧪 Run tests with: node api-test-complete.js\n");
 });
