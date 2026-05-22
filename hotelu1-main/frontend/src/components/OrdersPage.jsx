@@ -90,18 +90,38 @@ const OrdersPage = ({ locationSettings }) => {
   const [allDates, setAllDates] = useState(false);
   const [showTypeMenu, setShowTypeMenu] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [liveConnected, setLiveConnected] = useState(false);
   const [, setTick] = useState(0);
   const socketRef = useRef(null);
   const typeMenuRef = useRef(null);
 
   /* ---------------- loader ---------------- */
+  // Use a wide date window so timezone differences between the
+  // browser and a UTC-hosted backend don't accidentally drop today's
+  // orders. We then filter client-side using the user-selected date.
   const load = useCallback(async () => {
     try {
-      const url = allDates ? '/api/orders' : `/api/orders?date=${selectedDate}`;
+      let url = '/api/orders';
+      if (!allDates && selectedDate) {
+        // Pull a 2-day window starting from the day before to absorb
+        // any TZ skew, then we filter client-side to the exact day.
+        const d = new Date(selectedDate + 'T00:00:00');
+        const prev = new Date(d);
+        prev.setDate(d.getDate() - 1);
+        const next = new Date(d);
+        next.setDate(d.getDate() + 1);
+        const ymd = (x) =>
+          `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(
+            x.getDate()
+          ).padStart(2, '0')}`;
+        url = `/api/orders?startDate=${ymd(prev)}&endDate=${ymd(next)}`;
+      }
       const res = await authFetch(url);
       const data = res.ok ? await res.json() : [];
       const list = Array.isArray(data) ? data : [];
       setOrders(list);
+      setLastUpdated(new Date());
       setSelectedId((prev) => {
         if (prev && list.some((o) => o.id === prev)) return prev;
         return list[0]?.id ?? null;
@@ -123,20 +143,34 @@ const OrdersPage = ({ locationSettings }) => {
     }
     load();
 
-    const socket = io(getSocketUrl());
-    socketRef.current = socket;
-    const refresh = () => load();
-    socket.on('order_created', refresh);
-    socket.on('order_status_updated', refresh);
-    socket.on('order_deleted', refresh);
+    let socket = null;
+    try {
+      socket = io(getSocketUrl(), { transports: ['websocket', 'polling'] });
+      socketRef.current = socket;
+      const refresh = () => load();
+      socket.on('connect', () => setLiveConnected(true));
+      socket.on('disconnect', () => setLiveConnected(false));
+      socket.on('connect_error', () => setLiveConnected(false));
+      socket.on('order_created', refresh);
+      socket.on('order_status_updated', refresh);
+      socket.on('order_deleted', refresh);
+    } catch (e) {
+      // socket failure is non-fatal — polling still works
+    }
 
-    const poll = setInterval(load, 8000);
+    const poll = setInterval(load, 6000);
     const tick = setInterval(() => setTick((v) => v + 1), 30000);
     return () => {
-      socket.off('order_created', refresh);
-      socket.off('order_status_updated', refresh);
-      socket.off('order_deleted', refresh);
-      socket.disconnect();
+      if (socket) {
+        try {
+          socket.off('order_created');
+          socket.off('order_status_updated');
+          socket.off('order_deleted');
+          socket.disconnect();
+        } catch (e) {
+          /* noop */
+        }
+      }
       clearInterval(poll);
       clearInterval(tick);
     };
@@ -156,11 +190,25 @@ const OrdersPage = ({ locationSettings }) => {
   /* ---------------- filtering ---------------- */
   const visibleOrders = useMemo(() => {
     let list = orders;
+    // Client-side date filter (timezone-safe). The backend filter
+    // may be off by one day on UTC servers, so we re-check here.
+    if (!allDates && selectedDate) {
+      list = list.filter((o) => {
+        const ts = o.timestamp || o.created_at;
+        if (!ts) return true;
+        const dt = new Date(ts);
+        if (Number.isNaN(dt.getTime())) return true;
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth() + 1).padStart(2, '0');
+        const d = String(dt.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}` === selectedDate;
+      });
+    }
     if (typeFilter !== 'all') {
       list = list.filter((o) => (o.type || 'DINE_IN').toUpperCase() === typeFilter);
     }
     return list;
-  }, [orders, typeFilter]);
+  }, [orders, typeFilter, allDates, selectedDate]);
 
   const counts = useMemo(() => {
     const c = {
@@ -236,9 +284,42 @@ const OrdersPage = ({ locationSettings }) => {
       {/* Page header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Orders</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Orders</h1>
+            <span
+              className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                liveConnected
+                  ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                  : 'bg-amber-50 text-amber-600 border-amber-200'
+              }`}
+              title={
+                liveConnected
+                  ? 'Live socket connected'
+                  : 'Auto-refresh every 6s'
+              }
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  liveConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                }`}
+              />
+              {liveConnected ? 'Live' : 'Auto'}
+            </span>
+          </div>
           <p className="text-sm text-gray-500 mt-1">
             Manage and track all customer orders in real-time
+            {lastUpdated && (
+              <span className="text-gray-400">
+                {' '}
+                • Updated{' '}
+                {lastUpdated.toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: true,
+                })}
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2 relative">
