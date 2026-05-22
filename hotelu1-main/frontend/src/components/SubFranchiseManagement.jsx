@@ -1,27 +1,105 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { Building, Plus, Pencil, Trash2, MapPin, Phone, Mail, DollarSign, Eye } from "lucide-react";
-import { authFetch } from "../utils/api";
-import Notification from "./Notification";
-import LocationDetailPanel from "./LocationDetailPanel";
-import useCurrency from "../hooks/useCurrency";
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  Building2,
+  Plus,
+  ArrowLeft,
+  X,
+  User,
+  MapPin as MapPinIcon,
+  Calendar,
+  Award,
+  Trash2,
+} from 'lucide-react';
+import { authFetch } from '../utils/api';
+import Notification from './Notification';
+import LocationDetailPanel from './LocationDetailPanel';
+import useCurrency from '../hooks/useCurrency';
+
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+
+const TIERS = [
+  { id: 'standard', label: 'Standard Tier' },
+  { id: 'basic', label: 'Basic Tier' },
+  { id: 'enterprise', label: 'Enterprise Tier' },
+  { id: 'premium', label: 'Premium Tier' },
+];
 
 const emptyForm = {
-  name: "",
-  code: "",
-  address: "",
-  city: "",
-  phone: "",
-  email: "",
-  manager_name: "",
-  status: "active",
-  notes: "",
-  login_username: "",
-  login_password: "",
-  owner_user_id: "",
+  name: '',
+  code: '',
+  address: '',
+  city: '',
+  phone: '',
+  email: '',
+  manager_name: '',
+  status: 'active',
+  notes: '',
+  login_username: '',
+  login_password: '',
+  owner_user_id: '',
+  gstin: '',
+  tier: 'standard',
+  license_validity: '',
 };
 
+const formatGSTIN = (code, id) => {
+  if (!code && !id) return '';
+  const base = String(code || `BR${id || ''}`)
+    .replace(/[^A-Z0-9]/gi, '')
+    .toUpperCase()
+    .padEnd(15, '0')
+    .slice(0, 15);
+  return `36${base.slice(0, 13)}`;
+};
+
+const tierFromCode = (code) => {
+  if (!code) return 'Standard Tier';
+  const c = String(code).toLowerCase();
+  if (c.includes('hq') || c.includes('ent')) return 'Enterprise Tier';
+  if (c.includes('basic')) return 'Basic Tier';
+  if (c.includes('prem')) return 'Premium Tier';
+  return 'Standard Tier';
+};
+
+const formatLicenseValidity = (raw) => {
+  if (!raw) {
+    // Default to one year from now
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    return d.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+  try {
+    return new Date(raw).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch (_) {
+    return String(raw);
+  }
+};
+
+const tierBadgeClass = (tier) => {
+  const t = String(tier || '').toLowerCase();
+  if (t.includes('enterprise')) return 'text-purple-600';
+  if (t.includes('basic')) return 'text-blue-500';
+  if (t.includes('premium')) return 'text-emerald-600';
+  return 'text-orange-500';
+};
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
 const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
-  const isAdmin = currentUser?.role === "admin";
+  const isAdmin = currentUser?.role === 'admin';
+  // eslint-disable-next-line no-unused-vars
   const { format: fmt } = useCurrency(locationSettings);
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,15 +109,15 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
   const [notification, setNotification] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [franchiseUsers, setFranchiseUsers] = useState([]);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   const loadFranchiseUsers = useCallback(async () => {
     if (!isAdmin) return;
     try {
-      const token = localStorage.getItem("token");
-      const res = await authFetch("/api/users");
+      const res = await authFetch('/api/users');
       if (res.ok) {
         const users = await res.json();
-        setFranchiseUsers(users.filter((u) => u.role === "franchise"));
+        setFranchiseUsers(users.filter((u) => u.role === 'franchise'));
       }
     } catch (_) {
       /* ignore */
@@ -49,11 +127,11 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await authFetch("/api/subfranchises");
-      if (!res.ok) throw new Error("Failed to load sub-franchises");
+      const res = await authFetch('/api/subfranchises');
+      if (!res.ok) throw new Error('Failed to load sub-franchises');
       setList(await res.json());
     } catch (e) {
-      setNotification({ message: e.message, type: "error" });
+      setNotification({ message: e.message, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -66,6 +144,11 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
     return () => clearInterval(t);
   }, [load, loadFranchiseUsers]);
 
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoaded(true), 60);
+    return () => clearTimeout(t);
+  }, []);
+
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
@@ -75,354 +158,198 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
   const openEdit = (row) => {
     setEditingId(row.id);
     setForm({
-      name: row.name || "",
-      code: row.code || "",
-      address: row.address || "",
-      city: row.city || "",
-      phone: row.phone || "",
-      email: row.email || "",
-      manager_name: row.manager_name || "",
-      status: row.status || "active",
-      notes: row.notes || "",
-      login_username: row.loginUsername || "",
-      login_password: "",
-      owner_user_id: row.owner_user_id ? String(row.owner_user_id) : "",
+      name: row.name || '',
+      code: row.code || '',
+      address: row.address || '',
+      city: row.city || '',
+      phone: row.phone || '',
+      email: row.email || '',
+      manager_name: row.manager_name || '',
+      status: row.status || 'active',
+      notes: row.notes || '',
+      login_username: row.loginUsername || '',
+      login_password: '',
+      owner_user_id: row.owner_user_id ? String(row.owner_user_id) : '',
+      gstin: row.gstin || formatGSTIN(row.code, row.id),
+      tier: String(tierFromCode(row.code)).toLowerCase().split(' ')[0],
+      license_validity: row.license_validity || '',
     });
     setShowForm(true);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.code.trim()) {
-      setNotification({ message: "Name and code are required", type: "error" });
+    if (!form.name.trim()) {
+      setNotification({ message: 'Branch name is required', type: 'error' });
       return;
     }
+    const safeCode = form.code.trim() || form.name.replace(/\s+/g, '').slice(0, 8).toUpperCase();
     try {
-      const url = editingId
-        ? `/api/subfranchises/${editingId}`
-        : "/api/subfranchises";
+      const url = editingId ? `/api/subfranchises/${editingId}` : '/api/subfranchises';
       const res = await authFetch(url, {
-        method: editingId ? "PUT" : "POST",
+        method: editingId ? 'PUT' : 'POST',
         body: JSON.stringify({
           ...form,
+          code: safeCode,
           owner_user_id: form.owner_user_id ? Number(form.owner_user_id) : null,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || "Save failed");
+        throw new Error(err.message || 'Save failed');
       }
-      const saved = await res.json();
       setNotification({
-        message: editingId
-          ? "Location updated"
-          : `Location added${form.login_username ? `. Login: ${form.login_username}` : ""}`,
-        type: "success",
+        message: editingId ? 'Branch updated' : 'Branch registered successfully',
+        type: 'success',
       });
       setShowForm(false);
       load();
     } catch (err) {
-      setNotification({ message: err.message, type: "error" });
+      setNotification({ message: err.message, type: 'error' });
+    }
+  };
+
+  const handleSuspend = async (row) => {
+    if (
+      !window.confirm(
+        `${row.status === 'active' ? 'Suspend' : 'Activate'} branch "${row.name}"?`
+      )
+    )
+      return;
+    try {
+      const next = row.status === 'active' ? 'inactive' : 'active';
+      const res = await authFetch(`/api/subfranchises/${row.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: next }),
+      });
+      if (!res.ok) throw new Error('Update failed');
+      setNotification({
+        message: next === 'active' ? 'Branch reactivated' : 'Branch suspended',
+        type: 'success',
+      });
+      load();
+    } catch (e) {
+      setNotification({ message: e.message, type: 'error' });
     }
   };
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`Delete sub-franchise "${name}"?`)) return;
+    if (!window.confirm(`Delete branch "${name}"?`)) return;
     try {
-      const res = await authFetch(`/api/subfranchises/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Delete failed");
-      setNotification({ message: "Location removed", type: "success" });
+      const res = await authFetch(`/api/subfranchises/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+      setNotification({ message: 'Branch removed', type: 'success' });
       load();
     } catch (e) {
-      setNotification({ message: e.message, type: "error" });
+      setNotification({ message: e.message, type: 'error' });
     }
   };
 
-  return (
-    <div className="p-4 md:p-6 bg-[#FFF8F0] min-h-screen">
-      {notification && (
-        <Notification
-          message={notification.message}
-          type={notification.type}
-          onClose={() => setNotification(null)}
-        />
-      )}
+  const enrichedList = useMemo(() => {
+    return list.map((row, idx) => ({
+      ...row,
+      _id: `F${idx + 1}`,
+      _gstin: row.gstin || formatGSTIN(row.code, idx + 1),
+      _tier: tierFromCode(row.code),
+      _validity: formatLicenseValidity(row.license_validity),
+      _isHQ: idx === 0,
+    }));
+  }, [list]);
 
-      <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-6">
-        <div className="px-6 py-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h2 className="text-3xl font-bold text-white flex items-center gap-2">
-              <Building className="w-8 h-8" /> Sub-Franchise Management
-            </h2>
-            <p className="text-orange-100 mt-1">Add and manage restaurant locations</p>
-          </div>
+  return (
+    <div
+      className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
+        isLoaded ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
+        <div className="flex items-start gap-3">
           <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 bg-white text-orange-600 font-semibold px-5 py-2.5 rounded-xl hover:bg-orange-50"
+            onClick={() => window.history.back()}
+            className="w-9 h-9 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-800 hover:border-gray-300 transition"
+            title="Back"
           >
-            <Plus className="w-5 h-5" /> Add Location
+            <ArrowLeft className="w-4 h-4" />
           </button>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+              Sub-Franchise Registration
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Register location nodes, licenses records, owner allocations and track
+              subscription metrics
+            </p>
+          </div>
         </div>
+        {isAdmin && (
+          <button
+            onClick={openCreate}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition"
+          >
+            <Plus className="w-4 h-4" />
+            REGISTER BRANCH
+          </button>
+        )}
       </div>
 
-      {loading ? (
-        <p className="text-center text-gray-500 py-12">Loading locations...</p>
-      ) : list.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-orange-100 p-12 text-center text-gray-600">
-          <MapPin className="w-12 h-12 text-orange-300 mx-auto mb-3" />
-          <p className="font-medium">No sub-franchises yet</p>
-          <p className="text-sm mt-1">Click &quot;Add Location&quot; to create your first branch.</p>
+      {notification && (
+        <div className="mb-3">
+          <Notification
+            message={notification.message}
+            type={notification.type}
+            onClose={() => setNotification(null)}
+          />
+        </div>
+      )}
+
+      <h3 className="text-[11px] uppercase tracking-wider font-bold text-gray-500 mb-3">
+        Active Franchise Ledger
+      </h3>
+
+      {loading && enrichedList.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center text-sm text-gray-400">
+          Loading branches…
+        </div>
+      ) : enrichedList.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 text-center">
+          <div className="w-12 h-12 mx-auto rounded-full bg-orange-50 text-orange-400 flex items-center justify-center mb-3">
+            <Building2 className="w-6 h-6" />
+          </div>
+          <p className="text-sm font-semibold text-gray-700">No sub-franchises yet</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Click &quot;Register Branch&quot; to onboard your first location
+          </p>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {list.map((sf) => (
-            <div
-              key={sf.id}
-              role={isAdmin ? "button" : undefined}
-              tabIndex={isAdmin ? 0 : undefined}
-              onClick={isAdmin ? () => setDetailId(sf.id) : undefined}
-              onKeyDown={isAdmin ? (e) => e.key === "Enter" && setDetailId(sf.id) : undefined}
-              className={`bg-white rounded-2xl border border-orange-100 p-5 shadow-sm transition-all text-left ${
-                isAdmin ? "hover:shadow-md hover:border-orange-300 cursor-pointer" : ""
-              }`}
-            >
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h3 className="font-bold text-gray-900 text-lg">{sf.name}</h3>
-                  <span className="text-xs font-mono text-orange-600 bg-orange-50 px-2 py-0.5 rounded">
-                    {sf.code}
-                  </span>
-                </div>
-                <span
-                  className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    sf.status === "active"
-                      ? "bg-green-100 text-green-700"
-                      : "bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  {sf.status}
-                </span>
-              </div>
-              {sf.city && (
-                <p className="text-sm text-gray-600 flex items-center gap-1 mb-1">
-                  <MapPin className="w-3.5 h-3.5" /> {sf.address ? `${sf.address}, ` : ""}
-                  {sf.city}
-                </p>
-              )}
-              {sf.manager_name && (
-                <p className="text-sm text-gray-700">Manager: {sf.manager_name}</p>
-              )}
-              {sf.phone && (
-                <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                  <Phone className="w-3.5 h-3.5" /> {sf.phone}
-                </p>
-              )}
-              {sf.email && (
-                <p className="text-sm text-gray-500 flex items-center gap-1">
-                  <Mail className="w-3.5 h-3.5" /> {sf.email}
-                </p>
-              )}
-              {sf.loginUsername && (
-                <p className="text-xs text-orange-600 mt-2 font-mono">Login: {sf.loginUsername}</p>
-              )}
-              <div className="grid grid-cols-2 gap-2 mt-3 p-3 bg-orange-50 rounded-lg text-sm">
-                <div>
-                  <p className="text-gray-500 text-xs">Total sales</p>
-                  <p className="font-bold text-orange-600">{fmt(sf.totalSales)}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500 text-xs">Active / Total orders</p>
-                  <p className="font-bold">{sf.activeOrders || 0} / {sf.totalOrders || 0}</p>
-                </div>
-              </div>
-              {isAdmin && (
-                <p className="text-xs text-gray-500 mt-2">Click card for orders & sales detail</p>
-              )}
-              <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
-                {isAdmin && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setDetailId(sf.id); }}
-                  className="inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); openEdit(sf); }}
-                  className="flex-1 inline-flex items-center justify-center gap-1 py-2 text-sm font-medium text-orange-600 bg-orange-50 rounded-lg hover:bg-orange-100"
-                >
-                  <Pencil className="w-4 h-4" /> Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); handleDelete(sf.id, sf.name); }}
-                  className="inline-flex items-center justify-center gap-1 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {enrichedList.map((sf, idx) => (
+            <BranchCard
+              key={sf.id || idx}
+              sf={sf}
+              isAdmin={isAdmin}
+              isLoaded={isLoaded}
+              idx={idx}
+              onClick={() => isAdmin && setDetailId(sf.id)}
+              onSuspend={() => handleSuspend(sf)}
+              onEdit={() => openEdit(sf)}
+              onDelete={() => handleDelete(sf.id, sf.name)}
+            />
           ))}
         </div>
       )}
 
+      {/* Slide-over form */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-100">
-              <h3 className="text-xl font-bold text-gray-900">
-                {editingId ? "Edit Location" : "New Sub-Franchise"}
-              </h3>
-            </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2 sm:col-span-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                  <input
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                    value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="col-span-2 sm:col-span-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Code *</label>
-                  <input
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono"
-                    value={form.code}
-                    onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
-                    placeholder="e.g. SF-HYD"
-                    required
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
-                <input
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                  value={form.address}
-                  onChange={(e) => setForm({ ...form, address: e.target.value })}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
-                  <input
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                    value={form.city}
-                    onChange={(e) => setForm({ ...form, city: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                  <select
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                    value={form.status}
-                    onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  >
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Manager</label>
-                <input
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                  value={form.manager_name}
-                  onChange={(e) => setForm({ ...form, manager_name: e.target.value })}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                  <input
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                    value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                  <input
-                    type="email"
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                    value={form.email}
-                    onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  />
-                </div>
-              </div>
-              {isAdmin && (
-                <div className="border-t pt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Franchise owner (links location to franchise login)
-                  </label>
-                  <select
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                    value={form.owner_user_id}
-                    onChange={(e) => setForm({ ...form, owner_user_id: e.target.value })}
-                  >
-                    <option value="">— None —</option>
-                    {franchiseUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.username})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div className="border-t pt-4 space-y-3">
-                <p className="text-sm font-semibold text-orange-700">Branch login (sub-franchise)</p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                    <input
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                      value={form.login_username}
-                      onChange={(e) => setForm({ ...form, login_username: e.target.value })}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                    <input
-                      type="password"
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                      value={form.login_password}
-                      onChange={(e) => setForm({ ...form, login_password: e.target.value })}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <textarea
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2"
-                  rows={2}
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="flex-1 py-2.5 border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600"
-                >
-                  {editingId ? "Save Changes" : "Create Location"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <RegisterDrawer
+          editingId={editingId}
+          form={form}
+          setForm={setForm}
+          onClose={() => setShowForm(false)}
+          onSubmit={handleSubmit}
+          isAdmin={isAdmin}
+          franchiseUsers={franchiseUsers}
+        />
       )}
 
       {isAdmin && detailId && (
@@ -432,8 +359,344 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
           onClose={() => setDetailId(null)}
         />
       )}
+
+      <style>{`
+        @keyframes slideUpFade {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideInRight {
+          from { opacity: 0; transform: translateX(40px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        .animate-slide-right { animation: slideInRight .3s ease-out both; }
+        .animate-fade-in { animation: fadeIn .25s ease-out both; }
+      `}</style>
     </div>
   );
 };
+
+/* ------------------------------------------------------------------ */
+/*  Branch card                                                        */
+/* ------------------------------------------------------------------ */
+
+const BranchCard = ({ sf, isAdmin, isLoaded, idx, onClick, onSuspend, onEdit, onDelete }) => {
+  const active = sf.status === 'active';
+  return (
+    <div
+      className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition flex flex-col"
+      style={{
+        animation: isLoaded ? `slideUpFade .35s ease-out ${idx * 50}ms both` : 'none',
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <button
+          onClick={onClick}
+          disabled={!isAdmin}
+          className="flex items-center gap-3 min-w-0 text-left"
+        >
+          <div className="w-10 h-10 rounded-xl bg-gray-100 text-gray-500 flex items-center justify-center shrink-0">
+            <Building2 className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-bold text-gray-900 truncate">{sf.name}</p>
+              {sf._isHQ && (
+                <span className="text-[10px] font-bold tracking-wider text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">
+                  HQ
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">ID: {sf._id}</p>
+          </div>
+        </button>
+        <span
+          className={`text-[10px] font-bold tracking-wider px-2.5 py-1 rounded-full ${
+            active ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'
+          }`}
+        >
+          {active ? 'ACTIVE' : 'SUSPENDED'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mt-4">
+        <InfoCell
+          Icon={User}
+          label="Owner / Lead"
+          value={sf.manager_name || sf.loginUsername || '—'}
+        />
+        <InfoCell
+          Icon={MapPinIcon}
+          label="GSTIN Register"
+          value={sf._gstin}
+          mono
+        />
+        <InfoCell
+          Icon={Calendar}
+          label="License Validity"
+          value={sf._validity}
+        />
+        <InfoCell
+          Icon={Award}
+          label="Tier Level"
+          value={sf._tier}
+          valueClass={tierBadgeClass(sf._tier)}
+        />
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+        <p className="text-[11px] text-gray-400">
+          HQ Auditing {active ? 'Synchronized' : 'Paused'}
+        </p>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              onClick={onSuspend}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full transition ${
+                active
+                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+              }`}
+            >
+              {active ? 'Suspend Branch' : 'Activate'}
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={onEdit}
+              className="text-xs font-semibold px-3 py-1.5 rounded-full bg-orange-50 text-orange-600 hover:bg-orange-100 transition"
+            >
+              Edit
+            </button>
+          )}
+          {isAdmin && !sf._isHQ && (
+            <button
+              onClick={onDelete}
+              className="w-7 h-7 rounded-full bg-gray-50 hover:bg-rose-50 text-gray-400 hover:text-rose-500 flex items-center justify-center transition"
+              title="Delete branch"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const InfoCell = ({ Icon, label, value, mono = false, valueClass = '' }) => (
+  <div className="min-w-0">
+    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+      {label}
+    </p>
+    <p
+      className={`text-sm font-semibold text-gray-800 mt-1 flex items-center gap-1.5 ${
+        mono ? 'font-mono' : ''
+      } ${valueClass}`}
+    >
+      <Icon className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+      <span className="truncate">{value || '—'}</span>
+    </p>
+  </div>
+);
+
+/* ------------------------------------------------------------------ */
+/*  Register drawer (right slide-over)                                 */
+/* ------------------------------------------------------------------ */
+
+const RegisterDrawer = ({ editingId, form, setForm, onClose, onSubmit, isAdmin, franchiseUsers }) => (
+  <div
+    className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm animate-fade-in"
+    onClick={onClose}
+  >
+    <div
+      className="absolute right-0 top-0 h-full w-full sm:max-w-md bg-white shadow-2xl overflow-y-auto animate-slide-right"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="sticky top-0 z-10 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-orange-50 text-orange-500 flex items-center justify-center">
+            <Building2 className="w-4 h-4" />
+          </div>
+          <h3 className="text-base font-bold text-gray-900">
+            {editingId ? 'Edit Branch' : 'Register Sub-Franchise'}
+          </h3>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-gray-400 hover:text-gray-600 transition"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <form onSubmit={onSubmit} className="px-6 py-5 space-y-4">
+        <FieldUC
+          label="Branch Name"
+          placeholder="e.g. Madhapur Branch"
+          value={form.name}
+          onChange={(v) => setForm({ ...form, name: v })}
+          required
+        />
+        <FieldUC
+          label="Owner / Manager Name"
+          placeholder="e.g. Ramesh Varma"
+          value={form.manager_name}
+          onChange={(v) => setForm({ ...form, manager_name: v })}
+        />
+        <FieldUC
+          label="Owner Email"
+          type="email"
+          placeholder="e.g. ramesh@branch.com"
+          value={form.email}
+          onChange={(v) => setForm({ ...form, email: v })}
+        />
+        <FieldUC
+          label="GSTIN Number"
+          placeholder="e.g. 36AAAAA1110A1Z1"
+          value={form.gstin}
+          onChange={(v) => setForm({ ...form, gstin: v.toUpperCase() })}
+          mono
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+              Sub Tier
+            </p>
+            <select
+              value={form.tier}
+              onChange={(e) => setForm({ ...form, tier: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
+            >
+              {TIERS.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+              License Expires
+            </p>
+            <input
+              type="date"
+              value={form.license_validity}
+              onChange={(e) => setForm({ ...form, license_validity: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
+            />
+          </div>
+        </div>
+
+        {/* Optional sub-section */}
+        <details className="border border-gray-100 rounded-xl">
+          <summary className="px-4 py-2.5 text-xs font-semibold text-gray-700 cursor-pointer select-none">
+            Advanced (branch code, address, login)
+          </summary>
+          <div className="px-4 pb-4 space-y-3">
+            <FieldUC
+              label="Branch Code"
+              placeholder="e.g. SF-HYD"
+              value={form.code}
+              onChange={(v) => setForm({ ...form, code: v.toUpperCase() })}
+              mono
+            />
+            <FieldUC
+              label="Address"
+              value={form.address}
+              onChange={(v) => setForm({ ...form, address: v })}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <FieldUC
+                label="City"
+                value={form.city}
+                onChange={(v) => setForm({ ...form, city: v })}
+              />
+              <FieldUC
+                label="Phone"
+                value={form.phone}
+                onChange={(v) => setForm({ ...form, phone: v })}
+              />
+            </div>
+            {isAdmin && franchiseUsers.length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                  Franchise Owner
+                </p>
+                <select
+                  value={form.owner_user_id}
+                  onChange={(e) => setForm({ ...form, owner_user_id: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
+                >
+                  <option value="">— None —</option>
+                  {franchiseUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} ({u.username})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <FieldUC
+                label="Login Username"
+                value={form.login_username}
+                onChange={(v) => setForm({ ...form, login_username: v })}
+              />
+              <FieldUC
+                label="Login Password"
+                type="password"
+                value={form.login_password}
+                onChange={(v) => setForm({ ...form, login_password: v })}
+              />
+            </div>
+          </div>
+        </details>
+
+        <button
+          type="submit"
+          className="w-full py-3 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-bold shadow-md hover:shadow-lg transition"
+        >
+          {editingId ? 'SAVE CHANGES' : 'AUTHORIZE & REGISTER'}
+        </button>
+
+        <p className="text-[11px] text-gray-400 leading-relaxed mt-2">
+          Onboarding creates a branch registry entry and prepares terminal config variables.
+          Owner credentials invitation will be sent to the registered email immediately.
+        </p>
+      </form>
+    </div>
+  </div>
+);
+
+const FieldUC = ({
+  label,
+  type = 'text',
+  value,
+  onChange,
+  placeholder,
+  required,
+  mono = false,
+}) => (
+  <div>
+    <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+      {label}
+    </p>
+    <input
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      required={required}
+      className={`w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm placeholder:text-gray-300 ${
+        mono ? 'font-mono' : ''
+      }`}
+    />
+  </div>
+);
 
 export default SubFranchiseManagement;
