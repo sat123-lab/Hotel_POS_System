@@ -1,13 +1,230 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Notification from './Notification';
-
 import { getAPI_URL } from '../utils/api';
+import {
+  Users,
+  Shield,
+  LayoutGrid,
+  Search,
+  Plus,
+  Settings,
+  Trash2,
+  Check,
+  X,
+  ChevronRight,
+  Save,
+  UserCog,
+  ChefHat,
+  Briefcase,
+  Wallet,
+  Crown,
+} from 'lucide-react';
+
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+
+const ROLES = ['admin', 'franchise', 'subfranchise', 'manager', 'waiter', 'chef'];
+
+const TABS = [
+  { id: 'users', label: 'User Management', Icon: Users },
+  { id: 'roles', label: 'Role Management', Icon: Shield },
+  { id: 'matrix', label: 'Module Permissions Matrix', Icon: LayoutGrid },
+];
+
+const MODULES = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'reports', label: 'Reports' },
+  { id: 'qr_management', label: 'QR Management' },
+  { id: 'dine_in', label: 'Dine-In' },
+  { id: 'inventory', label: 'Inventory' },
+  { id: 'billing', label: 'Billing' },
+  { id: 'kitchen_display', label: 'Kitchen Display' },
+  { id: 'menu_management', label: 'Menu Management' },
+  { id: 'user_management', label: 'User Management' },
+  { id: 'permissions', label: 'Permissions' },
+  { id: 'franchise', label: 'Franchise' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'customers', label: 'Customers (CRM)' },
+];
+
+const ROLE_META = {
+  admin: {
+    label: 'Admin',
+    Icon: Crown,
+    pill: 'bg-orange-50 text-orange-600 border-orange-100',
+    bar: 'from-orange-400 to-orange-500',
+    dot: 'bg-orange-500',
+    access: 'Full Access',
+    accessClass: 'text-gray-700 bg-gray-100',
+    description:
+      'Unrestricted administrative access to all restaurant branches, system configurations, billing, and system audits.',
+    immutable: true,
+  },
+  manager: {
+    label: 'Manager',
+    Icon: Briefcase,
+    pill: 'bg-blue-50 text-blue-600 border-blue-100',
+    bar: 'from-blue-400 to-blue-500',
+    dot: 'bg-blue-500',
+    access: 'Custom Access',
+    accessClass: 'text-gray-700 bg-gray-100',
+    description:
+      'Manage daily operations including menu management, inventory items, sub-franchise settings, and operational reports.',
+  },
+  waiter: {
+    label: 'Waiter',
+    Icon: UserCog,
+    pill: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    bar: 'from-emerald-400 to-emerald-500',
+    dot: 'bg-emerald-500',
+    access: 'Restricted Access',
+    accessClass: 'text-gray-700 bg-gray-100',
+    description:
+      'Front-of-house table service management, checkout billing, order taking, and KDS updates for dine-in tables.',
+  },
+  chef: {
+    label: 'Chef',
+    Icon: ChefHat,
+    pill: 'bg-yellow-50 text-yellow-700 border-yellow-100',
+    bar: 'from-yellow-400 to-yellow-500',
+    dot: 'bg-yellow-500',
+    access: 'Restricted Access',
+    accessClass: 'text-gray-700 bg-gray-100',
+    description:
+      'Full visibility of the Kitchen Display System (KDS), preparation status updates, and menu item availability toggles.',
+  },
+  cashier: {
+    label: 'Cashier',
+    Icon: Wallet,
+    pill: 'bg-slate-50 text-slate-600 border-slate-200',
+    bar: 'from-slate-400 to-slate-500',
+    dot: 'bg-slate-500',
+    access: 'Restricted Access',
+    accessClass: 'text-gray-700 bg-gray-100',
+    description:
+      'Order collection payments processing, takeaway order creations, invoices generation, and POS terminal management.',
+  },
+};
+
+const DEFAULT_ROLE_MATRIX = {
+  admin: MODULES.reduce((a, m) => ({ ...a, [m.id]: true }), {}),
+  manager: {
+    dashboard: true,
+    reports: true,
+    qr_management: true,
+    dine_in: true,
+    inventory: true,
+    billing: true,
+    kitchen_display: true,
+    menu_management: true,
+    user_management: false,
+    permissions: false,
+    franchise: true,
+    settings: true,
+    customers: true,
+  },
+  waiter: {
+    dashboard: true,
+    reports: false,
+    qr_management: false,
+    dine_in: true,
+    inventory: false,
+    billing: false,
+    kitchen_display: true,
+    menu_management: false,
+    user_management: false,
+    permissions: false,
+    franchise: false,
+    settings: false,
+    customers: false,
+  },
+  chef: {
+    dashboard: true,
+    reports: false,
+    qr_management: false,
+    dine_in: false,
+    inventory: false,
+    billing: false,
+    kitchen_display: true,
+    menu_management: true,
+    user_management: false,
+    permissions: false,
+    franchise: false,
+    settings: false,
+    customers: false,
+  },
+  cashier: {
+    dashboard: true,
+    reports: false,
+    qr_management: false,
+    dine_in: false,
+    inventory: false,
+    billing: true,
+    kitchen_display: false,
+    menu_management: false,
+    user_management: false,
+    permissions: false,
+    franchise: false,
+    settings: false,
+    customers: true,
+  },
+};
+
+const ROLES_FOR_MATRIX = ['admin', 'manager', 'waiter', 'chef', 'cashier'];
+
+const AVATAR_COLORS = [
+  'bg-orange-500',
+  'bg-blue-500',
+  'bg-emerald-500',
+  'bg-yellow-500',
+  'bg-purple-500',
+  'bg-pink-500',
+  'bg-cyan-500',
+  'bg-rose-500',
+];
+
+const avatarColor = (key = '') => {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 9973;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+};
+
+const lastActivityLabel = (user) => {
+  const src =
+    user.updated_at || user.updatedAt || user.last_login || user.created_at || user.createdAt;
+  if (!src) return 'Recently';
+  const ms = Date.now() - new Date(src).getTime();
+  if (Number.isNaN(ms) || ms < 0) return 'Recently';
+  const min = Math.floor(ms / 60000);
+  if (min < 2) return 'Just now';
+  if (min < 60) return `${min} mins ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+  const day = Math.floor(hr / 24);
+  if (day === 1) return 'Yesterday';
+  if (day < 7) return `${day} days ago`;
+  return new Date(src).toLocaleDateString();
+};
+
+const buildEmail = (user) => {
+  if (user.email) return user.email;
+  return `${user.username || 'user'}@restaurant.com`;
+};
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
 
 const UserManagement = ({ token }) => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
-  const [showForm, setShowForm] = useState(false);
+  const [activeTab, setActiveTab] = useState('users');
+  const [search, setSearch] = useState('');
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  const [showUserModal, setShowUserModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({
     username: '',
@@ -16,12 +233,19 @@ const UserManagement = ({ token }) => {
     role: 'waiter',
   });
 
-  const roles = ['admin', 'franchise', 'subfranchise', 'manager', 'waiter', 'chef'];
+  const [matrix, setMatrix] = useState(DEFAULT_ROLE_MATRIX);
+  const [dirty, setDirty] = useState(false);
 
-  // Fetch all users on component mount
+  /* ------------------------------ data ------------------------------ */
   useEffect(() => {
     fetchUsers();
+    // eslint-disable-next-line
   }, [token]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoaded(true), 60);
+    return () => clearTimeout(t);
+  }, []);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -29,15 +253,11 @@ const UserManagement = ({ token }) => {
       const API_URL = getAPI_URL();
       const response = await fetch(`${API_URL}/api/users`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch users');
-      }
-
+      if (!response.ok) throw new Error('Failed to fetch users');
       const data = await response.json();
       setUsers(data);
     } catch (err) {
@@ -49,79 +269,16 @@ const UserManagement = ({ token }) => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const resetForm = () => {
-    setFormData({ username: '', password: '', name: '', role: 'waiter' });
+  const openCreateModal = () => {
     setEditingId(null);
-    setShowForm(false);
+    setFormData({ username: '', password: '', name: '', role: 'waiter' });
+    setShowUserModal(true);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    // Validation
-    if (!formData.username || !formData.name || !formData.role) {
-      setNotification({ message: 'Username, name, and role are required', type: 'error' });
-      return;
-    }
-
-    if (!editingId && !formData.password) {
-      setNotification({ message: 'Password is required for new users', type: 'error' });
-      return;
-    }
-
-    if (formData.password && formData.password.length < 4) {
-      setNotification({ message: 'Password must be at least 4 characters', type: 'error' });
-      return;
-    }
-
-    try {
-      const API_URL = getAPI_URL();
-      const url = editingId
-        ? `${API_URL}/api/users/${editingId}`
-        : `${API_URL}/api/users`;
-
-      const method = editingId ? 'PUT' : 'POST';
-      const body = editingId
-        ? {
-            username: formData.username,
-            name: formData.name,
-            role: formData.role,
-            ...(formData.password && { password: formData.password })
-          }
-        : formData;
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setNotification({ message: data.message || 'Operation failed', type: 'error' });
-        return;
-      }
-
-      const message = editingId ? 'User updated successfully!' : 'User created successfully!';
-      setNotification({ message, type: 'success' });
-      resetForm();
-      fetchUsers();
-    } catch (err) {
-      setNotification({ message: err.message, type: 'error' });
-    }
-  };
-
-  const handleEdit = (user) => {
+  const openEditModal = (user) => {
     setFormData({
       username: user.username,
       password: '',
@@ -129,334 +286,704 @@ const UserManagement = ({ token }) => {
       role: user.role,
     });
     setEditingId(user.id);
-    setShowForm(true);
+    setShowUserModal(true);
   };
 
-  const handleDelete = async (id, username) => {
-    if (!window.confirm(`Are you sure you want to delete user "${username}"?`)) {
+  const closeUserModal = () => {
+    setShowUserModal(false);
+    setEditingId(null);
+    setFormData({ username: '', password: '', name: '', role: 'waiter' });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!formData.username || !formData.name || !formData.role) {
+      setNotification({
+        message: 'Username, name, and role are required',
+        type: 'error',
+      });
       return;
     }
-
+    if (!editingId && !formData.password) {
+      setNotification({
+        message: 'Password is required for new users',
+        type: 'error',
+      });
+      return;
+    }
+    if (formData.password && formData.password.length < 4) {
+      setNotification({
+        message: 'Password must be at least 4 characters',
+        type: 'error',
+      });
+      return;
+    }
     try {
       const API_URL = getAPI_URL();
-      const response = await fetch(`${API_URL}/api/users/${id}`, {
-        method: 'DELETE',
+      const url = editingId
+        ? `${API_URL}/api/users/${editingId}`
+        : `${API_URL}/api/users`;
+      const method = editingId ? 'PUT' : 'POST';
+      const body = editingId
+        ? {
+            username: formData.username,
+            name: formData.name,
+            role: formData.role,
+            ...(formData.password && { password: formData.password }),
+          }
+        : formData;
+      const response = await fetch(url, {
+        method,
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify(body),
       });
-
       const data = await response.json();
-
       if (!response.ok) {
-        setNotification({ message: data.message || 'Failed to delete user', type: 'error' });
+        setNotification({
+          message: data.message || 'Operation failed',
+          type: 'error',
+        });
         return;
       }
-
-      setNotification({ message: `User "${username}" deleted successfully!`, type: 'success' });
+      setNotification({
+        message: editingId ? 'User updated successfully!' : 'User created successfully!',
+        type: 'success',
+      });
+      closeUserModal();
       fetchUsers();
     } catch (err) {
       setNotification({ message: err.message, type: 'error' });
     }
   };
 
+  const handleDelete = async (id, username) => {
+    if (!window.confirm(`Are you sure you want to delete user "${username}"?`)) return;
+    try {
+      const API_URL = getAPI_URL();
+      const response = await fetch(`${API_URL}/api/users/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setNotification({
+          message: data.message || 'Failed to delete user',
+          type: 'error',
+        });
+        return;
+      }
+      setNotification({
+        message: `User "${username}" deleted successfully!`,
+        type: 'success',
+      });
+      fetchUsers();
+    } catch (err) {
+      setNotification({ message: err.message, type: 'error' });
+    }
+  };
+
+  /* ------------------------------ derived ------------------------------ */
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(
+      (u) =>
+        String(u.name || '').toLowerCase().includes(q) ||
+        String(u.username || '').toLowerCase().includes(q) ||
+        String(u.role || '').toLowerCase().includes(q) ||
+        buildEmail(u).toLowerCase().includes(q)
+    );
+  }, [users, search]);
+
+  const roleCoverage = useMemo(() => {
+    const out = {};
+    ROLES_FOR_MATRIX.forEach((r) => {
+      const m = matrix[r] || {};
+      const count = MODULES.reduce((acc, mod) => acc + (m[mod.id] ? 1 : 0), 0);
+      out[r] = {
+        count,
+        total: MODULES.length,
+        percent: Math.round((count / MODULES.length) * 100),
+      };
+    });
+    return out;
+  }, [matrix]);
+
+  const toggleMatrix = (role, moduleId) => {
+    if (role === 'admin') return;
+    setMatrix((prev) => ({
+      ...prev,
+      [role]: { ...prev[role], [moduleId]: !prev[role]?.[moduleId] },
+    }));
+    setDirty(true);
+  };
+
+  const saveMatrix = () => {
+    try {
+      localStorage.setItem('rolePermissionsMatrix', JSON.stringify(matrix));
+      setDirty(false);
+      setNotification({
+        message: 'Permissions matrix saved.',
+        type: 'success',
+      });
+      setTimeout(() => setNotification(null), 2200);
+    } catch (err) {
+      setNotification({ message: 'Failed to save matrix.', type: 'error' });
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('rolePermissionsMatrix');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setMatrix((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }, []);
+
+  /* ------------------------------ render ------------------------------ */
+  const renderHeaderAction = () => {
+    if (activeTab === 'users') {
+      return (
+        <button
+          onClick={openCreateModal}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition"
+        >
+          <Plus className="w-4 h-4" />
+          ADD USER
+        </button>
+      );
+    }
+    if (activeTab === 'roles') {
+      return (
+        <button
+          onClick={() => setActiveTab('matrix')}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition"
+        >
+          <Plus className="w-4 h-4" />
+          CREATE ROLE
+        </button>
+      );
+    }
+    return (
+      <button
+        onClick={saveMatrix}
+        disabled={!dirty}
+        className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-sm font-semibold shadow-md transition ${
+          dirty
+            ? 'bg-gradient-to-r from-orange-500 to-orange-600 shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98]'
+            : 'bg-gray-300 cursor-not-allowed shadow-none'
+        }`}
+      >
+        <Save className="w-4 h-4" />
+        SAVE CHANGES
+      </button>
+    );
+  };
+
   return (
-    <div className="p-6 bg-[#FFF8F0] min-h-screen">
-      {/* Header Section - Orange Theme */}
-      <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-6">
-        <div className="px-6 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-3xl font-bold text-white mb-1">User Management</h2>
-              <p className="text-orange-100 text-base">Manage system users and roles</p>
-            </div>
-            <div className="hidden md:flex items-center space-x-3">
-              <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
-                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <span className="text-white text-sm font-medium">Team</span>
-              </div>
-            </div>
-          </div>
+    <div
+      className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
+        isLoaded ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            User &amp; Permissions
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Consolidated administration of security credentials, access levels, and module
+            authorizations
+          </p>
         </div>
+        {renderHeaderAction()}
       </div>
 
       {notification && (
-        <Notification
-          message={notification.message}
-          type={notification.type}
-          onClose={() => setNotification(null)}
+        <div className="mb-3">
+          <Notification
+            message={notification.message}
+            type={notification.type}
+            onClose={() => setNotification(null)}
+          />
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="flex flex-wrap gap-1 sm:gap-2 mb-5 border-b border-gray-200">
+        {TABS.map((t) => {
+          const active = activeTab === t.id;
+          const Icon = t.Icon;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={`relative inline-flex items-center gap-2 px-4 py-3 text-sm font-semibold transition ${
+                active ? 'text-orange-600' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {t.label}
+              {active && (
+                <span className="absolute left-2 right-2 -bottom-px h-0.5 bg-orange-500 rounded-full" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === 'users' && (
+        <UsersTab
+          users={filteredUsers}
+          loading={loading}
+          search={search}
+          setSearch={setSearch}
+          onEdit={openEditModal}
+          onDelete={handleDelete}
+          isLoaded={isLoaded}
+        />
+      )}
+      {activeTab === 'roles' && (
+        <RolesTab
+          coverage={roleCoverage}
+          onConfigure={() => setActiveTab('matrix')}
+          isLoaded={isLoaded}
+        />
+      )}
+      {activeTab === 'matrix' && (
+        <MatrixTab matrix={matrix} coverage={roleCoverage} onToggle={toggleMatrix} />
+      )}
+
+      {/* User Modal */}
+      {showUserModal && (
+        <UserFormModal
+          editingId={editingId}
+          formData={formData}
+          onChange={handleInputChange}
+          onSubmit={handleSubmit}
+          onClose={closeUserModal}
         />
       )}
 
-      {/* Add/Edit User Button - Orange Style */}
-      <div className="mb-6">
-        <button
-          onClick={() => {
-            if (showForm) {
-              resetForm();
-            } else {
-              setShowForm(true);
-              setEditingId(null);
-              setFormData({ username: '', password: '', name: '', role: 'waiter' });
-            }
-          }}
-          className={`px-6 py-3 rounded-xl font-bold transition ${
-            showForm
-              ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg'
-              : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg'
-          }`}
-        >
-          {showForm ? 'Cancel' : '+ Add New User'}
-        </button>
-      </div>
-
-      {/* Form - White Card with Orange Accents */}
-      {showForm && (
-        <div className="bg-white p-6 rounded-2xl shadow-lg mb-6 border border-orange-100">
-          <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
-            <span className="w-2 h-6 bg-orange-500 rounded-full mr-3"></span>
-            {editingId ? 'Edit User' : 'Create New User'}
-          </h3>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Username */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Username
-                </label>
-                <input
-                  type="text"
-                  name="username"
-                  value={formData.username}
-                  onChange={handleInputChange}
-                  placeholder="Enter username"
-                  disabled={editingId ? true : false}
-                    className={`w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 ${
-                    editingId ? 'bg-gray-100 cursor-not-allowed' : ''
-                  }`}
-                  required
-                />
-              </div>
-
-              {/* Full Name */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  placeholder="Enter full name"
-                  className="w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200"
-                  required
-                />
-              </div>
-
-              {/* Password */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Password {editingId && <span className="text-gray-500">(leave blank to keep current)</span>}
-                </label>
-                <input
-                  type="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  placeholder={editingId ? 'Leave blank to keep current' : 'Enter password (min 4 chars)'}
-                  className="w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200"
-                  required={!editingId}
-                />
-              </div>
-
-              {/* Role */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Role
-                </label>
-                <select
-                  name="role"
-                  value={formData.role}
-                  onChange={handleInputChange}
-                  className="w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all duration-200 bg-white"
-                >
-                  {roles.map(role => (
-                    <option key={role} value={role}>
-                      {role.charAt(0).toUpperCase() + role.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex gap-4">
-              <button
-                type="submit"
-                className="flex-1 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                {editingId ? 'Update User' : 'Create User'}
-              </button>
-              <button
-                type="button"
-                onClick={resetForm}
-                className="flex-1 px-6 py-3 bg-gradient-to-r from-gray-300 to-gray-400 hover:from-gray-400 hover:to-gray-500 text-gray-700 font-bold rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Users Table */}
-      <div className="bg-white rounded-2xl shadow-xl border-2 border-orange-100 overflow-hidden">
-        <div className="bg-gradient-to-r from-orange-50 to-orange-100 px-6 py-4 border-b border-orange-200">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-orange-400 to-orange-500 rounded-xl shadow-md">
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-bold text-gray-800">
-              Existing Users ({users.length})
-            </h3>
-          </div>
-        </div>
-        
-        {loading ? (
-          <div className="p-8 text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-orange-50 rounded-xl">
-              <svg className="w-5 h-5 text-orange-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              <span className="text-orange-600 font-medium">Loading users...</span>
-            </div>
-          </div>
-        ) : users.length === 0 ? (
-          <div className="p-8 text-center">
-            <div className="w-16 h-16 bg-gradient-to-br from-orange-100 to-orange-200 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            </div>
-            <p className="text-gray-700 font-semibold text-lg">No users found</p>
-            <p className="text-gray-500 text-sm mt-2">Add a new user to get started</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gradient-to-r from-orange-50 to-white border-b-2 border-orange-200">
-                <tr>
-                  <th className="px-6 py-4 text-left text-sm font-bold text-gray-800">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                      Username
-                    </div>
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-bold text-gray-800">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0c0 .884-.56 1.634-1.333 1.918M12 13a2 2 0 100-4 2 2 0 000 4z" />
-                      </svg>
-                      Full Name
-                    </div>
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-bold text-gray-800">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Role
-                    </div>
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-bold text-gray-800">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                      </svg>
-                      Actions
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((user, index) => (
-                  <tr key={user.id} className={`border-b hover:bg-gradient-to-r hover:from-orange-50 hover:to-white transition-all duration-200 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-orange-400 to-orange-500 rounded-xl flex items-center justify-center shadow-md">
-                          <span className="text-white font-bold text-sm">{user.username.charAt(0).toUpperCase()}</span>
-                        </div>
-                        <span className="text-gray-800 font-semibold">{user.username}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-700 font-medium">
-                      {user.name}
-                    </td>
-                    <td className="px-6 py-4 text-sm">
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold shadow-sm ${
-                        user.role === 'admin'
-                          ? 'bg-gradient-to-r from-red-500 to-red-600 text-white'
-                          : user.role === 'chef'
-                          ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white'
-                          : user.role === 'waiter'
-                          ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
-                          : user.role === 'manager'
-                          ? 'bg-gradient-to-r from-purple-500 to-purple-600 text-white'
-                          : user.role === 'franchise'
-                          ? 'bg-gradient-to-r from-gray-500 to-gray-600 text-white'
-                          : 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white'
-                      }`}>
-                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        {user.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-sm">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleEdit(user)}
-                          className="px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white text-xs font-bold rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-1.5"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(user.id, user.username)}
-                          className="px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-xs font-bold rounded-xl shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-1.5"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <style>{`
+        @keyframes slideUpFade {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeScale {
+          from { opacity: 0; transform: scale(.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes rowIn {
+          from { opacity: 0; transform: translateX(-6px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        .animate-modal-in { animation: fadeScale .22s ease-out both; }
+        .animate-row-in { animation: rowIn .35s ease-out both; }
+      `}</style>
     </div>
   );
 };
+
+/* ------------------------------------------------------------------ */
+/*  Users tab                                                          */
+/* ------------------------------------------------------------------ */
+
+const UsersTab = ({ users, loading, search, setSearch, onEdit, onDelete, isLoaded }) => (
+  <div>
+    <div className="relative mb-4">
+      <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+      <input
+        type="text"
+        placeholder="Search user by name, username, or role…"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="w-full pl-11 pr-4 py-3 rounded-xl bg-white border border-gray-200 text-sm placeholder:text-gray-400 focus:outline-none focus:border-orange-300 focus:ring-2 focus:ring-orange-100 shadow-sm"
+      />
+    </div>
+
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="hidden md:grid grid-cols-[2fr_1fr_0.8fr_1fr_0.6fr] gap-4 px-6 py-3 bg-gray-50/70 border-b border-gray-100 text-[11px] font-bold text-gray-500 tracking-wider uppercase">
+        <div>User Details</div>
+        <div>System Role</div>
+        <div>Status</div>
+        <div>Last Activity</div>
+        <div className="text-right">Actions</div>
+      </div>
+
+      {loading ? (
+        <div className="px-6 py-10 text-center text-sm text-gray-400">
+          Loading users…
+        </div>
+      ) : users.length === 0 ? (
+        <div className="px-6 py-10 text-center">
+          <div className="w-12 h-12 mx-auto rounded-full bg-gray-50 flex items-center justify-center text-gray-300 mb-3">
+            <Users className="w-6 h-6" />
+          </div>
+          <p className="text-sm text-gray-400">No users found</p>
+        </div>
+      ) : (
+        users.map((u, idx) => {
+          const meta = ROLE_META[u.role] || ROLE_META.cashier;
+          return (
+            <div
+              key={u.id}
+              className="grid grid-cols-1 md:grid-cols-[2fr_1fr_0.8fr_1fr_0.6fr] gap-4 px-6 py-4 border-b border-gray-50 last:border-0 hover:bg-orange-50/30 transition"
+              style={{
+                animation: isLoaded
+                  ? `slideUpFade .3s ease-out ${idx * 30}ms both`
+                  : 'none',
+              }}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className={`w-10 h-10 rounded-full ${avatarColor(
+                    u.username || u.name || ''
+                  )} flex items-center justify-center text-white font-bold text-sm shrink-0`}
+                >
+                  {(u.name || u.username || '?').charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">
+                    {u.name || u.username}
+                  </p>
+                  <p className="text-xs text-gray-400 truncate">
+                    @{u.username} · {buildEmail(u)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center">
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${meta.pill}`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+                  {meta.label}
+                </span>
+              </div>
+
+              <div className="flex items-center">
+                <span className="inline-flex items-center text-[11px] font-bold tracking-wider text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+                  ACTIVE
+                </span>
+              </div>
+
+              <div className="flex items-center text-xs text-gray-500">
+                {lastActivityLabel(u)}
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => onEdit(u)}
+                  className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-orange-50 text-gray-500 hover:text-orange-500 flex items-center justify-center transition"
+                  title="Edit user"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => onDelete(u.id, u.username)}
+                  className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-rose-50 text-gray-500 hover:text-rose-500 flex items-center justify-center transition"
+                  title="Delete user"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  </div>
+);
+
+/* ------------------------------------------------------------------ */
+/*  Roles tab                                                          */
+/* ------------------------------------------------------------------ */
+
+const RolesTab = ({ coverage, onConfigure, isLoaded }) => (
+  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {ROLES_FOR_MATRIX.map((roleId, idx) => {
+      const meta = ROLE_META[roleId];
+      const cov = coverage[roleId] || { count: 0, total: MODULES.length, percent: 0 };
+      const Icon = meta.Icon;
+      return (
+        <div
+          key={roleId}
+          className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col hover:shadow-md transition"
+          style={{
+            animation: isLoaded
+              ? `slideUpFade .35s ease-out ${idx * 60}ms both`
+              : 'none',
+          }}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border ${meta.pill}`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {meta.label}
+            </span>
+            <span
+              className={`text-[10px] font-semibold tracking-wider px-2.5 py-1 rounded-full ${meta.accessClass}`}
+            >
+              {meta.access}
+            </span>
+          </div>
+
+          <p className="text-xs text-gray-500 leading-relaxed mb-4">
+            {meta.description}
+          </p>
+
+          <div className="mt-auto">
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-wider font-bold text-gray-400 mb-2">
+              <span>Module Coverage</span>
+              <span className="text-gray-700">
+                {cov.count} of {cov.total}
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className={`h-full bg-gradient-to-r ${meta.bar} transition-all duration-500`}
+                style={{ width: `${cov.percent}%` }}
+              />
+            </div>
+            <div className="mt-3 flex items-center justify-between text-xs">
+              <span className="text-gray-500">{cov.percent}% access level</span>
+              <button
+                onClick={onConfigure}
+                className="inline-flex items-center gap-1 text-orange-500 hover:text-orange-600 font-semibold transition"
+              >
+                Configure matrix
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    })}
+  </div>
+);
+
+/* ------------------------------------------------------------------ */
+/*  Matrix tab                                                         */
+/* ------------------------------------------------------------------ */
+
+const MatrixTab = ({ matrix, coverage, onToggle }) => (
+  <div className="space-y-5">
+    {/* Summary header */}
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      {ROLES_FOR_MATRIX.map((roleId) => {
+        const meta = ROLE_META[roleId];
+        const cov = coverage[roleId];
+        return (
+          <div
+            key={roleId}
+            className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className={`text-xs font-bold ${meta.text || meta.pill}`}>
+                <span className={`inline-block ${meta.dot} w-1.5 h-1.5 rounded-full mr-1.5 align-middle`} />
+                {meta.label}
+              </span>
+              <span className="text-[11px] font-semibold text-gray-500">
+                {cov.count}/{cov.total}
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className={`h-full bg-gradient-to-r ${meta.bar} transition-all duration-500`}
+                style={{ width: `${cov.percent}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1.5">
+              {cov.percent}% access
+            </p>
+          </div>
+        );
+      })}
+    </div>
+
+    {/* Matrix table */}
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="grid grid-cols-[1.6fr_repeat(5,1fr)] gap-4 px-6 py-3 bg-gray-50/70 border-b border-gray-100 items-center">
+        <div className="text-[11px] font-bold tracking-wider uppercase text-gray-500 inline-flex items-center gap-2">
+          <LayoutGrid className="w-3.5 h-3.5" />
+          System Modules
+        </div>
+        {ROLES_FOR_MATRIX.map((roleId) => {
+          const meta = ROLE_META[roleId];
+          return (
+            <div key={roleId} className="text-center">
+              <span
+                className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${meta.pill}`}
+              >
+                {meta.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {MODULES.map((mod, idx) => (
+        <div
+          key={mod.id}
+          className="grid grid-cols-[1.6fr_repeat(5,1fr)] gap-4 px-6 py-4 border-b border-gray-50 last:border-0 items-center hover:bg-orange-50/20 transition"
+          style={{ animation: `slideUpFade .3s ease-out ${idx * 20}ms both` }}
+        >
+          <div className="text-sm font-semibold text-gray-800">{mod.label}</div>
+          {ROLES_FOR_MATRIX.map((roleId) => {
+            const enabled = !!matrix[roleId]?.[mod.id];
+            const immutable = roleId === 'admin';
+            return (
+              <div key={roleId} className="flex justify-center">
+                <button
+                  onClick={() => !immutable && onToggle(roleId, mod.id)}
+                  disabled={immutable}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
+                    enabled
+                      ? 'bg-emerald-50 text-emerald-500 hover:bg-emerald-100'
+                      : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                  } ${immutable ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                  title={
+                    immutable
+                      ? 'System administrators retain immutable root privilege'
+                      : 'Click to toggle access'
+                  }
+                >
+                  {enabled ? (
+                    <Check className="w-4 h-4" strokeWidth={3} />
+                  ) : (
+                    <X className="w-3.5 h-3.5" strokeWidth={3} />
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      <div className="flex items-center justify-between flex-wrap gap-2 px-6 py-3 bg-gray-50/50 border-t border-gray-100">
+        <p className="text-[11px] text-gray-500">
+          Click on cells to instantly grant or revoke modules authorizations.
+        </p>
+        <p className="text-[11px] text-gray-500">
+          System administrators retain immutable root privilege.
+        </p>
+      </div>
+    </div>
+  </div>
+);
+
+/* ------------------------------------------------------------------ */
+/*  User form modal                                                    */
+/* ------------------------------------------------------------------ */
+
+const UserFormModal = ({ editingId, formData, onChange, onSubmit, onClose }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-modal-in">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-bold text-gray-900">
+          {editingId ? 'Edit User' : 'Add User'}
+        </h3>
+        <button
+          onClick={onClose}
+          className="text-gray-400 hover:text-gray-600 transition"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <form onSubmit={onSubmit} className="space-y-3">
+        <Field
+          label="Username"
+          name="username"
+          value={formData.username}
+          onChange={onChange}
+          placeholder="e.g. john"
+          disabled={!!editingId}
+        />
+        <Field
+          label="Full Name"
+          name="name"
+          value={formData.name}
+          onChange={onChange}
+          placeholder="e.g. John Doe"
+        />
+        <Field
+          label={`Password ${editingId ? '(leave blank to keep current)' : ''}`}
+          name="password"
+          type="password"
+          value={formData.password}
+          onChange={onChange}
+          placeholder={editingId ? 'Leave blank to keep current' : 'min 4 chars'}
+          required={!editingId}
+        />
+        <div>
+          <label className="text-xs font-semibold text-gray-600 mb-1.5 block">
+            Role
+          </label>
+          <select
+            name="role"
+            value={formData.role}
+            onChange={onChange}
+            className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
+          >
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r.charAt(0).toUpperCase() + r.slice(1)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold transition"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md hover:shadow-lg transition"
+          >
+            {editingId ? 'Update' : 'Create User'}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+);
+
+const Field = ({ label, name, type = 'text', value, onChange, placeholder, disabled, required }) => (
+  <div>
+    <label className="text-xs font-semibold text-gray-600 mb-1.5 block">{label}</label>
+    <input
+      type={type}
+      name={name}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      disabled={disabled}
+      required={required}
+      className={`w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm ${
+        disabled ? 'bg-gray-50 cursor-not-allowed text-gray-500' : 'bg-white'
+      }`}
+    />
+  </div>
+);
 
 export default UserManagement;

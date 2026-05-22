@@ -1,1062 +1,605 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authFetch } from '../utils/api';
 import Notification from './Notification';
 import OrderEntryModal from './OrderEntryModal';
-import { Utensils, Clock, CheckCircle, Truck } from 'lucide-react';
+import { Users, Plus, X } from 'lucide-react';
 import useCurrency from '../hooks/useCurrency';
 
-const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => {
-    const { format: fmt } = useCurrency(locationSettings);
-    const navigate = useNavigate();
-    
-    // Check authentication
-    useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (!token) {
-            navigate("/login");
-        }
-    }, [navigate]);
-
-    const [tables, setTables] = useState([
-        { id: 'T1', status: 'available', capacity: 4 },
-        { id: 'T2', status: 'available', capacity: 2 },
-
-        { id: 'T3', status: 'available', capacity: 6 },
-
-        { id: 'T4', status: 'available', capacity: 4 },
-
-        { id: 'T5', status: 'available', capacity: 8 },
-
-    ]);
-
-    const [selectedTable, setSelectedTable] = useState(null);
-
-    const [showOrderModal, setShowOrderModal] = useState(false);
-
-    const [activeOrders, setActiveOrders] = useState([]);
-
-    const [notification, setNotification] = useState(null);
-
-    const [editingOrder, setEditingOrder] = useState(null);
-    const [isLoaded, setIsLoaded] = useState(false);
-
-
-
-    // Fetch orders and sync table statuses
-
-    const fetchOrdersAndSync = async () => {
-
-        try {
-            const response = await authFetch('/api/orders?type=DINE_IN')
-            
-            if (!response.ok) {
-                console.error('Server error:', response.status, response.statusText);
-                setActiveOrders([]);
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-
-            if (!Array.isArray(data)) {
-                console.error('Orders response is not an array:', data);
-                setActiveOrders([]);
-                return;
-            }
-
-            // Active orders for display (not completed)
-            const filteredOrders = data.filter(o => o.status !== 'completed');
-            setActiveOrders(filteredOrders);
-
-            // Update table statuses based on ALL orders (including delivered but not paid)
-            updateTableStatuses(data);
-
-        } catch (err) {
-
-            console.error('Failed to fetch DINE_IN orders:', err);
-
-            setActiveOrders([]);
-
-        }
-    };
-
-
-
-    // Update table statuses based on active orders and billing status
-
-    // Helper to match table ID with order table_name (handles T1, Table 1, 1 formats)
-    const tableIdMatches = (tableId, tableName) => {
-        if (!tableName) return false;
-        const normalizedTableId = tableId.replace(/^T/i, '');
-        const normalizedTableName = tableName.replace(/Table\s*/i, '');
-        return normalizedTableId === normalizedTableName || tableId === tableName;
-    };
-
-    const updateTableStatuses = (orders) => {
-        setTables(prevTables => 
-            prevTables.map(table => {
-                // Find any active order for this table (not completed and not paid)
-                const tableOrder = orders.find(o => 
-                    tableIdMatches(table.id, o.table_name) && 
-                    o.status !== 'completed' && 
-                    o.bill_status !== 'paid'
-                );
-
-                // If no active order, table is available
-                if (!tableOrder) {
-                    return { ...table, status: 'available' };
-                }
-
-                // If order is delivered but not paid, waiting for payment
-                if (tableOrder.status === 'delivered' && tableOrder.bill_status !== 'paid') {
-                    return { ...table, status: 'waiting_payment' };
-                }
-
-                // Order is pending/preparing/ready - table is occupied
-                return { ...table, status: 'occupied' };
-            })
-        );
-    };
-
-
-
-    // Initial fetch and setup polling
-
-    useEffect(() => {
-
-        fetchOrdersAndSync();
-
-        
-
-        // Poll for order updates every 2 seconds
-
-        const orderInterval = setInterval(fetchOrdersAndSync, 2000);
-
-        
-
-        return () => clearInterval(orderInterval);
-
-    }, []);
-
-    // Staggered entrance animation
-    useEffect(() => {
-        const timer = setTimeout(() => setIsLoaded(true), 100);
-        return () => clearTimeout(timer);
-    }, []);
-
-    const getTableColor = (status) => {
-
-        switch (status) {
-
-            case 'occupied': return 'bg-rose-50 text-rose-800 border-rose-200';
-
-            case 'available': return 'bg-emerald-50 text-emerald-800 border-emerald-200';
-
-            case 'cleaning': return 'bg-amber-50 text-amber-800 border-amber-200';
-
-            case 'waiting_payment': return 'bg-sky-50 text-sky-800 border-sky-200';
-
-            default: return 'bg-slate-50 text-slate-700 border-slate-200';
-
-        }
-
-    };
-
-
-
-    const getTableStatusLabel = (status) => {
-
-        switch (status) {
-
-            case 'occupied': return 'Occupied';
-
-            case 'available': return 'Available';
-
-            case 'cleaning': return 'Cleaning';
-
-            case 'waiting_payment': return 'Waiting Payment';
-
-            default: return 'Unknown';
-
-        }
-
-    };
-
-
-
-    const handleTableClick = (table) => {
-
-        setSelectedTable(table);
-
-        setShowOrderModal(true);
-
-    };
-
-
-
-    const handleOrderPlaced = async (placedOrder) => {
-
-        try {
-
-            // The order was already created by the modal, just refresh and show notification
-
-            fetchOrdersAndSync();
-
-            
-
-            setNotification({ message: `Order for ${selectedTable.id} placed! (Order #${placedOrder.id})`, type: 'success' });
-
-        } catch (error) {
-
-            console.error('Error handling placed order:', error);
-
-            setNotification({ message: 'Error handling order.', type: 'error' });
-
-        }
-
-        setShowOrderModal(false);
-
-        setSelectedTable(null);
-
-        setTimeout(() => setNotification(null), 3000);
-
-    };
-
-
-
-    const handleAddMoreItems = async (order) => {
-
-        // If order is NOT_AVAILABLE, reset it first
-
-        if (order.status === 'NOT_AVAILABLE') {
-
-            try {
-                const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
-                    method: 'DELETE'
-                });
-
-
-
-                if (!deleteResponse.ok) {
-
-                    const errorData = await deleteResponse.json().catch(() => ({}));
-
-                    throw new Error(errorData.message || 'Failed to delete old order');
-
-                }
-
-
-
-                const newOrderPayload = {
-
-                    table_name: order.table_name,
-
-                    type: 'DINE_IN',
-
-                    status: 'PENDING',
-
-                    total: 0,
-
-                    items: []
-
-                };
-
-
-
-                const createResponse = await authFetch('/api/orders', {
-                    method: 'POST',
-                    body: JSON.stringify(newOrderPayload)
-                });
-
-
-
-                if (!createResponse.ok) {
-
-                    const errorData = await createResponse.json().catch(() => ({}));
-
-                    throw new Error(errorData.message || 'Failed to create new order');
-
-                }
-
-
-
-                const newOrder = await createResponse.json();
-
-
-
-                setActiveOrders(prev => prev.filter(o => o.id !== order.id));
-
-                setNotification({ message: `Order #${order.id} reset successfully`, type: 'success' });
-
-
-
-                const table = tables.find(t => tableIdMatches(t.id, order.table_name));
-
-                if (table) {
-
-                    setSelectedTable(table);
-
-                    setEditingOrder(newOrder);
-
-                    setShowOrderModal(true);
-
-                }
-
-            } catch (error) {
-
-                console.error('Error resetting order:', error);
-
-                setNotification({ message: `Error resetting order: ${error.message}`, type: 'error' });
-
-            }
-
-            setTimeout(() => setNotification(null), 3000);
-
-            return;
-
-        }
-
-
-
-        // For normal orders, proceed with existing logic
-
-        setEditingOrder(order);
-
-        setShowOrderModal(true);
-
-    };
-
-
-
-    const handleRemoveItem = async (order, itemIndex) => {
-
-        try {
-
-            const token = localStorage.getItem('token');
-
-            const updatedItems = order.items.filter((_, index) => index !== itemIndex);
-
-            const newTotal = updatedItems.reduce((sum, item) => sum + (item.price * (item.quantity || item.qty || 1)), 0);
-
-
-
-            // If order becomes empty, first update it to have total = 0, then delete
-
-            if (updatedItems.length === 0) {
-
-                console.log('Dine-in order will become empty, updating to total = 0 first');
-
-                
-
-                // First update order to have empty items and total = 0
-
-                const updateResponse = await authFetch(`/api/orders/${order.id}`, {
-
-                    method: 'PUT',
-
-                    headers: {
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
-                    body: JSON.stringify({
-
-                        items: [],
-
-                        total: 0
-
-                    }) 
-
-                });
-
-
-
-                if (!updateResponse.ok) {
-
-                    const errorData = await updateResponse.json().catch(() => ({}));
-
-                    console.error('Update error before delete:', errorData);
-
-                    throw new Error(errorData.message || 'Failed to update order before deletion');
-
-                }
-
-
-
-                // Now delete order
-
-                console.log('Deleting empty dine-in order:', order.id, 'with total: 0');
-
-                const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
-
-                    method: 'DELETE',
-
-                    headers: {
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    }
-
-                });
-
-
-
-                if (!deleteResponse.ok) {
-
-                    const errorData = await deleteResponse.json().catch(() => ({}));
-
-                    console.error('Delete error:', errorData);
-
-                    throw new Error(errorData.message || 'Failed to delete empty order');
-
-                }
-
-
-
-                // Remove from local state
-
-                setActiveOrders(prev => prev.filter(o => o.id !== order.id));
-
-                setNotification({ message: 'Order removed as all items were deleted!', type: 'success' });
-
-            } else {
-
-                // Update order with remaining items
-
-                console.log('Updating dine-in order:', order.id, 'with items:', updatedItems.length, 'new total:', newTotal);
-
-                const response = await authFetch(`/api/orders/${order.id}`, {
-
-                    method: 'PUT',
-
-                    headers: {
-
-                        'Content-Type': 'application/json',
-
-                        'Authorization': token ? `Bearer ${token}` : ''
-
-                    },
-
-                    body: JSON.stringify({
-
-                        items: updatedItems,
-
-                        total: newTotal
-
-                    })
-
-                });
-
-
-
-                if (!response.ok) {
-
-                    const errorData = await response.json().catch(() => ({}));
-
-                    console.error('Update error:', errorData);
-
-                    throw new Error(errorData.message || 'Failed to remove item');
-
-                }
-
-
-
-                // Update local state
-
-                setActiveOrders(prev => prev.map(o => 
-
-                    o.id === order.id 
-
-                        ? { ...o, items: updatedItems, total: newTotal }
-
-                        : o
-
-                ));
-
-                setNotification({ message: 'Item removed successfully!', type: 'success' });
-
-            }
-
-            setTimeout(() => setNotification(null), 3000);
-
-        } catch (error) {
-
-            console.error('Error removing item:', error);
-
-            setNotification({ message: `Error: ${error.message}`, type: 'error' });
-
-            setTimeout(() => setNotification(null), 3000);
-
-        }
-
-    };
-
-
-
-    const handleDeleteEmptyOrder = async (order) => {
-
-        try {
-
-            console.log('Deleting empty order:', order.id);
-            
-            // Check if we have a valid token
-            const token = localStorage.getItem('token');
-            if (!token) {
-                throw new Error('No authentication token found. Please login again.');
-            }
-            
-            console.log('Token available:', token.substring(0, 20) + '...');
-            
-            const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
-                method: 'DELETE'
-            });
-
-            console.log('Delete response status:', deleteResponse.status);
-
-            if (!deleteResponse.ok) {
-                // Check if response is HTML (error page)
-                const contentType = deleteResponse.headers.get('content-type');
-                console.log('Response content-type:', contentType);
-                
-                if (!contentType || !contentType.includes('application/json')) {
-                    const text = await deleteResponse.text();
-                    console.error('Expected JSON but got HTML:', text.substring(0, 200));
-                    throw new Error('Server error: Backend returned HTML instead of JSON');
-                }
-                
-                const errorData = await deleteResponse.json().catch(() => ({}));
-                console.error('Error data:', errorData);
-                throw new Error(errorData.message || 'Failed to delete empty order');
-            }
-
-            // Remove from local state
-            setActiveOrders(prev => prev.filter(o => o.id !== order.id));
-            setNotification({ message: `Order #${order.id} deleted successfully!`, type: 'success' });
-            setTimeout(() => setNotification(null), 3000);
-
-        } catch (error) {
-            console.error('Error deleting empty order:', error);
-            setNotification({ message: `Error deleting order: ${error.message}`, type: 'error' });
-            setTimeout(() => setNotification(null), 3000);
-        }
-
-    };
-
-
-
-    const handleMarkTableAvailable = async (tableId) => {
-
-        try {
-
-            const tableOrder = activeOrders.find(order => tableIdMatches(tableId, order.table_name));
-
-            
-
-            // If order was delivered, mark it as completed before cleaning
-
-            if (tableOrder && tableOrder.status === 'delivered') {
-
-                // Complete the order
-
-                await authFetch(`/api/orders/${tableOrder.id}`, {
-
-                    method: 'PUT',
-
-                    headers: { 'Content-Type': 'application/json' },
-
-                    body: JSON.stringify({ status: 'completed' })
-
-                });
-
-            }
-
-            
-
-            // Mark table as cleaning
-
-            setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'cleaning' } : t));
-
-            setNotification({ message: `Table ${tableId} is being cleaned...`, type: 'info' });
-
-            
-
-            // After 3 seconds, mark as available
-
-            setTimeout(() => {
-
-                setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'available' } : t));
-
-                setNotification({ message: `Table ${tableId} is now available!`, type: 'success' });
-
-                
-
-                // Refresh orders after marking table available
-
-                fetchOrdersAndSync();
-
-                
-
-                setTimeout(() => setNotification(null), 3000);
-
-            }, 3000);
-
-        } catch (error) {
-
-            console.error('Error marking table available:', error);
-
-            setNotification({ message: 'Error marking table available.', type: 'error' });
-
-            setTimeout(() => setNotification(null), 3000);
-
-        }
-
-    };
-
-
-
-    return (
-
-        <div className="p-6 bg-[#FFF8F0] min-h-screen" style={{ perspective: '1000px' }}>
-
-            {/* Header Section - Orange Theme */}
-            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-6">
-                <div className="px-6 py-6">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h2 className="text-3xl font-bold text-white mb-1">Dine-In Orders</h2>
-                            <p className="text-orange-100 text-base">Manage table orders and service</p>
-                        </div>
-                        <div className="hidden md:flex items-center space-x-3">
-                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
-                                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                <span className="text-white text-sm font-medium">Table Service</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
-
-            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
-                <span className="w-2 h-8 bg-orange-500 rounded-full mr-3"></span>
-                Table Overview
-            </h3>
-
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 mb-8" style={{ transformStyle: 'preserve-3d' }}>
-
-                        {tables.map((table, index) => {
-
-                    const tableOrder = activeOrders.find(o => tableIdMatches(table.id, o.table_name));
-
-                    return (
-
-                        <div
-
-                            key={table.id}
-
-                            className={`p-4 rounded-xl border text-left cursor-pointer transition-all duration-300 ease-out bg-white border-slate-200 hover:border-blue-300 hover:shadow-xl ${
-                                isLoaded ? 'animate-slide-up opacity-100' : 'opacity-0'
-                            }`}
-                            style={{
-                                transform: isLoaded ? 'translateZ(0) rotateX(0deg)' : 'translateZ(-20px) rotateX(5deg)',
-                                transformStyle: 'preserve-3d',
-                                transitionDelay: `${index * 100}ms`,
-                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-                            }}
-
-                            onClick={() => handleTableClick(table)}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.transform = 'translateZ(15px) rotateX(-2deg) scale(1.02)';
-                                e.currentTarget.style.boxShadow = '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.transform = 'translateZ(0) rotateX(0deg) scale(1)';
-                                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
-                            }}
-
-                        >
-
-                            <div className="flex items-start justify-between gap-3">
-
-                                <div className="min-w-0">
-
-                                    <p className="text-sm font-semibold text-slate-900">Table {table.id}</p>
-
-                                    <p className="text-xs text-slate-500 mt-1">Capacity: {table.capacity}</p>
-
-                                </div>
-
-                                <span 
-                                    className={`shrink-0 inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold transition-all duration-300 ${getTableColor(table.status)}`}
-                                    style={{
-                                        transform: 'translateZ(10px)',
-                                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)'
-                                    }}
-                                >
-
-                                    {getTableStatusLabel(table.status)}
-
-                                </span>
-
-                            </div>
-
-                            {activeOrders.find(o => tableIdMatches(table.id, o.table_name)) && (
-
-                                <p className="text-xs mt-3 text-slate-500 animate-pulse-slow">
-
-                                    Order #{activeOrders.find(o => tableIdMatches(table.id, o.table_name)).id} · {activeOrders.find(o => tableIdMatches(table.id, o.table_name)).status}
-
-                                </p>
-
-                            )}
-
-                            {table.status === 'occupied' && activeOrders.find(o => tableIdMatches(table.id, o.table_name) && o.status !== 'NOT_AVAILABLE') && (
-
-                                <button
-
-                                        onClick={(e) => { e.stopPropagation(); handleTableClick(table); }}
-
-                                        className="mt-3 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm transition-all duration-300 hover:bg-slate-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-                                        style={{
-                                            transform: 'translateZ(5px)',
-                                            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            e.currentTarget.style.transform = 'translateZ(8px) scale(1.05)';
-                                            e.currentTarget.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.15)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.transform = 'translateZ(5px) scale(1)';
-                                            e.currentTarget.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.1)';
-                                        }}
-
-                                    >
-
-                                        + Add Items
-
-                                    </button>
-
-                            )}
-
-                            {table.status === 'waiting_payment' && (
-
-                                <button
-
-                                    onClick={(e) => { e.stopPropagation(); handleMarkTableAvailable(table.id); }}
-
-                                    className="mt-3 inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-all duration-300 hover:bg-blue-700 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-                                    style={{
-                                        transform: 'translateZ(5px)',
-                                        boxShadow: '0 1px 3px rgba(37, 99, 235, 0.3)'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        e.currentTarget.style.transform = 'translateZ(10px) scale(1.05)';
-                                        e.currentTarget.style.boxShadow = '0 8px 12px rgba(37, 99, 235, 0.4)';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.currentTarget.style.transform = 'translateZ(5px) scale(1)';
-                                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(37, 99, 235, 0.3)';
-                                    }}
-
-                                >
-
-                                    Mark available
-
-                                </button>
-
-                            )}
-
-                        </div>
-
-                    );
-
-                })}
-
-            </div>
-
-
-
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Active Orders</h3>
-
-            {activeOrders.length === 0 ? (
-
-                <div className="bg-white rounded-xl shadow-sm p-12 text-center border border-slate-200">
-
-                    <div className="mb-3"><CheckCircle size={40} className="text-emerald-600 mx-auto" /></div>
-
-                    <p className="text-sm font-medium text-slate-700">No active orders</p>
-
-                    <p className="text-xs text-slate-500 mt-1">Orders will appear here when created.</p>
-
-                </div>
-
-            ) : (
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-
-                    {activeOrders.map(order => {
-
-                        const statusColor = {
-
-                            'pending': 'border-slate-200 bg-white',
-
-                            'preparing': 'border-amber-200 bg-white',
-
-                            'ready': 'border-emerald-200 bg-white',
-
-                            'delivered': 'border-slate-200 bg-white',
-
-                            'NOT_AVAILABLE': 'border-rose-200 bg-white'
-
-                        }[order.status] || 'border-slate-200 bg-white';
-
-
-
-                        const statusIcon = {
-
-                            'pending': <Clock className="text-slate-500" size={18} />,
-
-                            'preparing': <Utensils className="text-amber-600" size={18} />,
-
-                            'ready': <CheckCircle className="text-emerald-600" size={18} />,
-
-                            'delivered': <Truck className="text-slate-500" size={18} />,
-
-                            'NOT_AVAILABLE': <Clock className="text-rose-600" size={18} />
-
-                        }[order.status] || null;
-
-
-
-                        return (
-
-                            <div key={order.id} className={`bg-white p-5 rounded-xl shadow-sm border ${statusColor}`}>
-
-                                <div className="flex justify-between items-start mb-3">
-
-                                    <div>
-
-                                        <p className="text-sm font-semibold text-slate-900">Order #{order.id}</p>
-
-                                        <p className="text-lg font-semibold text-slate-900 mt-1">Table {order.table_name}</p>
-
-                                    </div>
-
-                                    <div>{statusIcon}</div>
-
-                                </div>
-
-                                <p className="text-xs text-slate-500 mb-3 capitalize">
-
-                                    Status: 
-
-                                    {order.status === 'NOT_AVAILABLE' ? (
-
-                                        <span className="ml-2 bg-rose-50 text-rose-800 px-3 py-1 rounded-full text-xs font-semibold border border-rose-200">
-
-                                            NOT AVAILABLE
-
-                                        </span>
-
-                                    ) : (
-
-                                        <span className="font-bold text-gray-800"> {order.status}</span>
-
-                                    )}
-
-                                </p>
-
-                                <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 mb-3">
-
-                                    <h4 className="font-semibold text-slate-900 mb-2 text-sm">Items</h4>
-
-                                    <ul className="space-y-1">
-
-                                        {(order.items || []).map((item, idx) => (
-
-                                            <li key={idx} className="text-sm text-gray-700 flex justify-between items-center">
-
-                                                <span><strong>{item.qty || item.quantity}x</strong> {item.name}</span>
-
-                                                <div className="flex items-center gap-2">
-
-                                                    <span className="text-gray-600">{fmt(item.price)}</span>
-
-                                                    {order.status !== 'delivered' && order.status !== 'completed' && order.status !== 'preparing' && (
-
-                                                        <button
-
-                                                            onClick={() => handleRemoveItem(order, idx)}
-
-                                                            className="text-rose-700 hover:text-rose-800 text-xs font-semibold bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded transition-colors duration-200"
-
-                                                            title="Remove item"
-
-                                                        >
-
-                                                            Remove
-
-                                                        </button>
-
-                                                    )}
-
-                                                </div>
-
-                                            </li>
-
-                                        ))}
-
-                                    </ul>
-
-                                </div>
-
-                                <p className="text-right text-sm font-semibold text-slate-900 mb-3">
-
-                                    Total: {fmt(typeof order.total === 'number' && !isNaN(order.total) ? order.total : 0)}
-
-                                </p>
-
-                                {order.status === 'NOT_AVAILABLE' && (
-
-                                    <div className="bg-rose-50 border border-rose-200 text-rose-800 px-3 py-2 rounded-lg text-xs mb-3">
-
-                                        This item is currently not available in kitchen.
-
-                                    </div>
-
-                                )}
-
-                                <button
-
-                                    onClick={() => handleAddMoreItems(order)}
-
-                                    className={`w-full inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-600/20 ${
-
-                                        order.status === 'NOT_AVAILABLE'
-
-                                            ? 'bg-rose-600 hover:bg-rose-700 text-white'
-
-                                            : 'bg-blue-600 hover:bg-blue-700 text-white'
-
-                                    }`}
-
-                                >
-
-                                    {order.status === 'NOT_AVAILABLE' ? 'Reset and add items' : 'Add more items'}
-
-                                </button>
-
-                                <button
-
-                                    onClick={(e) => { e.stopPropagation(); handleMarkTableAvailable(order.table_name); }}
-
-                                    disabled={order.status === 'NOT_AVAILABLE'}
-
-                                    className={`mt-3 w-full px-3 py-1 rounded-full text-sm font-semibold transition-colors ${
-
-                                        order.status === 'NOT_AVAILABLE'
-
-                                            ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-
-                                            : 'bg-white text-slate-900 hover:bg-slate-50 border border-slate-200'
-
-                                    }`}
-
-                                >
-
-                                    Mark Available
-
-                                </button>
-
-                                
-
-                                {/* Delete empty order button */}
-
-                                {(!order.items || order.items.length === 0) && (
-
-                                    <button
-
-                                        onClick={() => handleDeleteEmptyOrder(order)}
-
-                                        className="mt-3 w-full inline-flex items-center justify-center rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors duration-200 hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-600/20"
-
-                                        title="Delete empty order"
-
-                                    >
-
-                                        Delete empty order
-
-                                    </button>
-
-                                )}
-
-                            </div>
-
-                        );
-
-                    })}
-
-                </div>
-
-            )}
-
-
-
-            {showOrderModal && (
-
-                <OrderEntryModal
-
-                    table={editingOrder ? { id: editingOrder.table_name, status: 'occupied', capacity: 0 } : selectedTable}
-
-                    onClose={() => { 
-                        // If closing with empty items, delete the order to prevent empty orders
-                        if (editingOrder && (!editingOrder.items || editingOrder.items.length === 0)) {
-                            handleDeleteEmptyOrder(editingOrder);
-                        }
-                        setShowOrderModal(false); 
-                        setEditingOrder(null); 
-                        setSelectedTable(null); 
-                    }}
-
-                    onOrderPlaced={editingOrder ? (orderData => {
-
-                        setActiveOrders(prev => prev.map(o => o.id === editingOrder.id ? { ...o, items: orderData.items, total: orderData.total } : o));
-
-                        setNotification({ message: `Order for ${editingOrder.table_name} updated!`, type: 'success' });
-
-                        setEditingOrder(null);
-
-                        setTimeout(() => setNotification(null), 3000);
-
-                    }) : handleOrderPlaced}
-
-                    locationSettings={locationSettings}
-
-                    nextOrderId={nextOrderId}
-
-                    setNextOrderId={setNextOrderId}
-
-                    orderType="DINE_IN"
-
-                    initialOrder={editingOrder}
-
-                />
-
-            )}
-
-        </div>
-
-    );
-
+/* ------------------------------------------------------------------ */
+/*  Helpers & constants                                                */
+/* ------------------------------------------------------------------ */
+
+const FLOORS = [
+  { id: 'all', label: 'All Floors' },
+  { id: 'ground', label: 'Ground Floor' },
+  { id: 'first', label: 'First Floor' },
+];
+
+const STATUS_CONFIG = {
+  available: {
+    label: 'FREE',
+    summaryLabel: 'Free',
+    dot: 'bg-emerald-500',
+    badgeBg: 'bg-emerald-100/70',
+    text: 'text-emerald-700',
+    bigBg: 'bg-emerald-100',
+    cardRing: 'ring-1 ring-emerald-50',
+    showDot: false,
+  },
+  occupied: {
+    label: 'OCCUPIED',
+    summaryLabel: 'Occupied',
+    dot: 'bg-orange-500',
+    badgeBg: 'bg-orange-100/70',
+    text: 'text-orange-600',
+    bigBg: 'bg-orange-100',
+    cardRing: 'ring-1 ring-orange-50',
+    showDot: true,
+  },
+  reserved: {
+    label: 'RESERVED',
+    summaryLabel: 'Reserved',
+    dot: 'bg-yellow-400',
+    badgeBg: 'bg-yellow-100/80',
+    text: 'text-yellow-700',
+    bigBg: 'bg-yellow-100',
+    cardRing: 'ring-1 ring-yellow-50',
+    showDot: false,
+  },
+  cleaning: {
+    label: 'CLEANING',
+    summaryLabel: 'Cleaning',
+    dot: 'bg-blue-500',
+    badgeBg: 'bg-blue-100/70',
+    text: 'text-blue-600',
+    bigBg: 'bg-blue-100',
+    cardRing: 'ring-1 ring-blue-50',
+    showDot: false,
+  },
 };
 
+const initialTables = [
+  { id: 'T1', capacity: 4, floor: 'ground', status: 'available' },
+  { id: 'T2', capacity: 2, floor: 'ground', status: 'available' },
+  { id: 'T3', capacity: 6, floor: 'ground', status: 'available' },
+  { id: 'T4', capacity: 4, floor: 'ground', status: 'available' },
+  { id: 'T5', capacity: 8, floor: 'ground', status: 'available' },
+  { id: 'T6', capacity: 2, floor: 'ground', status: 'available' },
+  { id: 'T7', capacity: 4, floor: 'first', status: 'available' },
+  { id: 'T8', capacity: 4, floor: 'first', status: 'available' },
+  { id: 'T9', capacity: 6, floor: 'first', status: 'available' },
+  { id: 'T10', capacity: 2, floor: 'first', status: 'available' },
+  { id: 'T11', capacity: 4, floor: 'first', status: 'available' },
+  { id: 'T12', capacity: 10, floor: 'first', status: 'available' },
+];
 
+const tableIdMatches = (tableId, tableName) => {
+  if (!tableName) return false;
+  const normalizedTableId = String(tableId).replace(/^T/i, '');
+  const normalizedTableName = String(tableName).replace(/Table\s*/i, '');
+  return normalizedTableId === normalizedTableName || tableId === tableName;
+};
 
-export default DineInManagement; 
+const minutesSince = (iso) => {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms) || ms < 0) return null;
+  return Math.floor(ms / 60000);
+};
 
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
+const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => {
+  const { format: fmt } = useCurrency(locationSettings);
+  const navigate = useNavigate();
+
+  const [tables, setTables] = useState(initialTables);
+  const [activeOrders, setActiveOrders] = useState([]);
+  const [selectedTable, setSelectedTable] = useState(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [editingOrder, setEditingOrder] = useState(null);
+  const [notification, setNotification] = useState(null);
+  const [activeFloor, setActiveFloor] = useState('all');
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [showAddTable, setShowAddTable] = useState(false);
+  const [newTable, setNewTable] = useState({ capacity: 4, floor: 'ground' });
+  const [, setTick] = useState(0);
+
+  /* ------------------------------ auth ------------------------------ */
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) navigate('/login');
+  }, [navigate]);
+
+  /* ------------------------------ fetch ----------------------------- */
+  const updateTableStatuses = useCallback((orders) => {
+    setTables((prev) =>
+      prev.map((table) => {
+        const tableOrder = orders.find(
+          (o) =>
+            tableIdMatches(table.id, o.table_name) &&
+            o.status !== 'completed' &&
+            o.bill_status !== 'paid'
+        );
+
+        if (!tableOrder) {
+          if (table.status === 'cleaning' || table.status === 'reserved') return table;
+          return { ...table, status: 'available' };
+        }
+        if (tableOrder.status === 'delivered' && tableOrder.bill_status !== 'paid') {
+          return { ...table, status: 'reserved' };
+        }
+        return { ...table, status: 'occupied' };
+      })
+    );
+  }, []);
+
+  const fetchOrdersAndSync = useCallback(async () => {
+    try {
+      const response = await authFetch('/api/orders?type=DINE_IN');
+      if (!response.ok) {
+        setActiveOrders([]);
+        return;
+      }
+      const data = await response.json();
+      if (!Array.isArray(data)) {
+        setActiveOrders([]);
+        return;
+      }
+      const filteredOrders = data.filter((o) => o.status !== 'completed');
+      setActiveOrders(filteredOrders);
+      updateTableStatuses(data);
+    } catch (err) {
+      console.error('Failed to fetch DINE_IN orders:', err);
+      setActiveOrders([]);
+    }
+  }, [updateTableStatuses]);
+
+  useEffect(() => {
+    fetchOrdersAndSync();
+    const orderInterval = setInterval(fetchOrdersAndSync, 2000);
+    const timeTick = setInterval(() => setTick((v) => v + 1), 60000);
+    return () => {
+      clearInterval(orderInterval);
+      clearInterval(timeTick);
+    };
+  }, [fetchOrdersAndSync]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsLoaded(true), 80);
+    return () => clearTimeout(timer);
+  }, []);
+
+  /* ---------------------------- handlers ---------------------------- */
+  const handleTableClick = (table) => {
+    setSelectedTable(table);
+    setShowOrderModal(true);
+  };
+
+  const handleOrderPlaced = async (placedOrder) => {
+    try {
+      fetchOrdersAndSync();
+      setNotification({
+        message: `Order for ${selectedTable.id} placed! (Order #${placedOrder.id})`,
+        type: 'success',
+      });
+    } catch (error) {
+      console.error('Error handling placed order:', error);
+      setNotification({ message: 'Error handling order.', type: 'error' });
+    }
+    setShowOrderModal(false);
+    setSelectedTable(null);
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleDeleteEmptyOrder = async (order) => {
+    try {
+      const deleteResponse = await authFetch(`/api/orders/${order.id}`, {
+        method: 'DELETE',
+      });
+      if (!deleteResponse.ok) throw new Error('Failed to delete empty order');
+      setActiveOrders((prev) => prev.filter((o) => o.id !== order.id));
+    } catch (error) {
+      console.error('Error deleting empty order:', error);
+    }
+  };
+
+  const handleMarkTableAvailable = async (tableId) => {
+    try {
+      const tableOrder = activeOrders.find((order) =>
+        tableIdMatches(tableId, order.table_name)
+      );
+      if (tableOrder && tableOrder.status === 'delivered') {
+        await authFetch(`/api/orders/${tableOrder.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'completed' }),
+        });
+      }
+      setTables((prev) =>
+        prev.map((t) => (t.id === tableId ? { ...t, status: 'cleaning' } : t))
+      );
+      setNotification({ message: `Table ${tableId} is being cleaned…`, type: 'info' });
+      setTimeout(() => {
+        setTables((prev) =>
+          prev.map((t) => (t.id === tableId ? { ...t, status: 'available' } : t))
+        );
+        setNotification({
+          message: `Table ${tableId} is now available!`,
+          type: 'success',
+        });
+        fetchOrdersAndSync();
+        setTimeout(() => setNotification(null), 2500);
+      }, 3000);
+    } catch (error) {
+      console.error('Error marking table available:', error);
+      setNotification({ message: 'Error marking table available.', type: 'error' });
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
+  const handleAddTable = () => {
+    const existingNumbers = tables
+      .map((t) => parseInt(String(t.id).replace(/^T/i, ''), 10))
+      .filter((n) => !Number.isNaN(n));
+    const nextNum = (existingNumbers.length ? Math.max(...existingNumbers) : 0) + 1;
+    setTables((prev) => [
+      ...prev,
+      {
+        id: `T${nextNum}`,
+        capacity: Math.max(2, Math.min(20, Number(newTable.capacity) || 4)),
+        floor: newTable.floor || 'ground',
+        status: 'available',
+      },
+    ]);
+    setShowAddTable(false);
+    setNewTable({ capacity: 4, floor: 'ground' });
+    setNotification({ message: `Table T${nextNum} added.`, type: 'success' });
+    setTimeout(() => setNotification(null), 2500);
+  };
+
+  /* ---------------------------- derived ---------------------------- */
+  const summaryCounts = useMemo(() => {
+    const c = { available: 0, occupied: 0, reserved: 0, cleaning: 0 };
+    tables.forEach((t) => {
+      const s = t.status === 'waiting_payment' ? 'reserved' : t.status;
+      if (s in c) c[s] += 1;
+    });
+    return c;
+  }, [tables]);
+
+  const filteredTables = useMemo(() => {
+    if (activeFloor === 'all') return tables;
+    return tables.filter((t) => t.floor === activeFloor);
+  }, [tables, activeFloor]);
+
+  const orderForTable = useCallback(
+    (tableId) =>
+      activeOrders.find(
+        (o) =>
+          tableIdMatches(tableId, o.table_name) &&
+          o.status !== 'completed' &&
+          o.bill_status !== 'paid'
+      ),
+    [activeOrders]
+  );
+
+  /* ----------------------------- render ----------------------------- */
+  return (
+    <div
+      className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
+        isLoaded ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            Table Management
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Real-time occupancy and visual floor management system
+          </p>
+        </div>
+        <button
+          onClick={() => setShowAddTable(true)}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition"
+        >
+          <Plus className="w-4 h-4" />
+          ADD TABLE
+        </button>
+      </div>
+
+      {notification && (
+        <div className="mb-3">
+          <Notification
+            message={notification.message}
+            type={notification.type}
+            onClose={() => setNotification(null)}
+          />
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-5">
+        {['available', 'occupied', 'reserved', 'cleaning'].map((status, idx) => {
+          const cfg = STATUS_CONFIG[status];
+          return (
+            <div
+              key={status}
+              className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4 flex items-center gap-4"
+              style={{
+                animation: isLoaded
+                  ? `slideUpFade .35s ease-out ${idx * 60}ms both`
+                  : 'none',
+              }}
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${cfg.dot}`} />
+              <div>
+                <p className="text-2xl font-bold text-gray-900 leading-none">
+                  {summaryCounts[status]}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">{cfg.summaryLabel}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Floor tabs */}
+      <div className="flex flex-wrap gap-2 mb-5">
+        {FLOORS.map((f) => {
+          const active = activeFloor === f.id;
+          return (
+            <button
+              key={f.id}
+              onClick={() => setActiveFloor(f.id)}
+              className={`px-5 py-2 rounded-full text-sm font-semibold transition-all duration-200 ${
+                active
+                  ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-200/60 scale-[1.02]'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300 hover:text-gray-800'
+              }`}
+            >
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tables grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4">
+        {filteredTables.map((table, idx) => {
+          const cfg = STATUS_CONFIG[table.status] || STATUS_CONFIG.available;
+          const tableOrder = orderForTable(table.id);
+          const isActive = table.status === 'occupied' || table.status === 'reserved';
+
+          const occupiedMin =
+            tableOrder && (tableOrder.created_at || tableOrder.createdAt)
+              ? minutesSince(tableOrder.created_at || tableOrder.createdAt)
+              : null;
+          const guestsOccupied = isActive
+            ? Math.max(
+                1,
+                Math.min(
+                  table.capacity,
+                  Math.ceil((tableOrder?.items?.length || 1) / 1.5)
+                )
+              )
+            : 0;
+          const orderValue = tableOrder?.total || 0;
+
+          return (
+            <button
+              key={table.id}
+              onClick={() => handleTableClick(table)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (table.status !== 'available') {
+                  handleMarkTableAvailable(table.id);
+                }
+              }}
+              className={`relative text-left bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all duration-200 p-4 ${cfg.cardRing} hover:-translate-y-0.5`}
+              style={{
+                animation: isLoaded
+                  ? `cardPop .35s ease-out ${Math.min(idx * 35, 600)}ms both`
+                  : 'none',
+              }}
+              title={
+                table.status !== 'available'
+                  ? 'Click to add items · Right-click to mark available'
+                  : 'Click to place a new order'
+              }
+            >
+              {cfg.showDot && (
+                <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-red-500 ring-2 ring-red-100 animate-pulse-soft" />
+              )}
+
+              {/* Big square badge */}
+              <div className={`mx-auto w-20 h-20 sm:w-24 sm:h-24 rounded-2xl ${cfg.bigBg} flex items-center justify-center`}>
+                <span className={`text-2xl sm:text-3xl font-extrabold ${cfg.text}`}>
+                  {table.id}
+                </span>
+              </div>
+
+              {/* Status pill */}
+              <div className="flex justify-center mt-3">
+                <span
+                  className={`inline-flex items-center text-[10px] tracking-wider font-bold px-2.5 py-1 rounded-full ${cfg.badgeBg} ${cfg.text}`}
+                >
+                  {cfg.label}
+                </span>
+              </div>
+
+              {/* Footer info */}
+              {isActive ? (
+                <div className="mt-3 space-y-1.5 text-[11px]">
+                  <div className="flex items-center gap-1.5 text-gray-600">
+                    <Users className="w-3 h-3" />
+                    <span className="font-semibold tracking-wide text-gray-700">
+                      {guestsOccupied}/{table.capacity}
+                    </span>
+                    <span className="uppercase text-gray-400 ml-0.5">Guests</span>
+                  </div>
+                  {occupiedMin !== null && (
+                    <p className="uppercase text-gray-400 tracking-wider">
+                      <span className="font-semibold text-gray-700">{occupiedMin}m</span>{' '}
+                      Occupied
+                    </p>
+                  )}
+                  {orderValue > 0 && (
+                    <p className="uppercase text-gray-400 tracking-wider flex items-center justify-between">
+                      <span>Order Value</span>
+                      <span className="font-semibold text-orange-500 normal-case">
+                        {fmt(orderValue)}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
+                  <Users className="w-3 h-3" />
+                  <span className="font-semibold tracking-wide">
+                    0/{table.capacity}
+                  </span>
+                  <span className="uppercase text-gray-400">Guests</span>
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Add Table Modal */}
+      {showAddTable && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-900">Add Table</h3>
+              <button
+                onClick={() => setShowAddTable(false)}
+                className="text-gray-400 hover:text-gray-600 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1.5 block">
+                  Capacity
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={newTable.capacity}
+                  onChange={(e) =>
+                    setNewTable((p) => ({ ...p, capacity: e.target.value }))
+                  }
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1.5 block">
+                  Floor
+                </label>
+                <select
+                  value={newTable.floor}
+                  onChange={(e) =>
+                    setNewTable((p) => ({ ...p, floor: e.target.value }))
+                  }
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
+                >
+                  <option value="ground">Ground Floor</option>
+                  <option value="first">First Floor</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setShowAddTable(false)}
+                className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddTable}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md hover:shadow-lg transition"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order Entry Modal */}
+      {showOrderModal && (
+        <OrderEntryModal
+          table={
+            editingOrder
+              ? { id: editingOrder.table_name, status: 'occupied', capacity: 0 }
+              : selectedTable
+          }
+          onClose={() => {
+            if (editingOrder && (!editingOrder.items || editingOrder.items.length === 0)) {
+              handleDeleteEmptyOrder(editingOrder);
+            }
+            setShowOrderModal(false);
+            setEditingOrder(null);
+            setSelectedTable(null);
+          }}
+          onOrderPlaced={
+            editingOrder
+              ? (orderData) => {
+                  setActiveOrders((prev) =>
+                    prev.map((o) =>
+                      o.id === editingOrder.id
+                        ? { ...o, items: orderData.items, total: orderData.total }
+                        : o
+                    )
+                  );
+                  setNotification({
+                    message: `Order for ${editingOrder.table_name} updated!`,
+                    type: 'success',
+                  });
+                  setEditingOrder(null);
+                  setTimeout(() => setNotification(null), 3000);
+                }
+              : handleOrderPlaced
+          }
+          locationSettings={locationSettings}
+          nextOrderId={nextOrderId}
+          setNextOrderId={setNextOrderId}
+          orderType="DINE_IN"
+          initialOrder={editingOrder}
+        />
+      )}
+
+      <style>{`
+        @keyframes slideUpFade {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes cardPop {
+          from { opacity: 0; transform: translateY(10px) scale(.97); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes fadeScale {
+          from { opacity: 0; transform: scale(.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes pulseSoft {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.25); opacity: .8; }
+        }
+        .animate-pulse-soft { animation: pulseSoft 1.8s ease-in-out infinite; }
+        .animate-modal-in { animation: fadeScale .22s ease-out both; }
+      `}</style>
+    </div>
+  );
+};
+
+export default DineInManagement;
