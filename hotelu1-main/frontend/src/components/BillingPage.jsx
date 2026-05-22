@@ -1,1460 +1,848 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { authFetch, getAPI_URL } from '../utils/api';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { io } from 'socket.io-client';
+import { authFetch, getAPI_URL, getSocketUrl } from '../utils/api';
 import Notification from './Notification';
 import QRCode from 'qrcode';
 import { getUPIConfig } from '../config/upiConfig';
-import { CheckCircle, Printer, Tag, CreditCard, DollarSign, Smartphone, Globe, Utensils } from 'lucide-react';
+import {
+  CheckCircle2,
+  Printer,
+  CreditCard,
+  Banknote,
+  Smartphone,
+  Download,
+  Receipt,
+} from 'lucide-react';
 import useCurrency from '../hooks/useCurrency';
 
-const BillingPage = ({ locationSettings }) => {
-    const { format: fmt } = useCurrency(locationSettings);
-
-    const [orders, setOrders] = useState([]);
-
-    const [selectedOrder, setSelectedOrder] = useState(null);
-
-    const [selectedBill, setSelectedBill] = useState(null);
-
-    const [paymentMethod, setPaymentMethod] = useState('cash');
-
-    const [notification, setNotification] = useState(null);
-
-    const [discountPercent, setDiscountPercent] = useState(0);
-    const [discountType, setDiscountType] = useState('percent'); // 'percent' or 'fixed'
-    const [manualTaxRate, setManualTaxRate] = useState(5); // Manual tax rate in percent
-
-    // Fetch settings from API on mount
-    useEffect(() => {
-        fetchSettings();
-    }, []);
-
-    // Fetch settings from database API
-    const fetchSettings = async () => {
-        try {
-            const response = await fetch(`${getAPI_URL()}/api/settings`);
-            if (response.ok) {
-                const data = await response.json();
-                setDiscountPercent(data.discountPercent ?? 0);
-                setManualTaxRate(data.taxPercent ?? 5);
-                // Save to localStorage as backup
-                localStorage.setItem('globalTaxDiscount', JSON.stringify(data));
-            } else {
-                // Fallback to localStorage
-                const saved = localStorage.getItem('globalTaxDiscount');
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    setDiscountPercent(parsed.discountPercent ?? 0);
-                    setManualTaxRate(parsed.taxPercent ?? 5);
-                }
-            }
-        } catch (error) {
-            console.error('Error fetching settings:', error);
-            // Fallback to localStorage
-            const saved = localStorage.getItem('globalTaxDiscount');
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                setDiscountPercent(parsed.discountPercent ?? 0);
-                setManualTaxRate(parsed.taxPercent ?? 5);
-            }
-        }
-    };
-
-    const [isLoaded, setIsLoaded] = useState(false);
-
-    const billRef = useRef(null);
-
-    const defaultTaxRate = locationSettings.taxRate || 0.05;
-
-    const taxRate = manualTaxRate / 100; // Convert percentage to decimal
-
-
-
-    useEffect(() => {
-
-        fetchDeliveredOrders();
-
-        const interval = setInterval(fetchDeliveredOrders, 3000);
-
-        return () => clearInterval(interval);
-
-    }, []);
-
-    // Staggered entrance animation
-    useEffect(() => {
-        const timer = setTimeout(() => setIsLoaded(true), 100);
-        return () => clearTimeout(timer);
-    }, []);
-
-    const fetchDeliveredOrders = () => {
-        // Fetch orders that are ready for billing (ready or delivered status)
-        // EXCLUDE takeaway orders - they go directly to dashboard after payment
-        authFetch('/api/orders?status=ready')
-            .then(res => res.json())
-            .then(readyOrders => {
-                const ready = Array.isArray(readyOrders) ? readyOrders : [];
-                
-                // Also fetch delivered orders
-                return authFetch('/api/orders?status=delivered')
-                    .then(res => res.json())
-                    .then(deliveredOrders => {
-                        const delivered = Array.isArray(deliveredOrders) ? deliveredOrders : [];
-                        
-                        // Combine both ready and delivered orders, but EXCLUDE takeaway orders
-                        const allBillableOrders = [...ready, ...delivered].filter(
-                            order => order.type !== 'TAKEAWAY' && order.table_name !== 'Takeaway'
-                        );
-                        setOrders(allBillableOrders);
-                    });
-            })
-            .catch(err => {
-                console.error('Error fetching billable orders:', err);
-                setOrders([]);
-            });
-    };
-
-
-
-    const fetchBillForOrder = async (orderId) => {
-        try {
-            const response = await authFetch(`/api/orders/${orderId}/bill`);
-            if (response.ok) {
-                const bill = await response.json();
-                setSelectedBill(bill);
-                return bill;
-            }
-        } catch (error) {
-            console.error('Error fetching bill:', error);
-        }
-        return null;
-    };
-
-
-
-    const calculateTotals = (order, discount = 0, discountTypeParam = 'percent', taxRateParam = null) => {
-
-        if (!order) return { subtotal: 0, discount: 0, discountAmount: 0, tax: 0, total: 0 };
-
-        const subtotal = (order.items || []).reduce((sum, item) => sum + item.price * (item.quantity || item.qty), 0);
-
-        
-
-        // Calculate discount
-
-        let discountAmount = 0;
-
-        if (discount > 0) {
-
-            if (discountTypeParam === 'percent') {
-
-                discountAmount = subtotal * (discount / 100);
-
-            } else {
-
-                discountAmount = discount;
-
-            }
-
-        }
-
-        
-
-        const afterDiscount = subtotal - discountAmount;
-
-        // Use manual tax rate if provided, otherwise use default
-
-        const effectiveTaxRate = taxRateParam !== null ? taxRateParam : taxRate;
-
-        const tax = afterDiscount * effectiveTaxRate;
-
-        const total = afterDiscount + tax;
-
-        
-
-        return { subtotal, discount, discountAmount, tax, total, afterDiscount };
-
-    };
-
-
-
-    // Function to generate UPI QR code
-
-    const generateUPIQRCode = async (amount, orderId) => {
-
-        try {
-
-            const upiConfig = getUPIConfig();
-
-            
-
-            // UPI details from configuration
-
-            const upiDetails = {
-
-                pa: upiConfig.upiId, // UPI ID
-
-                pn: upiConfig.payeeName, // Payee name
-
-                am: amount.toFixed(2), // Amount
-
-                cu: upiConfig.currency, // Currency
-
-                tn: upiConfig.transactionNoteTemplate.replace('{orderId}', orderId), // Transaction note
-
-                mc: upiConfig.merchantCategoryCode, // Merchant category code
-
-                tr: `ORD${orderId}${Date.now()}`, // Transaction reference
-
-            };
-
-
-
-            // Create UPI URL
-
-            const upiUrl = `upi://pay?${new URLSearchParams(upiDetails).toString()}`;
-
-            console.log('UPI URL:', upiUrl); // Debug log
-
-            
-
-            // Generate QR code with configured options
-
-            const qrCodeDataUrl = await QRCode.toDataURL(upiUrl, upiConfig.qrCodeOptions);
-
-            console.log('QR Code generated:', qrCodeDataUrl ? 'Success' : 'Failed'); // Debug log
-
-            
-
-            return qrCodeDataUrl;
-
-        } catch (error) {
-
-            console.error('Error generating UPI QR code:', error);
-
-            return null;
-
-        }
-
-    };
-
-
-
-    // Function to group items by name and count quantities
-
-    const groupItemsByName = (items) => {
-
-        const grouped = {};
-
-        (items || []).forEach(item => {
-
-            const name = item.name;
-
-            if (!grouped[name]) {
-
-                grouped[name] = {
-
-                    name: name,
-
-                    quantity: 0,
-
-                    price: item.price,
-
-                    totalPrice: 0
-
-                };
-
-            }
-
-            const qty = item.quantity || item.qty || 1;
-
-            grouped[name].quantity += qty;
-
-            grouped[name].totalPrice += item.price * qty;
-
-        });
-
-        return Object.values(grouped);
-
-    };
-
-
-
-    
-
-
-    
-
-
-    // Function to create consolidated bill for all orders from same table
-
-    const createConsolidatedBill = () => {
-
-        if (orders.length === 0) return null;
-
-
-
-        // Filter out takeaway orders - they don't go through billing
-        const billableOrders = orders.filter(order => 
-            order.type !== 'TAKEAWAY' && order.table_name !== 'Takeaway'
-        );
-
-        const dineInOrders = billableOrders;
-
-
-
-        const consolidatedBills = [];
-
-
-
-        // Process Dine-In orders for consolidation
-
-        if (dineInOrders.length > 0) {
-
-            const ordersByTable = {};
-
-            dineInOrders.forEach(order => {
-
-                const tableName = order.table_name;
-
-                if (!ordersByTable[tableName]) {
-
-                    ordersByTable[tableName] = [];
-
-                }
-
-                ordersByTable[tableName].push(order);
-
-            });
-
-
-
-            Object.keys(ordersByTable).forEach(table => {
-
-                const tableOrders = ordersByTable[table];
-
-                const allItems = [];
-
-                const orderIds = [];
-
-                let grandTotal = 0;
-
-
-
-                tableOrders.forEach(order => {
-
-                    orderIds.push(order.id);
-
-                    allItems.push(...(order.items || []));
-
-                    grandTotal += order.total || 0;
-
-                });
-
-
-
-                consolidatedBills.push({
-
-                    orderIds: orderIds,
-
-                    items: groupItemsByName(allItems),
-
-                    grandTotal: grandTotal,
-
-                    table_name: table,
-
-                    orderCount: tableOrders.length,
-
-                    isConsolidated: true
-
-                });
-
-            });
-
-        }
-
-        // Takeaway orders are handled separately - they skip billing entirely
-        // (Payment → Token receipt → Dashboard, no billing page)
-
-        // If there's only one bill, return it directly
-        if (consolidatedBills.length === 1) {
-            return consolidatedBills[0];
-        }
-
-
-
-        // If multiple bills (can be mixed dine-in consolidated and individual takeaway)
-
-        if (consolidatedBills.length > 1) {
-
-            return {
-
-                multipleTables: true,
-
-                tables: consolidatedBills
-
-            };
-
-        }
-
-
-
-        return null;
-
-    };
-
-
-
-    const handleSelectOrder = async (order) => {
-
-        setSelectedOrder(order);
-
-        // Load global settings instead of hardcoded defaults
-        const savedSettings = localStorage.getItem('globalTaxDiscount');
-        const settings = savedSettings ? JSON.parse(savedSettings) : { taxPercent: 5, discountPercent: 0 };
-        
-        setDiscountPercent(settings.discountPercent || 0);
-        setDiscountType('percent');
-        setManualTaxRate(settings.taxPercent || 5);
-
-        const bill = await fetchBillForOrder(order.id);
-
-        if (!bill) {
-
-            const totals = calculateTotals(order, 0, 'percent');
-
-            setSelectedBill({
-
-                subtotal: totals.subtotal,
-
-                tax: totals.tax,
-
-                total: totals.total,
-
-                bill_status: 'pending'
-
-            });
-
-        }
-
-    };
-
-
-
-    const handleCompletePayment = async () => {
-
-        if (!selectedOrder) {
-
-            setNotification({ message: 'Please select an order to process payment.', type: 'error' });
-
-            setTimeout(() => setNotification(null), 3000);
-
-            return;
-
-        }
-
-        try {
-
-            if (selectedOrder.orderIds) {
-
-                // Handle consolidated bill - complete payment for all orders
-
-                let allSuccessful = true;
-
-                const failedOrders = [];
-
-                for (const orderId of selectedOrder.orderIds) {
-
-                    try {
-
-                        const response = await authFetch(`/api/orders/${orderId}/complete-payment`, {
-
-                            method: 'PUT',
-
-                            body: JSON.stringify({
-
-                                payment_method: paymentMethod,
-
-                                paid_amount: selectedOrder.grandTotal,
-
-                                discount: discountPercent,
-
-                                tax_rate: taxRate
-
-                            })
-
-                        });
-
-                        if (!response.ok) {
-
-                            throw new Error(`Failed to complete payment for order ${orderId}`);
-
-                        }
-
-                    } catch (error) {
-
-                        allSuccessful = false;
-
-                        failedOrders.push(orderId);
-
-                    }
-
-                }
-
-                if (allSuccessful) {
-
-                    setNotification({ message: `Payment completed for ${selectedOrder.orderCount} orders (${paymentMethod}).`, type: 'success' });
-
-                    setTimeout(() => setNotification(null), 3000);
-
-                    handlePrintBill();
-
-                    // Remove from orders list
-
-                    setOrders(prev => prev.filter(o => !selectedOrder.orderIds.includes(o.id)));
-
-                    setSelectedOrder(null);
-
-                    setSelectedBill(null);
-
-                    setPaymentMethod('cash');
-
-                } else {
-
-                    setNotification({ message: `Payment failed for orders: ${failedOrders.join(', ')}`, type: 'error' });
-
-                }
-
-            } else {
-
-                // Handle single order payment (existing logic)
-
-                const response = await authFetch(`/api/orders/${selectedOrder.id}/complete-payment`, {
-
-                    method: 'PUT',
-
-                    body: JSON.stringify({
-
-                        payment_method: paymentMethod,
-
-                        paid_amount: selectedOrder.total,
-
-                        discount: discountPercent,
-
-                        tax_rate: taxRate
-
-                    })
-
-                });
-
-                if (response.ok) {
-
-                    setNotification({ message: `Payment completed for Order #${selectedOrder.id} (${paymentMethod}).`, type: 'success' });
-
-                    setTimeout(() => setNotification(null), 3000);
-
-                    handlePrintBill();
-
-                    // Remove from orders list
-
-                    setOrders(prev => prev.filter(o => o.id !== selectedOrder.id));
-
-                    setSelectedOrder(null);
-
-                    setSelectedBill(null);
-
-                    setPaymentMethod('cash');
-
-                } else {
-
-                    throw new Error('Payment failed');
-
-                }
-
-            }
-
-        } catch (error) {
-
-            console.error('Error completing payment:', error);
-
-            setNotification({ message: 'Error completing payment.', type: 'error' });
-
-            setTimeout(() => setNotification(null), 3000);
-
-        }
-
-    };
-
-
-
-    const handlePrintBill = async () => {
-
-        if (selectedOrder) {
-
-            // Calculate total amount for QR code using proper calculation
-            const totals = selectedOrder.orderIds 
-                ? calculateTotals(selectedOrder, discountPercent, discountType)
-                : currentOrderTotals;
-
-            
-
-            // Generate QR code first
-
-            const qrCodeDataUrl = await generateUPIQRCode(totals.total, selectedOrder.orderIds ? selectedOrder.orderIds[0] : selectedOrder.id);
-
-            
-
-            if (!qrCodeDataUrl) {
-
-                console.error('Failed to generate QR code');
-
-                setNotification({ message: 'Error generating QR code for payment.', type: 'error' });
-
-                setTimeout(() => setNotification(null), 3000);
-
-                return;
-
-            }
-
-            
-
-            console.log('QR Code Data URL length:', qrCodeDataUrl.length); // Debug log
-
-            
-
-            const printWindow = window.open('', '_blank');
-
-            printWindow.document.write('<html><head><title>Print Bill</title>');
-
-            printWindow.document.write('<link href="https://cdn.tailwindcss.com" rel="stylesheet">');
-
-            printWindow.document.write('<style>@page { size: 80mm auto; margin: 5mm; } body { font-family: \'Courier New\', monospace; margin: 0; padding: 10px; width: 70mm; font-size: 12px; line-height: 1.2; } .bill-header { text-align: center; margin-bottom: 15px; } .bill-header h1 { font-size: 16px; font-weight: bold; margin: 5px 0; } .bill-header p { font-size: 10px; margin: 2px 0; } .bill-items { margin: 10px 0; } .bill-items table { width: 100%; border-collapse: collapse; font-size: 11px; } .bill-items th, .bill-items td { border: none; padding: 2px 0; text-align: left; } .bill-items th { font-weight: bold; border-bottom: 1px dashed #000; } .bill-summary { margin: 15px 0; } .bill-summary div { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; } .bill-summary .total { font-weight: bold; font-size: 12px; border-top: 1px solid #000; padding-top: 3px; } .qr-code { text-align: center; margin: 15px 0; padding: 5px; } .qr-code img { max-width: 120px; height: auto; } .qr-code p { font-size: 9px; margin: 2px 0; } .bill-footer { text-align: center; margin-top: 20px; font-size: 9px; color: #666; } .dashed-line { border-top: 1px dashed #000; margin: 10px 0; } @media print { body { margin: 0; padding: 5px; } .no-print { display: none; } } </style></head><body>');
-
-            
-
-            if (selectedOrder.orderIds) {
-
-                // Consolidated bill
-
-                const billContent = `
-
-                    <div class="bill-header">
-
-                        <h1>RESTAURANT BILL</h1>
-
-                        <div class="dashed-line"></div>
-
-                        ${selectedOrder.isConsolidated ? 
-
-                            `<p>Consolidated - ${selectedOrder.orderCount} Orders</p>
-
-                             <p>Order IDs: ${selectedOrder.orderIds.join(', ')}</p>` :
-
-                            `<p>Takeaway Order</p>
-
-                             <p>Order ID: ${selectedOrder.orderIds[0]}</p>`
-
-                        }
-
-                        <p>Table: ${selectedOrder.table_name}</p>
-
-                        <p>${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</p>
-
-                    </div>
-
-                    <div class="bill-items">
-
-                        <table>
-
-                            <thead>
-
-                                <tr>
-
-                                    <th>Item</th>
-
-                                    <th style="text-align: right;">Qty</th>
-
-                                    <th style="text-align: right;">Price</th>
-
-                                    <th style="text-align: right;">Amt</th>
-
-                                </tr>
-
-                            </thead>
-
-                            <tbody>
-
-                                ${selectedOrder.items.map(item => `
-
-                                    <tr>
-
-                                        <td>${item.name}</td>
-
-                                        <td style="text-align: right;">${item.quantity}</td>
-
-                                        <td style="text-align: right;">${fmt(item.price)}</td>
-
-                                        <td style="text-align: right;">${fmt(item.totalPrice)}</td>
-
-                                    </tr>
-
-                                `).join('')}
-
-                            </tbody>
-
-                        </table>
-
-                    </div>
-
-                    <div class="dashed-line"></div>
-
-                    <div class="bill-summary">
-                        <div>
-                            <span>Subtotal:</span>
-                            <span>${fmt(totals.subtotal)}</span>
-                        </div>
-                        ${discountPercent > 0 ? `
-                        <div>
-                            <span>Discount (${discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
-                            <span>-${fmt(totals.discountAmount)}</span>
-                        </div>
-                        <div>
-                            <span>After Discount:</span>
-                            <span>${fmt(totals.afterDiscount)}</span>
-                        </div>
-                        ` : ''}
-                        <div>
-                            <span>Tax (${manualTaxRate}%):</span>
-                            <span>${fmt(totals.tax)}</span>
-                        </div>
-                        <div class="total">
-                            <span>TOTAL:</span>
-                            <span>${fmt(totals.total)}</span>
-                        </div>
-                    </div>
-
-                    <div class="dashed-line"></div>
-
-                    <div class="qr-code">
-
-                        <p>Scan to pay via UPI:</p>
-
-                        <img src="${qrCodeDataUrl}" alt="UPI Payment QR Code" />
-
-                        <p>Amount: ${fmt(totals.total)}</p>
-
-                    </div>
-
-                `;
-
-                printWindow.document.write(billContent);
-
-            } else {
-
-                // Single order bill (existing logic)
-
-                const totals = currentOrderTotals || calculateTotals(selectedOrder, discountPercent, discountType);
-
-                const groupedItems = groupItemsByName(selectedOrder.items || []);
-
-                const billContent = `
-
-                    <div class="bill-header">
-
-                        <h1>RESTAURANT BILL</h1>
-
-                        <div class="dashed-line"></div>
-
-                        <p>Order ID: ${selectedOrder.id} | Table: ${selectedOrder.table_name}</p>
-
-                        <p>${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</p>
-
-                    </div>
-
-                    <div class="bill-items">
-
-                        <table>
-
-                            <thead>
-
-                                <tr>
-
-                                    <th>Item</th>
-
-                                    <th style="text-align: right;">Qty</th>
-
-                                    <th style="text-align: right;">Price</th>
-
-                                    <th style="text-align: right;">Amt</th>
-
-                                </tr>
-
-                            </thead>
-
-                            <tbody>
-
-                                ${groupedItems.map(item => `
-
-                                    <tr>
-
-                                        <td>${item.name}</td>
-
-                                        <td style="text-align: right;">${item.quantity}</td>
-
-                                        <td style="text-align: right;">${fmt(item.price)}</td>
-
-                                        <td style="text-align: right;">${fmt(item.totalPrice)}</td>
-
-                                    </tr>
-
-                                `).join('')}
-
-                            </tbody>
-
-                        </table>
-
-                    </div>
-
-                    <div class="dashed-line"></div>
-
-                    <div class="bill-summary">
-
-                        <div>
-
-                            <span>Subtotal:</span>
-
-                            <span>${fmt(totals.subtotal)}</span>
-
-                        </div>
-
-                        ${discountPercent > 0 ? `
-
-                        <div>
-
-                            <span>Discount (${discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
-
-                            <span>-${fmt(totals.discountAmount)}</span>
-
-                        </div>
-
-                        <div>
-
-                            <span>After Discount:</span>
-
-                            <span>${fmt(totals.afterDiscount)}</span>
-
-                        </div>
-
-                        ` : ''}
-
-                        <div>
-
-                            <span>Tax (${manualTaxRate}%):</span>
-
-                            <span>${fmt(totals.tax)}</span>
-
-                        </div>
-
-                        <div class="total">
-
-                            <span>TOTAL:</span>
-
-                            <span>${fmt(totals.total)}</span>
-
-                        </div>
-
-                        <div>
-
-                            <span>Payment:</span>
-
-                            <span>${paymentMethod}</span>
-
-                        </div>
-
-                    </div>
-
-                    <div class="dashed-line"></div>
-
-                    <div class="qr-code">
-
-                        <p>Scan to pay via UPI:</p>
-
-                        <img src="${qrCodeDataUrl}" alt="UPI Payment QR Code" />
-
-                        <p>Amount: ${fmt(totals.total)}</p>
-
-                    </div>
-
-                `;
-
-                printWindow.document.write(billContent);
-
-            }
-
-            
-
-            printWindow.document.write(`
-
-                <div class="bill-footer">
-
-                    <p>Thank you for your business!</p>
-
-                </div>
-
-            `);
-
-            printWindow.document.write('</body></html>');
-
-            printWindow.document.close();
-
-            printWindow.focus();
-
-            printWindow.print();
-
-        } else {
-
-            setNotification({ message: 'No order selected to print.', type: 'error' });
-
-            setTimeout(() => setNotification(null), 3000);
-
-        }
-
-    };
-
-
-
-    const currentOrderTotals = calculateTotals(selectedOrder, discountPercent, discountType);
-
-    const consolidatedBill = createConsolidatedBill();
-
-
-
-    return (
-
-        <div className="p-6 bg-[#FFF8F0] min-h-screen" style={{ perspective: '1000px' }}>
-
-            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mb-6">
-
-                <div className="px-6 py-6">
-
-                    <div className="flex items-center justify-between">
-
-                        <div>
-
-                            <h2 className="text-3xl font-bold text-white mb-1">Billing</h2>
-
-                            <p className="text-orange-100 text-base">Generate bills for completed orders</p>
-
-                        </div>
-
-                        <div className="hidden md:flex items-center space-x-3">
-
-                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
-
-                                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14h6v-4h6v10H3V10h6v4z" />
-
-                                </svg>
-
-                                <span className="text-white text-sm font-medium">Payments</span>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-            </div>
-
-            {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 lg:gap-8" style={{ transformStyle: 'preserve-3d' }}>
-
-                <div className={`bg-white p-4 lg:p-8 rounded-2xl border border-orange-100 shadow-xl ${
-                    isLoaded ? 'animate-slide-up opacity-100' : 'opacity-0'
-                }`}
-                    style={{
-                        transform: isLoaded ? 'translateZ(0) rotateX(0deg)' : 'translateZ(-20px) rotateX(5deg)',
-                        transformStyle: 'preserve-3d',
-                        transitionDelay: '100ms'
-                    }}
-                    onMouseEnter={(e) => {
-                        e.currentTarget.style.transform = 'translateZ(10px) rotateX(-2deg) scale(1.02)';
-                        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(255, 107, 53, 0.25)';
-                    }}
-                    onMouseLeave={(e) => {
-                        e.currentTarget.style.transform = 'translateZ(0) rotateX(0deg) scale(1)';
-                        e.currentTarget.style.boxShadow = '';
-                    }}
-                >
-
-                    <h3 className="text-xl font-bold text-orange-600 mb-6">Orders</h3>
-
-                    {orders.length === 0 ? (
-                        <div className="text-center py-12 border-2 border-orange-200 rounded-2xl bg-orange-50/50">
-                            <div className="mb-4">
-                                <div className="w-16 h-16 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center mx-auto animate-pulse">
-                                    <CheckCircle size={32} className="text-white" />
-                                </div>
-                            </div>
-                            <p className="text-lg font-bold text-gray-800 mb-2">No active orders</p>
-                            <p className="text-sm text-gray-500">Orders will appear here when created.</p>
-                        </div>
-                    ) : (
-
-                        <div className="divide-y divide-orange-100">
-                            {orders.map((order, index) => (
-                                <div
-                                    key={order.id}
-                                    className={`px-4 py-4 cursor-pointer transition-all duration-300 rounded-xl ${
-                                        selectedOrder?.id === order.id 
-                                            ? 'bg-orange-50 border-2 border-orange-300 shadow-md' 
-                                            : 'hover:bg-orange-50/50 hover:border-orange-200 border-2 border-transparent'
-                                    }`}
-                                    style={{
-                                        transform: isLoaded ? 'translateZ(0)' : 'translateZ(-10px)',
-                                        transformStyle: 'preserve-3d',
-                                        transitionDelay: `${150 + index * 50}ms`
-                                    }}
-                                    onClick={() => handleSelectOrder(order)}
-                                >
-                                    <div className="flex items-start justify-between gap-4">
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                                                <span className="bg-gradient-to-r from-emerald-600 to-blue-600 text-white px-2 py-1 rounded-full text-xs font-bold">#{order.id}</span>
-                                            </p>
-                                            <p className="mt-2 text-xs text-slate-600 inline-flex items-center gap-2 font-medium">
-                                                <Utensils size={14} className="text-emerald-600" />
-                                                <span className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded-full">Table {order.table_name}</span>
-                                            </p>
-                                            <p className="text-xs text-slate-500 mt-2 line-clamp-2">
-                                                {(order.items || []).map(item => `${item.quantity || item.qty}x ${item.name}`).join(', ')}
-                                            </p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-lg font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent">{fmt(order.total)}</p>
-                                            <span className="inline-flex items-center gap-1 mt-2 bg-emerald-100 text-emerald-800 px-2 py-1 rounded-full text-xs font-medium">
-                                                <CheckCircle size={12} />
-                                                Delivered
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                    )}
-
-                </div>
-
-                <div className={`bg-white p-4 lg:p-8 rounded-2xl border border-orange-100 shadow-xl ${
-                    isLoaded ? 'animate-slide-up opacity-100' : 'opacity-0'
-                }`}
-                    style={{
-                        transform: isLoaded ? 'translateZ(0) rotateX(0deg)' : 'translateZ(-20px) rotateX(5deg)',
-                        transformStyle: 'preserve-3d',
-                        transitionDelay: '200ms'
-                    }}
-                    onMouseEnter={(e) => {
-                        e.currentTarget.style.transform = 'translateZ(10px) rotateX(-2deg) scale(1.02)';
-                        e.currentTarget.style.boxShadow = '0 25px 50px -12px rgba(255, 107, 53, 0.25)';
-                    }}
-                    onMouseLeave={(e) => {
-                        e.currentTarget.style.transform = 'translateZ(0) rotateX(0deg) scale(1)';
-                        e.currentTarget.style.boxShadow = '';
-                    }}
-                    ref={billRef}>
-
-                    <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-xl font-bold text-orange-600">Invoice</h3>
-                        {consolidatedBill && !consolidatedBill.multipleTables && consolidatedBill.isConsolidated && (
-                            <button
-                                onClick={() => setSelectedOrder(consolidatedBill)}
-                                className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-                            >
-                                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                                </svg>
-                                Show consolidated bill
-                            </button>
-                        )}
-                    </div>
-
-                    
-
-                    {!selectedOrder ? (
-                        <div className="text-center py-12">
-                            <div className="mb-6">
-                                <div className="w-20 h-20 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center mx-auto shadow-lg animate-pulse">
-                                    <Printer size={40} className="text-white" />
-                                </div>
-                            </div>
-                            <p className="text-lg font-bold text-gray-800 mb-2">Select an order to view invoice details</p>
-                            <p className="text-sm text-gray-500">Choose an order from the list to generate invoice</p>
-
-                            {consolidatedBill && consolidatedBill.multipleTables && (
-                                <div className="mt-6 p-6 bg-orange-50/50 rounded-2xl border-2 border-orange-200 text-left">
-                                    <p className="text-lg font-bold text-orange-600 mb-4">
-                                        Multiple tables with pending orders
-                                    </p>
-                                    <div className="space-y-3">
-                                        {consolidatedBill.tables.map((tableBill, index) => (
-                                            <div key={index} className="p-4 bg-white rounded-xl border-2 border-orange-200 hover:shadow-md transition-all duration-300">
-                                                <p className="font-bold text-gray-900 text-base">
-                                                    {tableBill.table_name === 'Takeaway'
-                                                        ? `Takeaway - Order ID: ${tableBill.orderIds[0]}`
-                                                        : `Table ${tableBill.table_name}: ${tableBill.orderCount} Orders (Consolidated)`
-                                                    }
-                                                </p>
-                                                <div className="flex justify-between items-center mt-3">
-                                                    <p className="text-lg font-bold text-orange-600">
-                                                        Total: {fmt(tableBill.grandTotal)}
-                                                    </p>
-                                                    <button
-                                                        onClick={() => setSelectedOrder(tableBill)}
-                                                        className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
-                                                    >
-                                                        <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12.5 8v4l-3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                                        </svg>
-                                                        View and pay
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                        </div>
-
-                    ) : selectedOrder.orderIds ? (
-
-                        // Show consolidated bill for single table
-
-                        <div>
-
-                            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
-
-                                <p className="text-xl font-bold text-gray-900">
-
-                                    Consolidated bill - {selectedOrder.orderCount} orders
-
-                                </p>
-
-                                <p className="text-sm text-slate-600 mt-1">Table: {selectedOrder.table_name}</p>
-
-                                <p className="text-gray-600 text-sm mt-1">Order IDs: {selectedOrder.orderIds.join(', ')}</p>
-
-                            </div>
-
-                            <div className="mb-4">
-
-                                <h4 className="text-lg font-semibold text-gray-700 mb-3">All Items:</h4>
-
-                                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-2">
-
-                                    {selectedOrder.items.map((item, index) => (
-
-                                        <div key={index} className="flex justify-between text-gray-800">
-
-                                            <span>{item.quantity}x {item.name}</span>
-
-                                            <span className="font-semibold">{fmt(item.totalPrice)}</span>
-
-                                        </div>
-
-                                    ))}
-
-                                </div>
-
-                            </div>
-
-                            {/* Global Settings - Read Only Display */}
-                            <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-                                <h4 className="text-sm font-semibold text-slate-900 mb-2 inline-flex items-center gap-2"><Tag size={16} className="text-slate-500" /> Discount</h4>
-                                <p className="text-xs text-slate-500">Applied: {discountPercent}% (from global settings)</p>
-                                {discountPercent > 0 && (
-                                    <p className="text-xs text-slate-600 mt-1">
-                                        Amount: -{fmt(currentOrderTotals.discountAmount)}
-                                    </p>
-                                )}
-                            </div>
-
-                            <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-                                <h4 className="text-sm font-semibold text-slate-900 mb-2 inline-flex items-center gap-2"><DollarSign size={16} className="text-slate-500" /> Tax</h4>
-                                <p className="text-xs text-slate-500">Applied: {manualTaxRate}% (from global settings)</p>
-                                <p className="text-xs text-slate-600 mt-1">
-                                    Amount: +{fmt(currentOrderTotals.tax)}
-                                </p>
-                            </div>
-
-                            <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 p-3">
-                                <p className="text-xs text-blue-600">
-                                    <strong>Note:</strong> Tax & Discount are set in Sidebar → Settings
-                                </p>
-                            </div>
-
-                            <div className="border-t border-slate-200 pt-4 mt-4 space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="text-gray-700">Subtotal:</span>
-                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.subtotal)}</span>
-                                </div>
-                                {discountPercent > 0 && (
-                                    <>
-                                        <div className="flex justify-between text-red-600">
-                                            <span className="text-gray-700">Discount ({discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
-                                            <span className="font-semibold">-{fmt(currentOrderTotals.discountAmount)}</span>
-                                        </div>
-                                        <div className="flex justify-between text-gray-800">
-                                            <span>After Discount:</span>
-                                            <span className="font-semibold">{fmt(currentOrderTotals.afterDiscount)}</span>
-                                        </div>
-                                    </>
-                                )}
-                                <div className="flex justify-between">
-                                    <span className="text-gray-700">Tax ({manualTaxRate}%):</span>
-                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.tax)}</span>
-                                </div>
-                                <div className="flex justify-between text-xl font-semibold pt-3 border-t border-slate-200">
-                                    <span className="text-gray-800">Grand Total:</span>
-                                    <span className="text-slate-900">{fmt(currentOrderTotals.total)}</span>
-                                </div>
-                            </div>
-
-                            <div className="mt-6">
-
-                                <h4 className="text-lg font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent mb-3 flex items-center">
-
-                                    <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm-6 0a2 2 0 11-4 0 2 2 0 014 0z" />
-
-                                    </svg>
-
-                                    Payment method
-
-                                </h4>
-
-                                <select
-
-                                    value={paymentMethod}
-
-                                    onChange={(e) => setPaymentMethod(e.target.value)}
-
-                                    className="block w-full border-2 border-blue-300 rounded-xl bg-white/80 backdrop-blur-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 px-4 py-3 font-medium shadow-sm transition-all duration-300"
-
-                                >
-
-                                    <option value="cash">💵 Cash</option>
-
-                                    <option value="card">💳 Card</option>
-
-                                    <option value="upi">📱 UPI</option>
-
-                                    <option value="online">🌐 Online Payment</option>
-
-                                </select>
-
-                            </div>
-
-                            <button
-
-                                onClick={handleCompletePayment}
-
-                                className="w-full mt-6 inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-emerald-600 to-blue-600 px-6 py-4 text-base font-bold text-white shadow-lg transition-all duration-300 hover:shadow-xl hover:scale-105 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 btn-3d-primary"
-
-                            >
-
-                                <svg className="w-5 h-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm-6 0a2 2 0 11-4 0 2 2 0 014 0z" />
-
-                                </svg>
-
-                                Complete Payment & Close Order
-
-                            </button>
-
-                            <button
-
-                                onClick={handlePrintBill}
-
-                                className="w-full mt-3 inline-flex items-center justify-center gap-3 rounded-xl border-2 border-purple-300 bg-white/80 backdrop-blur-sm px-6 py-4 text-base font-bold text-purple-700 shadow-md transition-all duration-300 hover:shadow-lg hover:scale-105 hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-purple-500/20 btn-3d"
-
-                            >
-
-                                <Printer size={20} className="text-purple-600" />
-
-                                Print Bill
-
-                            </button>
-
-                        </div>
-
-                    ) : (
-
-                        // Show single order bill (existing logic)
-
-                        <div>
-                            <div className="mb-6 rounded-2xl border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-emerald-50/50 p-6 shadow-lg">
-                                <div className="flex items-center justify-between mb-4">
-                                    <div>
-                                        <p className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">Order #{selectedOrder.id}</p>
-                                        <p className="text-sm text-slate-600 mt-1">Table: {selectedOrder.table_name}</p>
-                                        <span className="inline-flex items-center gap-2 mt-2 bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full text-sm font-medium">
-                                            <CheckCircle size={16} />
-                                            Delivered
-                                        </span>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">{fmt(selectedOrder.total)}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="mb-6">
-                                <h4 className="text-lg font-bold bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent mb-4 flex items-center">
-                                    <svg className="w-5 h-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                                    </svg>
-                                    Items
-                                </h4>
-                                <div className="bg-gradient-to-br from-white to-blue-50/30 rounded-2xl border-2 border-blue-200 p-6 space-y-3">
-                                    {groupItemsByName(selectedOrder.items || []).map((item, index) => (
-                                        <div key={index} className="flex justify-between items-center p-3 bg-white rounded-xl border border-blue-100 hover:shadow-md transition-all duration-300">
-                                            <div className="flex items-center gap-3">
-                                                <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold">{item.quantity}x</span>
-                                                <span className="font-medium text-slate-900">{item.name}</span>
-                                            </div>
-                                            <div className="bg-gradient-to-r from-blue-600 to-emerald-600 text-white px-3 py-1 rounded-full text-sm font-bold shadow">
-                                                {fmt(item.totalPrice)}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="border-t border-slate-200 pt-4 mt-4 space-y-2 text-sm">
-
-                                <div className="flex justify-between">
-
-                                    <span className="text-gray-700">Subtotal:</span>
-
-                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.subtotal)}</span>
-
-                                </div>
-
-                                {discountPercent > 0 && (
-
-                                    <>
-
-                                        <div className="flex justify-between text-red-600">
-
-                                            <span className="text-gray-700">Discount ({discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)}):</span>
-
-                                            <span className="font-semibold">-{fmt(currentOrderTotals.discountAmount)}</span>
-
-                                        </div>
-
-                                        <div className="flex justify-between text-gray-800">
-
-                                            <span>After Discount:</span>
-
-                                            <span className="font-semibold">{fmt(currentOrderTotals.afterDiscount)}</span>
-
-                                        </div>
-
-                                    </>
-
-                                )}
-
-                                <div className="flex justify-between">
-
-                                    <span className="text-gray-700">Tax ({taxRate * 100}%):</span>
-
-                                    <span className="font-semibold text-gray-900">{fmt(currentOrderTotals.tax)}</span>
-
-                                </div>
-
-                                <div className="flex justify-between text-xl font-semibold pt-3 border-t border-slate-200">
-
-                                    <span className="text-gray-800">Total:</span>
-
-                                    <span className="text-slate-900">{fmt(currentOrderTotals.total)}</span>
-
-                                </div>
-
-                            </div>
-
-                            <div className="mt-6">
-
-                                <h4 className="text-sm font-semibold text-slate-900 mb-2">Payment method</h4>
-
-                                <select
-
-                                    value={paymentMethod}
-
-                                    onChange={(e) => setPaymentMethod(e.target.value)}
-
-                                    className="block w-full border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600"
-
-                                >
-
-                                    <option value="cash">Cash</option>
-
-                                    <option value="card">Card</option>
-
-                                    <option value="upi">UPI</option>
-
-                                    <option value="online">Online Payment</option>
-
-                                </select>
-
-                            </div>
-
-                            <button
-
-                                onClick={handleCompletePayment}
-
-                                className="w-full mt-6 inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors duration-200 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-
-                            >
-
-                                Complete Payment & Close Order
-
-                            </button>
-
-                            <button
-
-                                onClick={handlePrintBill}
-
-                                className="w-full mt-3 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 shadow-sm transition-colors duration-200 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
-
-                            >
-
-                                <Printer size={16} className="text-slate-500" /> Print bill
-
-                            </button>
-
-                        </div>
-
-                    )}
-
-                </div>
-
-                
-            </div>
-
-        </div>
-
-    );
-
+/* ------------------------------------------------------------------ */
+/*  Status helpers                                                     */
+/* ------------------------------------------------------------------ */
+
+const STATUS_TABS = [
+  { id: 'all', label: 'All Orders' },
+  { id: 'pending', label: 'Pending' },
+  { id: 'preparing', label: 'Preparing' },
+  { id: 'ready', label: 'Ready' },
+  { id: 'delivered', label: 'Delivered' },
+  { id: 'paid', label: 'Paid' },
+];
+
+const STATUS_STYLES = {
+  pending: { bg: 'bg-amber-50', text: 'text-amber-600', label: 'Pending' },
+  preparing: { bg: 'bg-orange-50', text: 'text-orange-600', label: 'Preparing' },
+  ready: { bg: 'bg-emerald-50', text: 'text-emerald-600', label: 'Ready' },
+  delivered: { bg: 'bg-blue-50', text: 'text-blue-600', label: 'Delivered' },
+  paid: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Paid' },
+  cancelled: { bg: 'bg-rose-50', text: 'text-rose-600', label: 'Cancelled' },
 };
 
+const isOrderPaid = (o) => {
+  const s = String(o?.status || '').toLowerCase();
+  const b = String(o?.bill_status || '').toLowerCase();
+  return (
+    s === 'completed' ||
+    s === 'paid' ||
+    b === 'paid' ||
+    !!o?.payment_method ||
+    !!o?.paid_at
+  );
+};
 
+const effectiveStatus = (o) => {
+  if (isOrderPaid(o)) return 'paid';
+  return String(o?.status || 'pending').toLowerCase();
+};
 
-export default BillingPage; 
+const StatusPill = ({ status }) => {
+  const key = String(status || '').toLowerCase();
+  const s =
+    STATUS_STYLES[key] || { bg: 'bg-gray-100', text: 'text-gray-600', label: key };
+  return (
+    <span
+      className={`inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded-full ${s.bg} ${s.text}`}
+    >
+      {s.label}
+    </span>
+  );
+};
 
+const formatTime = (d) => {
+  try {
+    return new Date(d).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  } catch (_) {
+    return '';
+  }
+};
+
+const tableShort = (name) => {
+  if (!name) return '';
+  return String(name).replace(/^Table\s*/i, 'T');
+};
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
+const BillingPage = ({ locationSettings }) => {
+  const { format: fmt } = useCurrency(locationSettings);
+
+  /* ----------------------------- state ----------------------------- */
+  const [orders, setOrders] = useState([]);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [, setSelectedBill] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [notification, setNotification] = useState(null);
+  const [discountPercent, setDiscountPercent] = useState(0);
+  const [discountType, setDiscountType] = useState('percent');
+  const [manualTaxRate, setManualTaxRate] = useState(5);
+  const [activeStatus, setActiveStatus] = useState('all');
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [successAmount, setSuccessAmount] = useState(null);
+  const [paying, setPaying] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  const billRef = useRef(null);
+  const socketRef = useRef(null);
+
+  const taxRate = manualTaxRate / 100;
+
+  /* --------------------------- settings --------------------------- */
+  const fetchSettings = useCallback(async () => {
+    try {
+      const response = await fetch(`${getAPI_URL()}/api/settings`);
+      if (response.ok) {
+        const data = await response.json();
+        setDiscountPercent(data.discountPercent ?? 0);
+        setManualTaxRate(data.taxPercent ?? 5);
+        localStorage.setItem('globalTaxDiscount', JSON.stringify(data));
+        return;
+      }
+      const saved = localStorage.getItem('globalTaxDiscount');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setDiscountPercent(parsed.discountPercent ?? 0);
+        setManualTaxRate(parsed.taxPercent ?? 5);
+      }
+    } catch (error) {
+      const saved = localStorage.getItem('globalTaxDiscount');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setDiscountPercent(parsed.discountPercent ?? 0);
+        setManualTaxRate(parsed.taxPercent ?? 5);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
+
+  /* --------------------------- fetch orders --------------------------- */
+  const fetchAllOrders = useCallback(() => {
+    authFetch('/api/orders')
+      .then((res) => res.json())
+      .then((data) => {
+        const all = Array.isArray(data) ? data : [];
+        const filtered = all.filter(
+          (o) => o.type !== 'TAKEAWAY' && o.table_name !== 'Takeaway'
+        );
+        setOrders(filtered);
+      })
+      .catch((err) => {
+        console.error('Error fetching orders for billing:', err);
+        setOrders([]);
+      });
+  }, []);
+
+  useEffect(() => {
+    fetchAllOrders();
+    const poll = setInterval(fetchAllOrders, 3000);
+
+    const socket = io(getSocketUrl());
+    socketRef.current = socket;
+    const refresh = () => fetchAllOrders();
+    socket.on('order_created', refresh);
+    socket.on('order_status_updated', refresh);
+    socket.on('order_deleted', refresh);
+
+    return () => {
+      socket.off('order_created', refresh);
+      socket.off('order_status_updated', refresh);
+      socket.off('order_deleted', refresh);
+      socket.disconnect();
+      clearInterval(poll);
+    };
+  }, [fetchAllOrders]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoaded(true), 50);
+    return () => clearTimeout(t);
+  }, []);
+
+  /* --------------------------- helpers --------------------------- */
+  const calculateTotals = (
+    order,
+    discount = 0,
+    discountTypeParam = 'percent',
+    taxRateParam = null
+  ) => {
+    if (!order)
+      return { subtotal: 0, discount: 0, discountAmount: 0, tax: 0, total: 0, afterDiscount: 0 };
+    const subtotal = (order.items || []).reduce(
+      (sum, item) => sum + item.price * (item.quantity || item.qty),
+      0
+    );
+    let discountAmount = 0;
+    if (discount > 0) {
+      discountAmount =
+        discountTypeParam === 'percent' ? subtotal * (discount / 100) : discount;
+    }
+    const afterDiscount = subtotal - discountAmount;
+    const effectiveTaxRate = taxRateParam !== null ? taxRateParam : taxRate;
+    const tax = afterDiscount * effectiveTaxRate;
+    const total = afterDiscount + tax;
+    return { subtotal, discount, discountAmount, tax, total, afterDiscount };
+  };
+
+  const generateUPIQRCode = async (amount, orderId) => {
+    try {
+      const upiConfig = getUPIConfig();
+      const upiDetails = {
+        pa: upiConfig.upiId,
+        pn: upiConfig.payeeName,
+        am: amount.toFixed(2),
+        cu: upiConfig.currency,
+        tn: upiConfig.transactionNoteTemplate.replace('{orderId}', orderId),
+        mc: upiConfig.merchantCategoryCode,
+        tr: `ORD${orderId}${Date.now()}`,
+      };
+      const upiUrl = `upi://pay?${new URLSearchParams(upiDetails).toString()}`;
+      return await QRCode.toDataURL(upiUrl, upiConfig.qrCodeOptions);
+    } catch (error) {
+      console.error('Error generating UPI QR code:', error);
+      return null;
+    }
+  };
+
+  const groupItemsByName = (items) => {
+    const grouped = {};
+    (items || []).forEach((item) => {
+      const name = item.name;
+      if (!grouped[name]) {
+        grouped[name] = { name, quantity: 0, price: item.price, totalPrice: 0 };
+      }
+      const qty = item.quantity || item.qty || 1;
+      grouped[name].quantity += qty;
+      grouped[name].totalPrice += item.price * qty;
+    });
+    return Object.values(grouped);
+  };
+
+  const fetchBillForOrder = async (orderId) => {
+    try {
+      const response = await authFetch(`/api/orders/${orderId}/bill`);
+      if (response.ok) {
+        const bill = await response.json();
+        setSelectedBill(bill);
+        return bill;
+      }
+    } catch (error) {
+      console.error('Error fetching bill:', error);
+    }
+    return null;
+  };
+
+  const handleSelectOrder = async (order) => {
+    setSelectedOrder(order);
+    const savedSettings = localStorage.getItem('globalTaxDiscount');
+    const settings = savedSettings
+      ? JSON.parse(savedSettings)
+      : { taxPercent: 5, discountPercent: 0 };
+    setDiscountPercent(settings.discountPercent || 0);
+    setDiscountType('percent');
+    setManualTaxRate(settings.taxPercent || 5);
+
+    const bill = await fetchBillForOrder(order.id);
+    if (!bill) {
+      const totals = calculateTotals(order, 0, 'percent');
+      setSelectedBill({
+        subtotal: totals.subtotal,
+        tax: totals.tax,
+        total: totals.total,
+        bill_status: 'pending',
+      });
+    }
+  };
+
+  /* --------------------------- payment --------------------------- */
+  const handleCompletePayment = async (overrideMethod) => {
+    if (paying) return;
+    if (!selectedOrder) {
+      setNotification({
+        message: 'Please select an order to process payment.',
+        type: 'error',
+      });
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
+    if (isOrderPaid(selectedOrder)) {
+      setNotification({
+        message: 'This order has already been paid.',
+        type: 'info',
+      });
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
+
+    const method = overrideMethod || paymentMethod;
+    const totals = calculateTotals(selectedOrder, discountPercent, discountType);
+
+    setPaying(true);
+    try {
+      const response = await authFetch(
+        `/api/orders/${selectedOrder.id}/complete-payment`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            payment_method: method,
+            paid_amount: totals.total || selectedOrder.total,
+            discount: discountPercent,
+            tax_rate: taxRate,
+          }),
+        }
+      );
+
+      if (!response.ok) throw new Error('Payment failed');
+
+      setShowPaymentModal(false);
+      setSuccessAmount(totals.total || selectedOrder.total);
+      setTimeout(() => setSuccessAmount(null), 1800);
+
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === selectedOrder.id
+            ? { ...o, status: 'completed', payment_method: method, bill_status: 'paid' }
+            : o
+        )
+      );
+      setSelectedOrder((prev) =>
+        prev ? { ...prev, status: 'completed', payment_method: method, bill_status: 'paid' } : prev
+      );
+      fetchAllOrders();
+    } catch (error) {
+      console.error('Error completing payment:', error);
+      setNotification({ message: 'Error completing payment.', type: 'error' });
+      setTimeout(() => setNotification(null), 3000);
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  /* --------------------------- print --------------------------- */
+  const handlePrintBill = async () => {
+    if (!selectedOrder) {
+      setNotification({ message: 'No order selected to print.', type: 'error' });
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
+    const totals = calculateTotals(selectedOrder, discountPercent, discountType);
+    const qrCodeDataUrl = await generateUPIQRCode(totals.total, selectedOrder.id);
+    if (!qrCodeDataUrl) {
+      setNotification({
+        message: 'Error generating QR code for payment.',
+        type: 'error',
+      });
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    const groupedItems = groupItemsByName(selectedOrder.items || []);
+    printWindow.document.write('<html><head><title>Print Bill</title>');
+    printWindow.document.write(
+      `<style>@page { size: 80mm auto; margin: 5mm; } body { font-family: 'Courier New', monospace; margin: 0; padding: 10px; width: 70mm; font-size: 12px; line-height: 1.2; } .bill-header { text-align: center; margin-bottom: 15px; } .bill-header h1 { font-size: 16px; font-weight: bold; margin: 5px 0; } .bill-header p { font-size: 10px; margin: 2px 0; } .bill-items { margin: 10px 0; } .bill-items table { width: 100%; border-collapse: collapse; font-size: 11px; } .bill-items th, .bill-items td { padding: 2px 0; text-align: left; } .bill-items th { font-weight: bold; border-bottom: 1px dashed #000; } .bill-summary { margin: 15px 0; } .bill-summary div { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; } .bill-summary .total { font-weight: bold; font-size: 12px; border-top: 1px solid #000; padding-top: 3px; } .qr-code { text-align: center; margin: 15px 0; padding: 5px; } .qr-code img { max-width: 120px; height: auto; } .qr-code p { font-size: 9px; margin: 2px 0; } .bill-footer { text-align: center; margin-top: 20px; font-size: 9px; color: #666; } .dashed-line { border-top: 1px dashed #000; margin: 10px 0; } @media print { body { margin: 0; padding: 5px; } .no-print { display: none; } }</style></head><body>`
+    );
+    printWindow.document.write(`
+      <div class="bill-header">
+        <h1>RESTAURANT BILL</h1>
+        <div class="dashed-line"></div>
+        <p>Order ID: ${selectedOrder.id} | Table: ${selectedOrder.table_name || '-'}</p>
+        <p>${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</p>
+      </div>
+      <div class="bill-items">
+        <table>
+          <thead><tr><th>Item</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Amt</th></tr></thead>
+          <tbody>
+            ${groupedItems
+              .map(
+                (item) => `<tr>
+                <td>${item.name}</td>
+                <td style="text-align:right;">${item.quantity}</td>
+                <td style="text-align:right;">${fmt(item.price)}</td>
+                <td style="text-align:right;">${fmt(item.totalPrice)}</td>
+              </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="dashed-line"></div>
+      <div class="bill-summary">
+        <div><span>Subtotal:</span><span>${fmt(totals.subtotal)}</span></div>
+        ${
+          discountPercent > 0
+            ? `<div><span>Discount (${
+                discountType === 'percent' ? discountPercent + '%' : fmt(discountPercent)
+              }):</span><span>-${fmt(totals.discountAmount)}</span></div>
+               <div><span>After Discount:</span><span>${fmt(totals.afterDiscount)}</span></div>`
+            : ''
+        }
+        <div><span>Tax (${manualTaxRate}%):</span><span>${fmt(totals.tax)}</span></div>
+        <div class="total"><span>TOTAL:</span><span>${fmt(totals.total)}</span></div>
+        <div><span>Payment:</span><span>${paymentMethod}</span></div>
+      </div>
+      <div class="dashed-line"></div>
+      <div class="qr-code">
+        <p>Scan to pay via UPI:</p>
+        <img src="${qrCodeDataUrl}" alt="UPI Payment QR Code" />
+        <p>Amount: ${fmt(totals.total)}</p>
+      </div>
+      <div class="bill-footer"><p>Thank you for your business!</p></div>
+    `);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  /* --------------------------- export csv --------------------------- */
+  const handleExport = () => {
+    const rows = filteredOrders.map((o) => {
+      const items = (o.items || [])
+        .map((it) => `${it.quantity || it.qty || 1}x ${it.name}`)
+        .join(' | ');
+      return [
+        `#${o.id}`,
+        o.table_name || '',
+        STATUS_STYLES[effectiveStatus(o)]?.label || effectiveStatus(o),
+        items,
+        Number(o.total) || 0,
+      ];
+    });
+    const headers = ['Order', 'Table', 'Status', 'Items', 'Total'];
+    const csv = [headers, ...rows]
+      .map((r) =>
+        r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')
+      )
+      .join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bills-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  /* --------------------------- derived --------------------------- */
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => {
+      if (activeStatus === 'all') return true;
+      return effectiveStatus(o) === activeStatus;
+    });
+  }, [orders, activeStatus]);
+
+  const currentOrderTotals = useMemo(
+    () => calculateTotals(selectedOrder, discountPercent, discountType),
+    // eslint-disable-next-line
+    [selectedOrder, discountPercent, discountType, manualTaxRate]
+  );
+
+  const groupedItems = useMemo(
+    () => groupItemsByName(selectedOrder?.items || []),
+    [selectedOrder]
+  );
+
+  const selectedStatus = selectedOrder ? effectiveStatus(selectedOrder) : null;
+  const isSelectedPaid = selectedOrder ? isOrderPaid(selectedOrder) : false;
+
+  /* --------------------------- render --------------------------- */
+  return (
+    <div
+      className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
+        isLoaded ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Billing</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Generate bills for completed orders
+          </p>
+        </div>
+        <button
+          onClick={handleExport}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 active:scale-[0.98] text-sm font-medium shadow-sm transition"
+        >
+          <Download className="w-4 h-4" />
+          Export
+        </button>
+      </div>
+
+      {/* Status tabs */}
+      <div className="flex flex-wrap gap-2 mb-5">
+        {STATUS_TABS.map((t) => {
+          const active = activeStatus === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setActiveStatus(t.id)}
+              className={`px-5 py-2 rounded-full text-sm font-semibold transition-all duration-200 ${
+                active
+                  ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-200/60 scale-[1.02]'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300 hover:text-gray-800'
+              }`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Notification */}
+      {notification && (
+        <div className="mb-3">
+          <Notification
+            message={notification.message}
+            type={notification.type}
+            onClose={() => setNotification(null)}
+          />
+        </div>
+      )}
+
+      {/* Main grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Orders list */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="text-lg font-bold text-gray-900">Orders</h2>
+            <span className="text-xs text-gray-500">
+              {filteredOrders.length} {filteredOrders.length === 1 ? 'order' : 'orders'}
+            </span>
+          </div>
+
+          <div className="space-y-2.5 max-h-[60vh] overflow-y-auto pr-1 custom-scroll">
+            {filteredOrders.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="w-12 h-12 mx-auto rounded-full bg-gray-50 flex items-center justify-center text-gray-300 mb-3">
+                  <Receipt className="w-6 h-6" />
+                </div>
+                <p className="text-sm text-gray-400">No orders in this category</p>
+              </div>
+            ) : (
+              filteredOrders.map((order, idx) => {
+                const isSel = selectedOrder?.id === order.id;
+                const status = effectiveStatus(order);
+                const itemCount = (order.items || []).reduce(
+                  (s, it) => s + (it.quantity || it.qty || 1),
+                  0
+                );
+                return (
+                  <button
+                    key={order.id}
+                    onClick={() => handleSelectOrder(order)}
+                    className={`w-full text-left rounded-xl p-4 transition-all duration-200 border ${
+                      isSel
+                        ? 'bg-white border-orange-300 shadow-sm ring-2 ring-orange-100'
+                        : 'bg-gray-50/70 border-transparent hover:bg-white hover:border-gray-200 hover:shadow-sm'
+                    }`}
+                    style={{
+                      animation: isLoaded
+                        ? `slideUpFade .35s ease-out ${idx * 30}ms both`
+                        : 'none',
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-sm font-bold text-gray-900">
+                          #{order.id}
+                        </span>
+                        {order.table_name && (
+                          <span className="text-xs text-gray-500">
+                            Table {tableShort(order.table_name)}
+                          </span>
+                        )}
+                      </div>
+                      <StatusPill status={status} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-gray-500">
+                        {itemCount} item{itemCount !== 1 ? 's' : ''}
+                      </p>
+                      <p className="text-base font-bold text-orange-500">
+                        {fmt(order.total)}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Invoice panel */}
+        <div
+          ref={billRef}
+          className="bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col min-h-[60vh]"
+        >
+          {!selectedOrder ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-10 text-center">
+              <div className="w-16 h-16 rounded-full bg-orange-50 text-orange-500 flex items-center justify-center mb-4 animate-pulse-soft">
+                <Receipt className="w-7 h-7" />
+              </div>
+              <p className="text-gray-800 font-semibold">
+                Select an order to view invoice
+              </p>
+              <p className="text-sm text-gray-400 mt-1">
+                Choose an order from the list to generate the invoice
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="p-5 sm:p-6 border-b border-gray-100">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-bold text-gray-900">
+                      Invoice #{selectedOrder.id}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {selectedOrder.table_name
+                        ? `Table ${tableShort(selectedOrder.table_name)} · `
+                        : ''}
+                      {formatTime(
+                        selectedOrder.created_at ||
+                          selectedOrder.createdAt ||
+                          Date.now()
+                      )}
+                    </p>
+                  </div>
+                  <StatusPill status={selectedStatus} />
+                </div>
+              </div>
+
+              <div className="p-5 sm:p-6 flex-1 overflow-y-auto custom-scroll">
+                <div className="space-y-4">
+                  {groupedItems.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-start justify-between gap-3 animate-row-in"
+                      style={{ animationDelay: `${idx * 40}ms` }}
+                    >
+                      <div className="flex items-start gap-3 min-w-0">
+                        <span className="text-sm font-semibold text-gray-700 mt-0.5 shrink-0">
+                          {item.quantity}x
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 truncate">
+                            {item.name}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {fmt(item.price)} each
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-sm font-semibold text-gray-900 shrink-0">
+                        {fmt(item.totalPrice)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="px-5 sm:px-6 py-4 bg-gray-50 border-t border-gray-100 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Subtotal</span>
+                  <span className="text-gray-900 font-medium">
+                    {fmt(currentOrderTotals.subtotal)}
+                  </span>
+                </div>
+                {discountPercent > 0 && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-500">
+                      Discount (
+                      {discountType === 'percent'
+                        ? `${discountPercent}%`
+                        : fmt(discountPercent)}
+                      )
+                    </span>
+                    <span className="text-rose-500 font-medium">
+                      -{fmt(currentOrderTotals.discountAmount)}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Tax ({manualTaxRate}%)</span>
+                  <span className="text-gray-900 font-medium">
+                    {fmt(currentOrderTotals.tax)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+                  <span className="text-base font-bold text-gray-900">Total</span>
+                  <span className="text-lg font-bold text-orange-500">
+                    {fmt(currentOrderTotals.total)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="px-5 sm:px-6 py-4 border-t border-gray-100 flex items-center gap-3">
+                <button
+                  onClick={handlePrintBill}
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold text-sm transition active:scale-[0.98]"
+                >
+                  <Printer className="w-4 h-4" />
+                  Print
+                </button>
+                <button
+                  onClick={() => {
+                    if (isSelectedPaid) {
+                      setNotification({
+                        message: 'This order has already been paid.',
+                        type: 'info',
+                      });
+                      setTimeout(() => setNotification(null), 2500);
+                      return;
+                    }
+                    setShowPaymentModal(true);
+                  }}
+                  className={`flex-[1.4] inline-flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm text-white shadow-md transition active:scale-[0.98] ${
+                    isSelectedPaid
+                      ? 'bg-gray-300 cursor-not-allowed shadow-none'
+                      : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:shadow-lg hover:shadow-orange-200/60'
+                  }`}
+                >
+                  <Receipt className="w-4 h-4" />
+                  {isSelectedPaid ? 'Paid' : 'View & Pay'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Payment Modal */}
+      {showPaymentModal && selectedOrder && (
+        <PaymentModal
+          amount={currentOrderTotals.total}
+          fmt={fmt}
+          paying={paying}
+          onSelect={async (method) => {
+            setPaymentMethod(method);
+            await handleCompletePayment(method);
+          }}
+          onCancel={() => setShowPaymentModal(false)}
+        />
+      )}
+
+      {/* Success Modal */}
+      {successAmount !== null && <SuccessModal amount={successAmount} fmt={fmt} />}
+
+      {/* Local animations + scrollbar */}
+      <style>{`
+        @keyframes slideUpFade {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeScale {
+          from { opacity: 0; transform: scale(.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes rowIn {
+          from { opacity: 0; transform: translateX(-6px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes pulseSoft {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.05); opacity: .9; }
+        }
+        @keyframes checkPop {
+          0% { transform: scale(.4); opacity: 0; }
+          60% { transform: scale(1.15); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-row-in { animation: rowIn .35s ease-out both; }
+        .animate-pulse-soft { animation: pulseSoft 2.2s ease-in-out infinite; }
+        .animate-modal-in { animation: fadeScale .22s ease-out both; }
+        .animate-check-pop { animation: checkPop .5s cubic-bezier(.34,1.56,.64,1) both; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 9999px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
+      `}</style>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/*  Modals                                                             */
+/* ------------------------------------------------------------------ */
+
+const PaymentModal = ({ amount, fmt, paying, onSelect, onCancel }) => {
+  const methods = [
+    { id: 'cash', label: 'Cash', Icon: Banknote },
+    { id: 'card', label: 'Card', Icon: CreditCard },
+    { id: 'upi', label: 'UPI', Icon: Smartphone },
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in">
+        <h3 className="text-base font-bold text-gray-900">Payment</h3>
+        <p className="text-2xl font-bold text-orange-500 mt-1 mb-5">{fmt(amount)}</p>
+
+        <div className="space-y-2.5">
+          {methods.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              disabled={paying}
+              onClick={() => onSelect(id)}
+              className="w-full inline-flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-800 font-medium text-sm transition active:scale-[0.99] disabled:opacity-60"
+            >
+              <Icon className="w-4 h-4 text-gray-600" />
+              {label}
+              {paying && <span className="ml-auto text-xs text-gray-400">Processing…</span>}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={onCancel}
+          disabled={paying}
+          className="w-full mt-3 py-3 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium transition disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const SuccessModal = ({ amount, fmt }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center animate-modal-in">
+      <div className="w-16 h-16 rounded-full bg-emerald-500 mx-auto flex items-center justify-center animate-check-pop">
+        <CheckCircle2 className="w-9 h-9 text-white" strokeWidth={2.5} />
+      </div>
+      <p className="text-base font-bold text-gray-900 mt-4">Payment Successful!</p>
+      <p className="text-sm text-gray-500 mt-1">{fmt(amount)}</p>
+    </div>
+  </div>
+);
+
+export default BillingPage;
