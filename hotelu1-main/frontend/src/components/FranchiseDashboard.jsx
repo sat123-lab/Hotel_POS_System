@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   DollarSign,
   ShoppingCart,
@@ -67,9 +68,10 @@ const formatINRShort = (n) => {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-const FranchiseDashboard = ({ currentUser, locationSettings }) => {
+const FranchiseDashboard = ({ currentUser, locationSettings, setActiveTab }) => {
   // eslint-disable-next-line no-unused-vars
   const { format: fmt } = useCurrency(locationSettings);
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -79,6 +81,15 @@ const FranchiseDashboard = ({ currentUser, locationSettings }) => {
   const isSubFranchise = currentUser?.role === 'subfranchise';
   const isFranchiseOwner = currentUser?.role === 'franchise';
   const isAdmin = currentUser?.role === 'admin';
+
+  const goToSubFranchise = () => {
+    if (typeof setActiveTab === 'function') {
+      setActiveTab('subfranchise-management');
+      navigate('/dashboard');
+    } else {
+      navigate('/manage-sub-franchises');
+    }
+  };
 
   const loadOverview = useCallback(async () => {
     setError(null);
@@ -186,7 +197,7 @@ const FranchiseDashboard = ({ currentUser, locationSettings }) => {
         </div>
         {isAdmin && (
           <button
-            onClick={() => (window.location.hash = '#/sub-franchise')}
+            onClick={goToSubFranchise}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition"
           >
             <Plus className="w-4 h-4" />

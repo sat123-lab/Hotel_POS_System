@@ -1,1024 +1,847 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { authFetch } from '../utils/api';
-import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, BarChart, Bar } from 'recharts';
-import { TrendingUp, DollarSign, Package, Calendar, Download, FileText, BarChart3, PieChart as PieChartIcon, Filter, RefreshCw, Activity } from 'lucide-react';
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  BarChart,
+  Bar,
+  Area,
+} from 'recharts';
+import {
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  ShoppingCart,
+  Users as UsersIcon,
+  Wallet,
+  Download,
+  Calendar,
+  Filter,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import useCurrency from '../hooks/useCurrency';
 
-const Reports = ({ locationSettings }) => {
-    const { format: fmt } = useCurrency(locationSettings);
-    const [reportType, setReportType] = useState('daily');
-    const [startDate, setStartDate] = useState(() => {
-        const today = new Date();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-    });
-    const [endDate, setEndDate] = useState(() => {
-        const today = new Date();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-    });
-    const [ordersData, setOrdersData] = useState([]);
-    const [reportData, setReportData] = useState({
-        totalSales: 0,
-        totalOrders: 0,
-        totalItems: 0,
-        topSellingItems: [],
-        ordersByType: [],
-        salesTrend: [],
-        profitLoss: 0,
-        avgOrderValue: 0
-    });
-    const [isLoading, setIsLoading] = useState(false);
-    const [dateError, setDateError] = useState('');
-    const [isRefreshing, setIsRefreshing] = useState(false);
-    const [lastUpdated, setLastUpdated] = useState(new Date());
-    
-    // Get today's date in local format for max date attributes
-    const getTodayLocalDate = () => {
-        const today = new Date();
-        const year = today.getFullYear();
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-        const day = String(today.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-    };
-    const todayLocalDate = getTodayLocalDate();
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
 
-    const buildExcelFileName = useCallback((type, start, end) => {
-        const safeType = (type || 'report').toLowerCase();
-        if (!start || !end) return `${safeType}-report.xlsx`;
-        return `${safeType}-report_${start}_to_${end}.xlsx`;
-    }, []);
+const QUICK_RANGES = [
+  { id: 'today', label: 'Today' },
+  { id: 'week', label: 'This Week' },
+  { id: 'month', label: 'This Month' },
+  { id: 'year', label: 'This Year' },
+];
 
-    // Enhanced tooltip components
-    const CustomTooltip = ({ active, payload, label }) => {
-        if (active && payload && payload.length) {
-            return (
-                <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
-                    <p className="text-sm font-semibold text-gray-800">{label}</p>
-                    <p className="text-sm text-gray-600">
-                        Sales: <span className="font-bold text-indigo-600">{fmt(payload[0].value)}</span>
-                    </p>
-                </div>
-            );
-        }
-        return null;
-    };
-
-    const CustomPieTooltip = ({ active, payload }) => {
-        if (active && payload && payload.length) {
-            return (
-                <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
-                    <p className="text-sm font-semibold text-gray-800">{payload[0].name}</p>
-                    <p className="text-sm text-gray-600">
-                        Orders: <span className="font-bold text-indigo-600">{payload[0].value}</span>
-                    </p>
-                </div>
-            );
-        }
-        return null;
-    };
-
-    // Skeleton loading component
-    const MetricCardSkeleton = () => (
-        <div className="bg-gray-200 rounded-2xl p-6 animate-pulse">
-            <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-gray-300 rounded-xl"></div>
-                <div className="w-16 h-4 bg-gray-300 rounded"></div>
-            </div>
-            <div className="w-24 h-4 bg-gray-300 rounded mb-2"></div>
-            <div className="w-32 h-8 bg-gray-300 rounded"></div>
-        </div>
-    );
-
-    const handleRefresh = () => {
-        setIsRefreshing(true);
-        fetchReportData(false);
-    };
-
-    const toDateTime = (value) => {
-        if (!value) return null;
-        const d = new Date(value);
-        if (Number.isNaN(d.getTime())) return null;
-        return d;
-    };
-
-    const getOrderItemsArray = (order) => {
-        if (!order) return [];
-        const items = order.items;
-        if (Array.isArray(items)) return items;
-        if (items && Array.isArray(items.dataValues)) return items.dataValues;
-        return [];
-    };
-
-    const getItemField = (item, field) => {
-        if (!item) return undefined;
-        if (item[field] !== undefined) return item[field];
-        if (item.dataValues && item.dataValues[field] !== undefined) return item.dataValues[field];
-        return undefined;
-    };
-
-    const getItemName = (item) => {
-        return getItemField(item, 'name') ?? getItemField(item, 'itemName') ?? getItemField(item, 'title');
-    };
-
-    const getItemQuantity = (item) => {
-        const q = getItemField(item, 'quantity') ?? getItemField(item, 'qty');
-        const n = Number(q);
-        return Number.isFinite(n) && n > 0 ? n : 1;
-    };
-
-    const getItemPrice = (item) => {
-        const p = getItemField(item, 'price') ?? getItemField(item, 'unitPrice');
-        const n = Number(p);
-        return Number.isFinite(n) ? n : undefined;
-    };
-
-    const formatYMD = (d) => {
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd}`;
-    };
-
-    const formatYM = (d) => {
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        return `${yyyy}-${mm}`;
-    };
-
-    const formatHourLabel = (d) => {
-        const hour = d.getHours();
-        const displayHour = hour === 0 ? 12 : (hour <= 12 ? hour : hour - 12);
-        const ampm = hour < 12 ? 'AM' : 'PM';
-        return `${displayHour} ${ampm}`;
-    };
-
-    const isSingleDayRange = (start, end) => {
-        if (!start || !end) return false;
-        return start === end;
-    };
-
-    const getPeriodKeyForItemSales = (type, d, start, end) => {
-        if (type === 'daily') {
-            return isSingleDayRange(start, end) ? formatHourLabel(d) : formatYMD(d);
-        }
-        if (type === 'yearly') return formatYM(d);
-        return formatYMD(d); // weekly + monthly
-    };
-
-    const exportReportToExcel = useCallback((type, start, end, summary, orders, formatAmount) => {
-        const workbook = XLSX.utils.book_new();
-
-        const summaryRows = [
-            { Metric: 'Report Type', Value: type },
-            { Metric: 'Start Date', Value: start },
-            { Metric: 'End Date', Value: end },
-            { Metric: 'Total Sales', Value: formatAmount(summary.totalSales) },
-            { Metric: 'Total Orders', Value: summary.totalOrders },
-            { Metric: 'Total Items Sold', Value: summary.totalItems },
-            { Metric: 'Avg. Order Value', Value: formatAmount(summary.avgOrderValue) },
-            { Metric: 'Profit/Loss', Value: formatAmount(summary.profitLoss) },
-        ];
-        const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
-        XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
-
-        const orderRows = (orders || []).map((o) => ({
-            OrderId: o.id,
-            Table: o.table_name,
-            Type: o.type,
-            Status: o.status,
-            Total: o.total,
-            Timestamp: o.timestamp || o.created_at,
-            PaymentMethod: o.payment_method,
-            ItemCount: getOrderItemsArray(o).reduce((s, it) => s + getItemQuantity(it), 0),
-            ItemsSummary: getOrderItemsArray(o)
-                .map((it) => `${getItemName(it) || ''} x${getItemQuantity(it)}`)
-                .filter(Boolean)
-                .join(', '),
-        }));
-        const ordersSheet = XLSX.utils.json_to_sheet(orderRows);
-        XLSX.utils.book_append_sheet(workbook, ordersSheet, 'Orders');
-
-        const orderItemRows = (orders || []).flatMap((o) => {
-            const ts = toDateTime(o.timestamp || o.created_at);
-            const tsIso = ts ? ts.toISOString() : (o.timestamp || o.created_at);
-            const orderItems = getOrderItemsArray(o);
-            return orderItems.map((it) => {
-                const qty = getItemQuantity(it);
-                const price = getItemPrice(it);
-                const lineTotal = typeof price === 'number' ? price * qty : undefined;
-                return {
-                    OrderId: o.id,
-                    Timestamp: tsIso,
-                    Type: o.type,
-                    Status: o.status,
-                    ItemName: getItemName(it),
-                    Quantity: qty,
-                    Price: price,
-                    LineTotal: lineTotal,
-                };
-            });
-        });
-        const orderItemsSheet = XLSX.utils.json_to_sheet(orderItemRows);
-        XLSX.utils.book_append_sheet(workbook, orderItemsSheet, 'OrderItems');
-
-        const agg = new Map();
-        (orders || []).forEach((o) => {
-            const ts = toDateTime(o.timestamp || o.created_at);
-            if (!ts) return;
-            const period = getPeriodKeyForItemSales(type, ts, start, end);
-            const orderItems = getOrderItemsArray(o);
-            orderItems.forEach((it) => {
-                const name = getItemName(it);
-                const qty = getItemQuantity(it);
-                const price = getItemPrice(it);
-                const sale = typeof price === 'number' ? price * qty : 0;
-
-                const key = `${period}__${name}`;
-                const prev = agg.get(key) || { Period: period, ItemName: name, Quantity: 0, Sales: 0 };
-                prev.Quantity += qty;
-                prev.Sales += sale;
-                agg.set(key, prev);
-            });
-        });
-        const itemSalesRows = Array.from(agg.values())
-            .sort((a, b) => {
-                if (a.Period < b.Period) return -1;
-                if (a.Period > b.Period) return 1;
-                return (a.ItemName || '').localeCompare(b.ItemName || '');
-            })
-            .map((r) => ({
-                Period: r.Period,
-                ItemName: r.ItemName,
-                Quantity: r.Quantity,
-                Sales: Number.isFinite(r.Sales) ? r.Sales.toFixed(2) : r.Sales,
-            }));
-        const itemSalesSheet = XLSX.utils.json_to_sheet(itemSalesRows);
-        XLSX.utils.book_append_sheet(workbook, itemSalesSheet, 'ItemSalesByPeriod');
-
-        const topItemsSheet = XLSX.utils.json_to_sheet(summary.topSellingItems || []);
-        XLSX.utils.book_append_sheet(workbook, topItemsSheet, 'TopItems');
-
-        const ordersByTypeSheet = XLSX.utils.json_to_sheet(summary.ordersByType || []);
-        XLSX.utils.book_append_sheet(workbook, ordersByTypeSheet, 'OrdersByType');
-
-        const salesTrendSheet = XLSX.utils.json_to_sheet(summary.salesTrend || []);
-        XLSX.utils.book_append_sheet(workbook, salesTrendSheet, 'SalesTrend');
-
-        const fileName = buildExcelFileName(type, start, end);
-        XLSX.writeFile(workbook, fileName);
-    }, [buildExcelFileName]);
-
-    // Date validation function
-    const validateDateRange = (start, end) => {
-        if (!start || !end) {
-            setDateError('Please select both start and end dates');
-            return false;
-        }
-        
-        // Parse as local time (YYYY-MM-DD is treated as UTC by Date constructor)
-        const startDateObj = new Date(start + 'T00:00:00');
-        const endDateObj = new Date(end + 'T23:59:59');
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0); // start of today
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999); // end of today
-        
-        // Check if start date is in the future
-        if (startDateObj > todayStart) {
-            setDateError('Start date cannot be greater than today\'s date');
-            return false;
-        }
-        
-        // Check if end date is in the future
-        if (endDateObj > todayEnd) {
-            setDateError('End date cannot be greater than today\'s date');
-            return false;
-        }
-        
-        // Check if end date is before start date
-        if (startDateObj > endDateObj) {
-            setDateError('End date cannot be earlier than start date');
-            return false;
-        }
-        
-        setDateError('');
-        return true;
-    };
-
-    // Handle date changes with validation
-    const handleStartDateChange = (date) => {
-        setStartDate(date);
-        if (endDate && validateDateRange(date, endDate)) {
-            setDateError('');
-        }
-    };
-
-    const handleEndDateChange = (date) => {
-        setEndDate(date);
-        if (startDate && validateDateRange(startDate, date)) {
-            setDateError('');
-        }
-    };
-
-    const fetchReportData = useCallback(async (download = false) => {
-        // Validate date range before fetching
-        if (!validateDateRange(startDate, endDate)) {
-            return;
-        }
-        
-        try {
-            if (!isRefreshing) setIsLoading(true);
-            console.log('Fetching report data for dates:', { startDate, endDate, reportType });
-            const res = await authFetch(`/api/orders?startDate=${startDate}&endDate=${endDate}`);
-            if (!res.ok) {
-                console.error('Server error:', res.status, res.statusText);
-                setReportData({
-                    totalSales: 0,
-                    totalOrders: 0,
-                    totalItems: 0,
-                    topSellingItems: [],
-                    ordersByType: [],
-                    salesTrend: [],
-                    profitLoss: 0,
-                    avgOrderValue: 0
-                });
-                setOrdersData([]);
-                setIsLoading(false);
-                setIsRefreshing(false);
-                return;
-            }
-            const orders = await res.json();
-            console.log('Orders received:', orders.length, 'orders');
-            console.log('Orders details:', orders);
-            setOrdersData(orders);
-            setLastUpdated(new Date());
-            
-            if (!Array.isArray(orders)) {
-                console.error('Orders response is not an array:', orders);
-                setReportData({
-                    totalSales: 0,
-                    totalOrders: 0,
-                    totalItems: 0,
-                    topSellingItems: [],
-                    ordersByType: [],
-                    salesTrend: [],
-                    profitLoss: 0,
-                    avgOrderValue: 0
-                });
-                setOrdersData([]);
-                setIsLoading(false);
-                setIsRefreshing(false);
-                return;
-            }
-
-            // Check order statuses
-            const statuses = orders.map(o => o.status);
-            console.log('Order statuses:', statuses);
-            
-            // Treat delivered + completed as successful sales for reporting
-            const reportableOrders = orders.filter(o => o.status === 'completed' || o.status === 'delivered');
-            console.log('Reportable orders:', reportableOrders.length);
-            console.log('Filtered orders:', reportableOrders);
-            const totalOrders = reportableOrders.length;
-            const totalSales = reportableOrders.reduce((sum, order) => sum + order.total, 0);
-            const avgOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
-            console.log('Calculated totals:', { totalOrders, totalSales, avgOrderValue });
-
-            // Calculate item sales
-            const itemCounts = {};
-            let totalItems = 0;
-            reportableOrders.forEach(order => {
-                (order.items || []).forEach(item => {
-                    const quantity = item.quantity || item.qty || 1;
-                    itemCounts[item.name] = (itemCounts[item.name] || 0) + quantity;
-                    totalItems += quantity;
-                });
-            });
-
-            const topSellingItems = Object.entries(itemCounts)
-                .sort(([, countA], [, countB]) => countB - countA)
-                .slice(0, 10)
-                .map(([name, count]) => ({ name, count }));
-
-            // Calculate orders by type
-            const typeCounts = {
-                'Dine-In': 0,
-                'Takeaway': 0,
-                'QR Code': 0
-            };
-            
-            reportableOrders.forEach(order => {
-                if (order.type === 'DINE_IN') {
-                    typeCounts['Dine-In']++;
-                } else if (order.type === 'TAKEAWAY') {
-                    typeCounts['Takeaway']++;
-                } else if (order.type === 'QR_CODE') {
-                    typeCounts['QR Code']++;
-                }
-            });
-
-            const ordersByType = Object.entries(typeCounts).map(([name, value]) => ({ name, value }));
-
-            // Calculate sales trend based on report type
-            const salesTrend = getSalesTrend(reportableOrders, reportType);
-
-            // Simple profit/loss calculation
-            const profitLoss = totalSales * 0.7 - (totalOrders * 10); // 70% revenue, minus costs
-
-            setReportData({
-                totalSales: totalSales.toFixed(2),
-                totalOrders,
-                totalItems,
-                topSellingItems,
-                ordersByType,
-                salesTrend,
-                profitLoss: profitLoss.toFixed(2),
-                avgOrderValue: avgOrderValue.toFixed(2)
-            });
-
-            if (download) {
-                exportReportToExcel(
-                    reportType,
-                    startDate,
-                    endDate,
-                    {
-                        totalSales: totalSales.toFixed(2),
-                        totalOrders,
-                        totalItems,
-                        topSellingItems,
-                        ordersByType,
-                        salesTrend,
-                        profitLoss: profitLoss.toFixed(2),
-                        avgOrderValue: avgOrderValue.toFixed(2),
-                    },
-                    reportableOrders,
-                    (n) => fmt(n),
-                );
-            }
-            setIsLoading(false);
-            setIsRefreshing(false);
-        } catch (err) {
-            console.error('Failed to fetch report data:', err);
-            setIsLoading(false);
-            setIsRefreshing(false);
-        }
-    }, [startDate, endDate, reportType, locationSettings?.country, exportReportToExcel, isRefreshing, fmt]);
-
-    const getSalesTrend = (orders, type) => {
-        const trendData = {};
-        
-        // Filter only completed orders for sales trend
-        const completedOrders = orders.filter(order => order.status === 'completed');
-        
-        if (type === 'daily') {
-            // Hourly trend for daily reports - show all 24 hours
-            for (let hour = 0; hour <= 23; hour++) {
-                const displayHour = hour === 0 ? '12 AM' : 
-                                   hour === 12 ? '12 PM' : 
-                                   hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
-                trendData[displayHour] = 0;
-            }
-            
-            completedOrders.forEach(order => {
-                const orderDate = new Date(order.timestamp || order.created_at);
-                const hour = orderDate.getHours();
-                const displayHour = hour === 0 ? '12 AM' : 
-                                   hour === 12 ? '12 PM' : 
-                                   hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
-                
-                if (trendData[displayHour] !== undefined) {
-                    trendData[displayHour] += order.total || 0;
-                }
-            });
-        } else if (type === 'weekly') {
-            // Daily trend for weekly reports
-            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            days.forEach(day => {
-                trendData[day] = 0;
-            });
-            
-            completedOrders.forEach(order => {
-                const orderDate = new Date(order.timestamp || order.created_at);
-                const dayName = days[orderDate.getDay()];
-                trendData[dayName] += order.total || 0;
-            });
-        } else if (type === 'monthly') {
-            // Daily trend for monthly reports
-            const daysInMonth = new Date(new Date(endDate).getFullYear(), new Date(endDate).getMonth() + 1, 0).getDate();
-            for (let day = 1; day <= daysInMonth; day++) {
-                trendData[`Day ${day}`] = 0;
-            }
-            
-            completedOrders.forEach(order => {
-                const orderDate = new Date(order.timestamp || order.created_at);
-                const day = orderDate.getDate();
-                trendData[`Day ${day}`] += order.total || 0;
-            });
-        } else if (type === 'yearly') {
-            // Monthly trend for yearly reports
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            months.forEach(month => {
-                trendData[month] = 0;
-            });
-            
-            completedOrders.forEach(order => {
-                const orderDate = new Date(order.timestamp || order.created_at);
-                const monthName = months[orderDate.getMonth()];
-                trendData[monthName] += order.total || 0;
-            });
-        }
-        
-        return Object.entries(trendData).map(([period, sales]) => ({ period, sales }));
-    };
-
-    const setQuickDateRange = (range) => {
-        const today = new Date();
-        let start = new Date();
-        
-        switch(range) {
-            case 'today':
-                start = new Date(today);
-                setReportType('daily');
-                break;
-            case 'week':
-                start = new Date(today);
-                start.setDate(today.getDate() - 7);
-                setReportType('weekly');
-                break;
-            case 'month':
-                start = new Date(today);
-                start.setMonth(today.getMonth() - 1);
-                setReportType('monthly');
-                break;
-            case 'year':
-                start = new Date(today);
-                start.setFullYear(today.getFullYear() - 1);
-                setReportType('yearly');
-                break;
-            default:
-                return;
-        }
-        
-        const getLocalDateString = (date) => {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        };
-        
-        setStartDate(getLocalDateString(start));
-        setEndDate(getLocalDateString(today));
-    };
-
-    useEffect(() => {
-        fetchReportData(false);
-    }, [fetchReportData]);
-
-    const getProfitLossColor = (value) => {
-        const num = parseFloat(value);
-        if (num > 0) return 'text-green-600';
-        if (num < 0) return 'text-red-600';
-        return 'text-gray-600';
-    };
-
-    const getReportTitle = () => {
-        const start = new Date(startDate + 'T00:00:00');
-        const end = new Date(endDate + 'T23:59:59');
-        
-        // Format dates as DD-MM-YYYY
-        const formatStartDate = start.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        const formatEndDate = end.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-        
-        if (formatStartDate === formatEndDate) {
-            return `Report from ${formatStartDate}`;
-        } else {
-            return `Report from ${formatStartDate} to ${formatEndDate}`;
-        }
-    };
-
-    return (
-        <div className="min-h-screen bg-[#FFF8F0]">
-            {/* Header Section - Orange Theme */}
-            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mx-4 mt-4">
-                <div className="px-6 py-6">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h2 className="text-3xl font-bold text-white mb-1">Sales Reports</h2>
-                            <p className="text-orange-100 text-base">Comprehensive business analytics & insights</p>
-                        </div>
-                        <div className="hidden md:flex items-center space-x-3">
-                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
-                                <FileText className="w-4 h-4 text-white" />
-                                <span className="text-white text-sm font-medium">Reports</span>
-                            </div>
-                            <button
-                                onClick={handleRefresh}
-                                className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm hover:bg-white/30 transition-colors"
-                                disabled={isRefreshing}
-                            >
-                                <RefreshCw className={`w-4 h-4 text-white ${isRefreshing ? 'animate-spin' : ''}`} />
-                                <span className="text-white text-sm font-medium">Refresh</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div className="mt-3 flex items-center space-x-4">
-                        <div className="flex items-center space-x-2">
-                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                            <span className="text-blue-100 text-sm">Last updated: {lastUpdated.toLocaleTimeString()}</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Report Controls - Orange Theme */}
-            <div className="px-6 py-4">
-                <div className="bg-white rounded-2xl shadow-lg p-6">
-                    <div className="flex items-center mb-6">
-                        <Filter className="w-5 h-5 text-orange-500 mr-2" />
-                        <h3 className="text-lg font-semibold text-gray-800">Report Filters</h3>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Date Range Selection */}
-                        <div>
-                            <label className="flex items-center text-sm font-semibold text-gray-700 mb-2">
-                                <Calendar className="w-4 h-4 mr-2" />
-                                Start Date
-                            </label>
-                            <input
-                                type="date"
-                                value={startDate}
-                                onChange={(e) => handleStartDateChange(e.target.value)}
-                                className="w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white shadow-sm transition-all duration-200"
-                                max={todayLocalDate}
-                            />
-                        </div>
-
-                        <div>
-                            <label className="flex items-center text-sm font-semibold text-gray-700 mb-2">
-                                <Calendar className="w-4 h-4 mr-2" />
-                                End Date
-                            </label>
-                            <input
-                                type="date"
-                                value={endDate}
-                                onChange={(e) => handleEndDateChange(e.target.value)}
-                                className="w-full px-4 py-3 border-2 border-orange-100 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white shadow-sm transition-all duration-200"
-                                max={todayLocalDate}
-                            />
-                        </div>
-
-                        {/* Quick Date Range Buttons - Orange */}
-                        <div>
-                            <label className="flex items-center text-sm font-semibold text-gray-700 mb-2">
-                                <Activity className="w-4 h-4 mr-2" />
-                                Quick Select
-                            </label>
-                            <div className="grid grid-cols-2 gap-2">
-                                <button
-                                    onClick={() => setQuickDateRange('today')}
-                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
-                                >
-                                    Today
-                                </button>
-                                <button
-                                    onClick={() => setQuickDateRange('week')}
-                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
-                                >
-                                    This Week
-                                </button>
-                                <button
-                                    onClick={() => setQuickDateRange('month')}
-                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
-                                >
-                                    This Month
-                                </button>
-                                <button
-                                    onClick={() => setQuickDateRange('year')}
-                                    className="px-3 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
-                                >
-                                    This Year
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Validation Error Message */}
-                    {dateError && (
-                        <div className="mt-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center">
-                            <div className="w-2 h-2 bg-red-500 rounded-full mr-2"></div>
-                            {dateError}
-                        </div>
-                    )}
-
-                    {/* Action Buttons - Orange */}
-                    <div className="flex justify-center mt-6">
-                        <button
-                            onClick={() => fetchReportData(true)}
-                            disabled={isLoading}
-                            className={`w-full sm:w-auto font-bold py-3 px-8 rounded-xl transition-all duration-200 flex items-center justify-center ${
-                                isLoading 
-                                    ? 'bg-gray-400 text-gray-200 cursor-not-allowed' 
-                                    : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5'
-                            }`}
-                        >
-                            {isLoading ? (
-                                <>
-                                    <RefreshCw className="w-5 h-5 mr-2 animate-spin" />
-                                    Generating Report...
-                                </>
-                            ) : (
-                                <>
-                                    <Download className="w-5 h-5 mr-2" />
-                                    Export to Excel
-                                </>
-                            )}
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* Report Title */}
-            <div className="px-6 py-4">
-                <div className="bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl shadow-lg p-6 text-center">
-                    <div className="flex items-center justify-center mb-2">
-                        <FileText className="w-6 h-6 text-white mr-2" />
-                        <h3 className="text-2xl font-bold text-white">{getReportTitle()}</h3>
-                    </div>
-                    <p className="text-orange-100">Business performance analytics for selected period</p>
-                </div>
-            </div>
-
-            {/* Summary Cards */}
-            <div className="px-6 pb-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {isLoading ? (
-                        <>
-                            <MetricCardSkeleton />
-                            <MetricCardSkeleton />
-                            <MetricCardSkeleton />
-                            <MetricCardSkeleton />
-                        </>
-                    ) : (
-                        <>
-                            <div className="group relative bg-gradient-to-br from-orange-500 to-orange-600 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                                <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                                <div className="relative z-10">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                            <DollarSign className="w-6 h-6 text-white" />
-                                        </div>
-                                        <span className="text-white/80 text-sm font-medium">Revenue</span>
-                                    </div>
-                                    <p className="text-white/90 text-sm font-medium mb-1">Total Sales</p>
-                                    <p className="text-4xl font-bold text-white">{fmt(reportData.totalSales)}</p>
-                                </div>
-                            </div>
-
-                            <div className="group relative bg-gradient-to-br from-orange-400 to-orange-500 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                                <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                                <div className="relative z-10">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                            <BarChart3 className="w-6 h-6 text-white" />
-                                        </div>
-                                        <span className="text-white/80 text-sm font-medium">Orders</span>
-                                    </div>
-                                    <p className="text-white/90 text-sm font-medium mb-1">Total Orders</p>
-                                    <p className="text-4xl font-bold text-white">{reportData.totalOrders}</p>
-                                </div>
-                            </div>
-
-                            <div className="group relative bg-gradient-to-br from-amber-500 to-orange-500 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                                <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                                <div className="relative z-10">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                            <Package className="w-6 h-6 text-white" />
-                                        </div>
-                                        <span className="text-white/80 text-sm font-medium">Items</span>
-                                    </div>
-                                    <p className="text-white/90 text-sm font-medium mb-1">Items Sold</p>
-                                    <p className="text-4xl font-bold text-white">{reportData.totalItems}</p>
-                                </div>
-                            </div>
-
-                            <div className="group relative bg-gradient-to-br from-orange-600 to-orange-700 p-6 rounded-2xl shadow-xl hover:shadow-2xl transform hover:-translate-y-1 transition-all duration-300 overflow-hidden">
-                                <div className="absolute top-0 right-0 -mt-4 -mr-4 w-20 h-20 bg-white/10 rounded-full blur-2xl"></div>
-                                <div className="relative z-10">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm">
-                                            <TrendingUp className="w-6 h-6 text-white" />
-                                        </div>
-                                        <span className="text-white/80 text-sm font-medium">Average</span>
-                                    </div>
-                                    <p className="text-white/90 text-sm font-medium mb-1">Avg Order Value</p>
-                                    <p className="text-4xl font-bold text-white">{fmt(reportData.avgOrderValue)}</p>
-                                </div>
-                            </div>
-                        </>
-                    )}
-                </div>
-            </div>
-
-            {/* Charts Section */}
-            <div className="px-6 pb-8">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {/* Orders by Type Pie Chart */}
-                    <div className="bg-white rounded-2xl border-2 border-orange-100 shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
-                        <div className="flex items-center justify-between mb-6">
-                            <div className="flex items-center">
-                                <div className="p-2 bg-orange-100 rounded-xl mr-3">
-                                    <PieChartIcon className="w-5 h-5 text-orange-600" />
-                                </div>
-                                <h3 className="text-xl font-bold text-gray-800">Orders by Type</h3>
-                            </div>
-                            <button className="p-2 hover:bg-orange-50 rounded-lg transition-colors">
-                                <Download className="w-4 h-4 text-orange-600" />
-                            </button>
-                        </div>
-                        {isLoading ? (
-                            <div className="h-64 bg-gray-200 rounded-lg animate-pulse"></div>
-                        ) : (
-                            <ResponsiveContainer width="100%" height={300}>
-                                <PieChart>
-                                    <Pie
-                                        data={reportData.ordersByType}
-                                        dataKey="value"
-                                        nameKey="name"
-                                        cx="50%"
-                                        cy="50%"
-                                        outerRadius={80}
-                                        fill="#8884d8"
-                                        label={({ name, value }) => value > 0 ? `${name}: ${value}` : ''}
-                                        labelLine={false}
-                                        minAngle={15}
-                                    >
-                                        <Cell key="dinein" fill="#f97316" />
-                                        <Cell key="takeaway" fill="#fb923c" />
-                                        <Cell key="qr" fill="#fdba74" />
-                                    </Pie>
-                                    <RechartsTooltip content={<CustomPieTooltip />} />
-                                    <Legend 
-                                        verticalAlign="bottom" 
-                                        height={36}
-                                        formatter={(value, entry) => `${entry.payload.name}: ${entry.payload.value}`}
-                                    />
-                                </PieChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-
-                    {/* Sales Trend Chart */}
-                    <div className="bg-white rounded-2xl border-2 border-orange-100 shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
-                        <div className="flex items-center justify-between mb-6">
-                            <div className="flex items-center">
-                                <div className="p-2 bg-orange-100 rounded-xl mr-3">
-                                    <TrendingUp className="w-5 h-5 text-orange-600" />
-                                </div>
-                                <h3 className="text-xl font-bold text-gray-800">Sales Trend</h3>
-                            </div>
-                            <button className="p-2 hover:bg-orange-50 rounded-lg transition-colors">
-                                <Download className="w-4 h-4 text-orange-600" />
-                            </button>
-                        </div>
-                        {isLoading ? (
-                            <div className="h-64 bg-gray-200 rounded-lg animate-pulse"></div>
-                        ) : (
-                            <ResponsiveContainer width="100%" height={300}>
-                                {reportType === 'daily' ? (
-                                    <LineChart data={reportData.salesTrend}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                                        <XAxis 
-                                            dataKey="period" 
-                                            stroke="#6b7280"
-                                            tick={{ fontSize: 12 }}
-                                        />
-                                        <YAxis 
-                                            stroke="#6b7280"
-                                            tick={{ fontSize: 12 }}
-                                            tickFormatter={(value) => fmt(value)}
-                                        />
-                                        <RechartsTooltip content={<CustomTooltip />} />
-                                        <Legend />
-                                        <Line 
-                                            type="monotone" 
-                                            dataKey="sales" 
-                                            stroke="#f97316" 
-                                            strokeWidth={3} 
-                                            dot={{ r: 5, fill: '#f97316' }}
-                                            activeDot={{ r: 7 }}
-                                            name="Sales"
-                                        />
-                                    </LineChart>
-                                ) : (
-                                    <BarChart data={reportData.salesTrend}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                                        <XAxis 
-                                            dataKey="period" 
-                                            stroke="#6b7280"
-                                            tick={{ fontSize: 12 }}
-                                        />
-                                        <YAxis 
-                                            stroke="#6b7280"
-                                            tick={{ fontSize: 12 }}
-                                            tickFormatter={(value) => fmt(value)}
-                                        />
-                                        <RechartsTooltip content={<CustomTooltip />} />
-                                        <Legend />
-                                        <Bar 
-                                            dataKey="sales" 
-                                            fill="#f97316" 
-                                            name="Sales"
-                                            radius={[8, 8, 0, 0]}
-                                        />
-                                    </BarChart>
-                                )}
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* Top Selling Items Section */}
-            <div className="px-6 pb-8">
-                <div className="bg-white rounded-2xl border-2 border-orange-100 shadow-xl p-6 hover:shadow-2xl transition-all duration-300">
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center">
-                            <div className="p-2 bg-orange-100 rounded-xl mr-3">
-                                <Package className="w-5 h-5 text-orange-600" />
-                            </div>
-                            <h3 className="text-xl font-bold text-gray-800">Top Selling Items</h3>
-                        </div>
-                        <button className="p-2 hover:bg-orange-50 rounded-lg transition-colors">
-                            <Download className="w-4 h-4 text-orange-600" />
-                        </button>
-                    </div>
-                    {isLoading ? (
-                        <div className="space-y-3">
-                            {[1, 2, 3, 4, 5, 6].map((i) => (
-                                <div key={i} className="flex items-center justify-between p-4 bg-orange-50 rounded-xl">
-                                    <div className="flex items-center space-x-4">
-                                        <div className="w-10 h-10 bg-orange-200 rounded-xl animate-pulse"></div>
-                                        <div>
-                                            <div className="w-32 h-4 bg-orange-200 rounded animate-pulse mb-2"></div>
-                                            <div className="w-16 h-3 bg-orange-200 rounded animate-pulse"></div>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="w-16 h-6 bg-orange-200 rounded animate-pulse mb-2"></div>
-                                        <div className="w-20 h-3 bg-orange-200 rounded animate-pulse"></div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : reportData.topSellingItems.length === 0 ? (
-                        <div className="text-center py-12">
-                            <div className="w-16 h-16 bg-gradient-to-br from-orange-100 to-orange-200 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <Package className="w-8 h-8 text-orange-500" />
-                            </div>
-                            <p className="text-gray-700 font-semibold text-lg">No sales data for the selected period.</p>
-                            <p className="text-gray-500 text-sm mt-2">Try adjusting the date range to see your best-selling items</p>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {reportData.topSellingItems.map((item, index) => (
-                                <div key={index} className="group bg-gradient-to-br from-orange-50 to-white p-4 rounded-xl border-2 border-orange-100 hover:shadow-lg transition-all duration-200 hover:from-orange-100 hover:to-orange-50">
-                                    <div className="flex justify-between items-start mb-3">
-                                        <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-md">
-                                            {index + 1}
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-2xl font-bold text-orange-600">{item.count}</p>
-                                            <p className="text-xs text-orange-500 font-medium">units sold</p>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <p className="text-lg font-bold text-gray-800 truncate">{item.name}</p>
-                                        <p className="text-sm text-orange-600 mt-1 font-medium">Best seller</p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Footer */}
-            <div className="px-6 pb-8">
-                <div className="text-center text-sm text-gray-500">
-                    <p>Reports generated automatically based on completed orders</p>
-                    <p className="mt-1">Last updated: {lastUpdated.toLocaleString()}</p>
-                </div>
-            </div>
-        </div>
-    );
+const formatYMD = (d) => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 };
+
+const formatDMY = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = String(iso).split('-');
+  if (!y || !m || !d) return iso;
+  return `${d}-${m}-${y}`;
+};
+
+const formatHourLabel = (hour) => {
+  if (hour === 0) return '12 AM';
+  if (hour === 12) return '12 PM';
+  return hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
+};
+
+const shortAmount = (v) => {
+  const n = Number(v) || 0;
+  if (n >= 1_00_00_000) return `₹${(n / 1_00_00_000).toFixed(1)}Cr`;
+  if (n >= 1_00_000) return `₹${(n / 1_00_000).toFixed(1)}L`;
+  if (n >= 1_000) return `₹${(n / 1000).toFixed(0)}K`;
+  return `₹${n.toFixed(0)}`;
+};
+
+const computeDelta = (curr, prev) => {
+  const c = Number(curr) || 0;
+  const p = Number(prev) || 0;
+  if (p === 0) {
+    if (c === 0) return 0;
+    return 100;
+  }
+  return ((c - p) / Math.abs(p)) * 100;
+};
+
+const computePrevRange = (start, end) => {
+  if (!start || !end) return [null, null];
+  const s = new Date(start + 'T00:00:00');
+  const e = new Date(end + 'T00:00:00');
+  const diffDays = Math.max(1, Math.round((e - s) / 86400000) + 1);
+  const prevEnd = new Date(s);
+  prevEnd.setDate(s.getDate() - 1);
+  const prevStart = new Date(prevEnd);
+  prevStart.setDate(prevEnd.getDate() - (diffDays - 1));
+  return [formatYMD(prevStart), formatYMD(prevEnd)];
+};
+
+const getOrderItemsArray = (order) => {
+  if (!order) return [];
+  const items = order.items;
+  if (Array.isArray(items)) return items;
+  if (items && Array.isArray(items.dataValues)) return items.dataValues;
+  return [];
+};
+
+const getItemField = (item, field) => {
+  if (!item) return undefined;
+  if (item[field] !== undefined) return item[field];
+  if (item.dataValues && item.dataValues[field] !== undefined)
+    return item.dataValues[field];
+  return undefined;
+};
+
+const getItemName = (item) =>
+  getItemField(item, 'name') ?? getItemField(item, 'itemName') ?? getItemField(item, 'title');
+
+const getItemQuantity = (item) => {
+  const q = getItemField(item, 'quantity') ?? getItemField(item, 'qty');
+  const n = Number(q);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+};
+
+const getItemPrice = (item) => {
+  const p = getItemField(item, 'price') ?? getItemField(item, 'unitPrice');
+  const n = Number(p);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+const reportableFilter = (o) =>
+  o && (o.status === 'completed' || o.status === 'delivered' || o.bill_status === 'paid');
+
+/* ------------------------------------------------------------------ */
+/*  Custom date input (styled like image 3, native picker inside)      */
+/* ------------------------------------------------------------------ */
+
+const DateInput = ({ label, value, onChange, max }) => {
+  const inputRef = useRef(null);
+  const openPicker = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === 'function') {
+      try {
+        el.showPicker();
+        return;
+      } catch (_) {
+        /* fallthrough to focus */
+      }
+    }
+    el.focus();
+    el.click();
+  };
+  return (
+    <div>
+      <label className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+        <Calendar className="w-4 h-4 text-gray-500" />
+        {label}
+      </label>
+      <button
+        type="button"
+        onClick={openPicker}
+        className="relative w-full bg-orange-50/40 hover:bg-orange-50/70 border border-orange-200/60 rounded-2xl px-4 py-3 flex items-center justify-between text-left transition focus:outline-none focus:ring-2 focus:ring-orange-200"
+      >
+        <span className="text-sm font-semibold text-gray-800 tracking-wide">
+          {formatDMY(value) || 'Select date'}
+        </span>
+        <Calendar className="w-4 h-4 text-gray-500" />
+        <input
+          ref={inputRef}
+          type="date"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          max={max}
+          className="absolute inset-0 opacity-0 cursor-pointer"
+          aria-label={label}
+        />
+      </button>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
+const Reports = ({ locationSettings }) => {
+  const { format: fmt } = useCurrency(locationSettings);
+
+  const todayIso = useMemo(() => formatYMD(new Date()), []);
+
+  const [startDate, setStartDate] = useState(todayIso);
+  const [endDate, setEndDate] = useState(todayIso);
+  const [activeRange, setActiveRange] = useState('today');
+  const [showFilters, setShowFilters] = useState(false);
+
+  const [ordersData, setOrdersData] = useState([]);
+  const [prevOrdersData, setPrevOrdersData] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [dateError, setDateError] = useState('');
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setIsLoaded(true), 60);
+    return () => clearTimeout(t);
+  }, []);
+
+  /* --------------------------- validation --------------------------- */
+
+  const validateDateRange = useCallback((start, end) => {
+    if (!start || !end) {
+      setDateError('Please select both start and end dates');
+      return false;
+    }
+    const startDateObj = new Date(start + 'T00:00:00');
+    const endDateObj = new Date(end + 'T23:59:59');
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    if (startDateObj > todayStart) {
+      setDateError("Start date cannot be greater than today's date");
+      return false;
+    }
+    if (endDateObj > todayEnd) {
+      setDateError("End date cannot be greater than today's date");
+      return false;
+    }
+    if (startDateObj > endDateObj) {
+      setDateError('End date cannot be earlier than start date');
+      return false;
+    }
+    setDateError('');
+    return true;
+  }, []);
+
+  /* --------------------------- fetch --------------------------- */
+
+  const fetchOrdersForRange = useCallback(async (start, end) => {
+    const res = await authFetch(`/api/orders?startDate=${start}&endDate=${end}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  }, []);
+
+  const fetchAll = useCallback(async () => {
+    if (!validateDateRange(startDate, endDate)) return;
+    setIsLoading(true);
+    try {
+      const orders = await fetchOrdersForRange(startDate, endDate);
+      setOrdersData(orders);
+      const [pStart, pEnd] = computePrevRange(startDate, endDate);
+      if (pStart && pEnd) {
+        const prev = await fetchOrdersForRange(pStart, pEnd);
+        setPrevOrdersData(prev);
+      } else {
+        setPrevOrdersData([]);
+      }
+    } catch (err) {
+      console.error('Failed to fetch report data:', err);
+      setOrdersData([]);
+      setPrevOrdersData([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [startDate, endDate, fetchOrdersForRange, validateDateRange]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  /* --------------------------- quick ranges --------------------------- */
+
+  const setQuickDateRange = (range) => {
+    const today = new Date();
+    let start = new Date(today);
+    if (range === 'today') {
+      start = new Date(today);
+    } else if (range === 'week') {
+      start.setDate(today.getDate() - 6);
+    } else if (range === 'month') {
+      start = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else if (range === 'year') {
+      start = new Date(today.getFullYear(), 0, 1);
+    }
+    setStartDate(formatYMD(start));
+    setEndDate(formatYMD(today));
+    setActiveRange(range);
+  };
+
+  /* --------------------------- aggregates --------------------------- */
+
+  const currStats = useMemo(() => buildStats(ordersData), [ordersData]);
+  const prevStats = useMemo(() => buildStats(prevOrdersData), [prevOrdersData]);
+
+  const isSingleDay = startDate === endDate;
+
+  const revenueTrend = useMemo(() => {
+    if (isSingleDay) {
+      // 24 hourly buckets but rendered as friendly day-of-week look in the
+      // screenshot — when single day we keep hourly intervals to look natural.
+      return buildHourlySeries(ordersData);
+    }
+    return buildDailySeries(ordersData, startDate, endDate);
+  }, [ordersData, startDate, endDate, isSingleDay]);
+
+  const peakHours = useMemo(() => buildHourlySeries(ordersData), [ordersData]);
+
+  const orderDistribution = useMemo(() => {
+    return [
+      { name: 'Dine-In', value: currStats.byType.DINE_IN, color: '#F97316' },
+      { name: 'Takeaway', value: currStats.byType.TAKEAWAY, color: '#10B981' },
+      { name: 'QR Order', value: currStats.byType.QR_CODE, color: '#3B82F6' },
+    ].filter((d) => d.value > 0);
+  }, [currStats]);
+
+  const topItems = useMemo(() => {
+    return currStats.itemMap
+      .map((it) => ({ name: it.name, orders: it.qty, revenue: it.revenue }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+  }, [currStats]);
+
+  const maxTopRevenue = topItems.length > 0 ? topItems[0].revenue : 1;
+
+  /* --------------------------- export --------------------------- */
+
+  const handleExport = () => {
+    const workbook = XLSX.utils.book_new();
+    const summary = [
+      { Metric: 'Start Date', Value: startDate },
+      { Metric: 'End Date', Value: endDate },
+      { Metric: 'Total Revenue', Value: currStats.totalSales },
+      { Metric: 'Total Orders', Value: currStats.totalOrders },
+      { Metric: 'Total Customers', Value: currStats.totalCustomers },
+      { Metric: 'Avg Order Value', Value: currStats.avgOrderValue },
+      { Metric: 'Items Sold', Value: currStats.totalItems },
+    ];
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summary), 'Summary');
+
+    const orderRows = (ordersData || []).map((o) => ({
+      OrderId: o.id,
+      Table: o.table_name,
+      Type: o.type,
+      Status: o.status,
+      Total: o.total,
+      Timestamp: o.timestamp || o.created_at,
+      PaymentMethod: o.payment_method,
+      ItemCount: getOrderItemsArray(o).reduce((s, it) => s + getItemQuantity(it), 0),
+      ItemsSummary: getOrderItemsArray(o)
+        .map((it) => `${getItemName(it) || ''} x${getItemQuantity(it)}`)
+        .filter(Boolean)
+        .join(', '),
+    }));
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(orderRows),
+      'Orders'
+    );
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(topItems),
+      'TopItems'
+    );
+
+    XLSX.writeFile(workbook, `reports_${startDate}_to_${endDate}.xlsx`);
+  };
+
+  /* --------------------------- KPI deltas --------------------------- */
+
+  const kpis = useMemo(() => {
+    return [
+      {
+        id: 'revenue',
+        label: 'TOTAL REVENUE',
+        value: fmt(currStats.totalSales),
+        delta: computeDelta(currStats.totalSales, prevStats.totalSales),
+        color: 'text-orange-500',
+        Icon: DollarSign,
+      },
+      {
+        id: 'orders',
+        label: 'TOTAL ORDERS',
+        value: (currStats.totalOrders || 0).toLocaleString('en-IN'),
+        delta: computeDelta(currStats.totalOrders, prevStats.totalOrders),
+        color: 'text-blue-500',
+        Icon: ShoppingCart,
+      },
+      {
+        id: 'customers',
+        label: 'TOTAL CUSTOMERS',
+        value: (currStats.totalCustomers || 0).toLocaleString('en-IN'),
+        delta: computeDelta(currStats.totalCustomers, prevStats.totalCustomers),
+        color: 'text-emerald-500',
+        Icon: UsersIcon,
+      },
+      {
+        id: 'aov',
+        label: 'AVG ORDER VALUE',
+        value: fmt(currStats.avgOrderValue),
+        delta: computeDelta(currStats.avgOrderValue, prevStats.avgOrderValue),
+        color: 'text-orange-500',
+        Icon: Wallet,
+      },
+    ];
+  }, [currStats, prevStats, fmt]);
+
+  /* --------------------------- render --------------------------- */
+
+  return (
+    <div
+      className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
+        isLoaded ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            Reports &amp; Analytics
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">Comprehensive business intelligence</p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="bg-white border border-gray-200 shadow-sm rounded-full p-1 flex items-center gap-1">
+            {QUICK_RANGES.map((q) => {
+              const active = activeRange === q.id;
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => setQuickDateRange(q.id)}
+                  className={`px-4 py-1.5 text-xs sm:text-sm font-semibold rounded-full transition-all ${
+                    active
+                      ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-200/50'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {q.label}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={() => setShowFilters((v) => !v)}
+            className={`w-10 h-10 rounded-full border flex items-center justify-center transition ${
+              showFilters
+                ? 'bg-orange-500 text-white border-orange-500'
+                : 'bg-white text-gray-500 border-gray-200 hover:text-gray-800 hover:border-gray-300'
+            }`}
+            title="Show filters"
+          >
+            <Filter className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleExport}
+            className="w-10 h-10 rounded-full bg-white border border-gray-200 text-gray-500 hover:text-gray-800 hover:border-gray-300 flex items-center justify-center transition shadow-sm"
+            title="Download report"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Report Filters panel — styled per image 3 */}
+      {showFilters && (
+        <div className="bg-[#FFFAF3] border border-orange-100 rounded-2xl shadow-sm p-5 mb-5 animate-fade-in">
+          <div className="flex items-center gap-2 mb-4">
+            <Filter className="w-4 h-4 text-orange-500" />
+            <h3 className="text-base font-bold text-gray-900">Report Filters</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <DateInput
+              label="Start Date"
+              value={startDate}
+              onChange={(v) => {
+                setStartDate(v);
+                setActiveRange('');
+              }}
+              max={todayIso}
+            />
+            <DateInput
+              label="End Date"
+              value={endDate}
+              onChange={(v) => {
+                setEndDate(v);
+                setActiveRange('');
+              }}
+              max={todayIso}
+            />
+          </div>
+          {dateError && (
+            <p className="mt-3 text-xs font-semibold text-rose-500">{dateError}</p>
+          )}
+        </div>
+      )}
+
+      {/* KPI cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+        {kpis.map((k, idx) => (
+          <KpiCard
+            key={k.id}
+            label={k.label}
+            value={isLoading ? '—' : k.value}
+            delta={k.delta}
+            color={k.color}
+            Icon={k.Icon}
+            delay={idx * 60}
+            isLoaded={isLoaded}
+          />
+        ))}
+      </div>
+
+      {/* Revenue Trend + Peak Sales Hours */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+        <ChartCard title="Revenue Trend">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart
+              data={revenueTrend}
+              margin={{ top: 10, right: 14, left: 0, bottom: 0 }}
+            >
+              <defs>
+                <linearGradient id="revGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#F97316" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#F97316" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="#F1F5F9" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="period"
+                tick={{ fontSize: 11, fill: '#94A3B8' }}
+                axisLine={false}
+                tickLine={false}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                tick={{ fontSize: 11, fill: '#94A3B8' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => shortAmount(v)}
+              />
+              <RechartsTooltip
+                contentStyle={{
+                  borderRadius: 12,
+                  border: '1px solid #E5E7EB',
+                  fontSize: 12,
+                }}
+                formatter={(value) => [fmt(value), 'Revenue']}
+              />
+              <Area
+                type="monotone"
+                dataKey="sales"
+                stroke="none"
+                fill="url(#revGradient)"
+              />
+              <Line
+                type="monotone"
+                dataKey="sales"
+                stroke="#F97316"
+                strokeWidth={2.5}
+                dot={{ r: 4, fill: '#F97316', stroke: '#fff', strokeWidth: 2 }}
+                activeDot={{ r: 6 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Peak Sales Hours">
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart
+              data={peakHours}
+              margin={{ top: 10, right: 14, left: 0, bottom: 0 }}
+            >
+              <CartesianGrid stroke="#F1F5F9" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="period"
+                tick={{ fontSize: 10, fill: '#94A3B8' }}
+                axisLine={false}
+                tickLine={false}
+                interval={1}
+              />
+              <YAxis
+                tick={{ fontSize: 11, fill: '#94A3B8' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => shortAmount(v)}
+              />
+              <RechartsTooltip
+                cursor={{ fill: '#FFF7ED' }}
+                contentStyle={{
+                  borderRadius: 12,
+                  border: '1px solid #E5E7EB',
+                  fontSize: 12,
+                }}
+                formatter={(value) => [fmt(value), 'Sales']}
+              />
+              <Bar dataKey="sales" fill="#F97316" radius={[6, 6, 0, 0]} barSize={18} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+
+      {/* Order Distribution + Top Selling Items */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="Order Distribution">
+          {orderDistribution.length === 0 ? (
+            <div className="h-[260px] flex items-center justify-center text-sm text-gray-400">
+              No order data available
+            </div>
+          ) : (
+            <>
+              <div className="h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={orderDistribution}
+                      dataKey="value"
+                      innerRadius={55}
+                      outerRadius={82}
+                      paddingAngle={3}
+                      stroke="none"
+                    >
+                      {orderDistribution.map((d, idx) => (
+                        <Cell key={idx} fill={d.color} />
+                      ))}
+                    </Pie>
+                    <RechartsTooltip
+                      contentStyle={{
+                        borderRadius: 12,
+                        border: '1px solid #E5E7EB',
+                        fontSize: 12,
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-2 flex items-center justify-center flex-wrap gap-4 text-xs">
+                {orderDistribution.map((d) => (
+                  <div key={d.name} className="flex items-center gap-1.5">
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ background: d.color }}
+                    />
+                    <span className="text-gray-600 font-medium">
+                      {d.name}: <span className="text-gray-900 font-bold">{d.value}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </ChartCard>
+
+        <ChartCard title="Top Selling Items">
+          {topItems.length === 0 ? (
+            <div className="h-[260px] flex items-center justify-center text-sm text-gray-400">
+              No sales data for selected period
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {topItems.map((it, idx) => {
+                const pct = (it.revenue / maxTopRevenue) * 100;
+                return (
+                  <div
+                    key={`${it.name}-${idx}`}
+                    className="flex items-start gap-3"
+                    style={{
+                      animation: isLoaded
+                        ? `slideUpFade .35s ease-out ${idx * 50}ms both`
+                        : 'none',
+                    }}
+                  >
+                    <div className="w-7 h-7 rounded-full bg-orange-50 text-orange-500 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-sm font-bold text-gray-900 truncate">
+                          {it.name}
+                        </p>
+                        <p className="text-sm font-bold text-gray-900 shrink-0">
+                          {fmt(it.revenue)}
+                        </p>
+                      </div>
+                      <div className="mt-1.5 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-orange-400 to-orange-500 transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.max(8, pct))}%` }}
+                        />
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1">{it.orders} orders</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </ChartCard>
+      </div>
+
+      <style>{`
+        @keyframes slideUpFade {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fadeIn .25s ease-out both; }
+      `}</style>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/*  Aggregation                                                        */
+/* ------------------------------------------------------------------ */
+
+function buildStats(orders) {
+  const safe = Array.isArray(orders) ? orders.filter(reportableFilter) : [];
+  const totalOrders = safe.length;
+  const totalSales = safe.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const avgOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
+
+  const itemMapObj = {};
+  let totalItems = 0;
+  const byType = { DINE_IN: 0, TAKEAWAY: 0, QR_CODE: 0 };
+  const uniqueCustomers = new Set();
+
+  safe.forEach((o) => {
+    const t = String(o.type || '').toUpperCase();
+    if (byType[t] !== undefined) byType[t] += 1;
+
+    const custKey =
+      o.customer_id ||
+      o.customerId ||
+      o.customer_phone ||
+      o.customer_email ||
+      `${o.table_name || 'NA'}_${o.id}`;
+    uniqueCustomers.add(custKey);
+
+    getOrderItemsArray(o).forEach((item) => {
+      const name = getItemName(item) || 'Item';
+      const qty = getItemQuantity(item);
+      const price = getItemPrice(item);
+      const lineRevenue = typeof price === 'number' ? price * qty : 0;
+      totalItems += qty;
+      if (!itemMapObj[name]) itemMapObj[name] = { name, qty: 0, revenue: 0 };
+      itemMapObj[name].qty += qty;
+      itemMapObj[name].revenue += lineRevenue;
+    });
+  });
+
+  return {
+    totalOrders,
+    totalSales,
+    avgOrderValue,
+    totalItems,
+    totalCustomers: uniqueCustomers.size,
+    byType,
+    itemMap: Object.values(itemMapObj),
+  };
+}
+
+function buildHourlySeries(orders) {
+  const safe = Array.isArray(orders) ? orders.filter(reportableFilter) : [];
+  const buckets = Array(24).fill(0);
+  safe.forEach((o) => {
+    const ts = o.timestamp || o.created_at;
+    if (!ts) return;
+    const hour = new Date(ts).getHours();
+    if (Number.isFinite(hour)) buckets[hour] += Number(o.total) || 0;
+  });
+  // Show waking hours 9am-11pm as primary x-axis range like in screenshot.
+  const range = [];
+  for (let h = 9; h <= 23; h += 1) {
+    range.push({ period: formatHourLabel(h), sales: buckets[h] });
+  }
+  return range;
+}
+
+function buildDailySeries(orders, start, end) {
+  const safe = Array.isArray(orders) ? orders.filter(reportableFilter) : [];
+  if (!start || !end) return [];
+  const startDate = new Date(start + 'T00:00:00');
+  const endDate = new Date(end + 'T00:00:00');
+  const result = [];
+  const dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const map = {};
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const iso = formatYMD(d);
+    map[iso] = 0;
+  }
+  safe.forEach((o) => {
+    const ts = o.timestamp || o.created_at;
+    if (!ts) return;
+    const iso = formatYMD(new Date(ts));
+    if (map[iso] !== undefined) map[iso] += Number(o.total) || 0;
+  });
+  Object.entries(map).forEach(([iso, total]) => {
+    const d = new Date(iso + 'T00:00:00');
+    const label = dayShort[d.getDay()];
+    result.push({ period: label, sales: total, iso });
+  });
+  return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Subcomponents                                                      */
+/* ------------------------------------------------------------------ */
+
+const KpiCard = ({ label, value, delta, color, Icon, delay, isLoaded }) => {
+  const positive = delta >= 0;
+  return (
+    <div
+      className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5"
+      style={{ animation: isLoaded ? `slideUpFade .35s ease-out ${delay}ms both` : 'none' }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[10px] font-bold tracking-wider text-gray-400">{label}</p>
+        {Icon && (
+          <div className={`w-7 h-7 rounded-lg bg-gray-50 ${color} flex items-center justify-center`}>
+            <Icon className="w-3.5 h-3.5" />
+          </div>
+        )}
+      </div>
+      <p className={`text-2xl sm:text-3xl font-bold ${color} leading-none`}>{value}</p>
+      <div
+        className={`mt-2 inline-flex items-center gap-1 text-xs font-semibold ${
+          positive ? 'text-emerald-500' : 'text-rose-500'
+        }`}
+      >
+        {positive ? (
+          <TrendingUp className="w-3.5 h-3.5" />
+        ) : (
+          <TrendingDown className="w-3.5 h-3.5" />
+        )}
+        {positive ? '+' : ''}
+        {(delta || 0).toFixed(1)}%
+      </div>
+    </div>
+  );
+};
+
+const ChartCard = ({ title, children }) => (
+  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+    <h3 className="text-base font-bold text-gray-900 mb-3">{title}</h3>
+    {children}
+  </div>
+);
 
 export default Reports;

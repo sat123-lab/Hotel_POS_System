@@ -22,10 +22,12 @@ import SubFranchiseManagement from './SubFranchiseManagement';
 import CustomerIndex from './CustomerIndex';
 import OrderConfirmation from './OrderConfirmation';
 import NoAccessMessage from './NoAccessMessage';
-import LandingPage from './LandingPage';
 import ProtectedRoute from './ProtectedRoute';
 import RoleBasedRoute from './RoleBasedRoute';
 import PermissionBasedRoute from './PermissionBasedRoute';
+import NotificationsPage from './NotificationsPage';
+import SettingsPage from './SettingsPage';
+import { NotificationsProvider } from '../contexts/NotificationsContext';
 import { getLocationSettingsForCountry } from '../utils/currency';
 
 // Loading component for Suspense fallback - Reference Image Design
@@ -178,7 +180,7 @@ const App = () => {
         return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <InventoryManagement /> : <NoAccessMessage />;
       case 'dashboard':
         if (role === 'subfranchise' || role === 'franchise') {
-          return <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />;
+          return <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} setActiveTab={setActiveTab} />;
         }
         return (role === 'admin' || role === 'manager') ? (
           <Dashboard locationSettings={locationSettings} />
@@ -197,7 +199,7 @@ const App = () => {
         return role === 'admin' ? <PermissionManagementNew token={localStorage.getItem('token')} /> : <NoAccessMessage />;
       case 'franchise-dashboard':
         return (role === 'admin' || role === 'franchise' || role === 'subfranchise') ? (
-          <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />
+          <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} setActiveTab={setActiveTab} />
         ) : (
           <NoAccessMessage />
         );
@@ -207,6 +209,12 @@ const App = () => {
         ) : (
           <NoAccessMessage />
         );
+      case 'notifications':
+        return <NotificationsPage />;
+      case 'settings':
+        return role === 'admin' || role === 'manager' || role === 'subfranchise' || role === 'franchise'
+          ? <SettingsPage />
+          : <NoAccessMessage />;
       default:
         if (role === 'chef') return <KitchenDisplaySystem locationSettings={locationSettings} />;
         if (role === 'waiter') return <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />;
@@ -233,7 +241,7 @@ const App = () => {
           handleLogout={handleLogout}
         />
         <div className="flex-1 flex flex-col min-w-0 pt-16 lg:pt-0">
-          <TopHeader currentUser={currentUser} handleLogout={handleLogout} />
+          <TopHeader currentUser={currentUser} handleLogout={handleLogout} setActiveTab={setActiveTab} />
           <main className="flex-1 overflow-y-auto bg-[#fafafb]">{children}</main>
         </div>
       </div>
@@ -264,7 +272,7 @@ const App = () => {
           handleLogout={handleLogout}
         />
         <div className="flex-1 flex flex-col min-w-0 pt-16 lg:pt-0">
-          <TopHeader currentUser={currentUser} handleLogout={handleLogout} />
+          <TopHeader currentUser={currentUser} handleLogout={handleLogout} setActiveTab={setActiveTab} />
           <main className="flex-1 overflow-y-auto bg-[#fafafb]">{renderContent()}</main>
         </div>
       </div>
@@ -273,10 +281,15 @@ const App = () => {
 
   return (
     <ErrorBoundary>
+      <NotificationsProvider>
       <Suspense fallback={<LoadingSpinner />}>
         <Routes>
           {/* Public Routes */}
-          <Route path="/" element={<LandingPage />} />
+          <Route path="/" element={
+            localStorage.getItem('token') && localStorage.getItem('user')
+              ? <Navigate to="/dashboard" replace />
+              : <Navigate to="/login" replace />
+          } />
           <Route 
             path="/login" 
             element={
@@ -407,7 +420,7 @@ const App = () => {
             <ProtectedRoute>
               <RoleBasedRoute allowedRoles={['admin', 'franchise']}>
                 <MenuLayout>
-                  <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />
+                  <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} setActiveTab={setActiveTab} />
                 </MenuLayout>
               </RoleBasedRoute>
             </ProtectedRoute>
@@ -423,6 +436,24 @@ const App = () => {
             </ProtectedRoute>
           } />
 
+          <Route path="/notifications" element={
+            <ProtectedRoute>
+              <MenuLayout>
+                <NotificationsPage />
+              </MenuLayout>
+            </ProtectedRoute>
+          } />
+
+          <Route path="/settings" element={
+            <ProtectedRoute>
+              <RoleBasedRoute allowedRoles={['admin', 'manager', 'subfranchise', 'franchise']}>
+                <MenuLayout>
+                  <SettingsPage />
+                </MenuLayout>
+              </RoleBasedRoute>
+            </ProtectedRoute>
+          } />
+
           {/* QR Ordering Route - Public */}
           <Route path="/qr-ordering" element={<QRCodeOrdering locationSettings={locationSettings} />} />
 
@@ -433,6 +464,7 @@ const App = () => {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
+      </NotificationsProvider>
     </ErrorBoundary>
   );
 };
