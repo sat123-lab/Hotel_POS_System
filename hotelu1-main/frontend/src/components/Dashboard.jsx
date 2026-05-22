@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
@@ -7,7 +7,6 @@ import {
   Users,
   Plus,
   Calendar,
-  TrendingUp,
   ArrowUpRight,
   ArrowDownRight,
   Clock,
@@ -16,13 +15,14 @@ import {
   Repeat,
   TrendingUp as TrendingUpAlt,
   Crown,
+  Utensils,
+  ShoppingBag,
+  QrCode,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
-  LineChart,
-  Line,
   CartesianGrid,
   XAxis,
   YAxis,
@@ -33,20 +33,47 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { authFetch } from '../utils/api';
+import { io } from 'socket.io-client';
+import { authFetch, getSocketUrl } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
 
-/* ---------------------------- helpers ---------------------------- */
+/* =================================================================
+   Helpers
+   ================================================================= */
 
-const buildSparkline = (data, length = 14) => {
-  if (data && data.length >= 2) return data;
-  const out = [];
-  let v = 30 + Math.random() * 20;
-  for (let i = 0; i < length; i += 1) {
-    v += (Math.random() - 0.45) * 10;
-    out.push({ i, v: Math.max(5, v) });
-  }
-  return out;
+const startOfDay = (d) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
+const startOfMonth = (d) => {
+  const x = startOfDay(d);
+  x.setDate(1);
+  return x;
+};
+const sameDay = (a, b) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+const dayKey = (d) => d.toISOString().slice(0, 10);
+
+const itemsCount = (o) =>
+  Array.isArray(o.items)
+    ? o.items.reduce((a, b) => a + (Number(b.quantity || b.qty) || 0), 0)
+    : 0;
+
+const orderTime = (o) => new Date(o.timestamp || o.created_at || Date.now());
+
+const calcDelta = (current, previous) => {
+  if (previous === 0 && current === 0) return { value: '0%', trend: 'up', positive: true };
+  if (previous === 0) return { value: '+100%', trend: 'up', positive: true };
+  const pct = ((current - previous) / previous) * 100;
+  const positive = pct >= 0;
+  return {
+    value: `${positive ? '+' : ''}${pct.toFixed(1)}%`,
+    trend: positive ? 'up' : 'down',
+    positive,
+  };
 };
 
 const formatHourLabel = (h) => {
@@ -56,25 +83,22 @@ const formatHourLabel = (h) => {
   return `${dh} ${ampm}`;
 };
 
-const buildHourlyTrend = (orders) => {
-  const buckets = {};
-  for (let h = 9; h <= 23; h += 1) buckets[h] = 0;
-  orders.forEach((o) => {
-    if (o.status !== 'completed') return;
-    const t = new Date(o.timestamp || o.created_at || Date.now());
-    const h = t.getHours();
-    if (buckets[h] !== undefined) buckets[h] += Number(o.total) || 0;
-  });
-  return Object.keys(buckets).map((h) => ({
-    period: formatHourLabel(Number(h)),
-    sales: Math.round(buckets[h]),
-  }));
-};
+/* =================================================================
+   Reusable bits
+   ================================================================= */
 
-/* ------------------------- small components ------------------------- */
-
-const KpiCard = ({ icon: Icon, iconBg, iconColor, label, value, delta, trend, sparkColor, sparkData }) => {
-  const positive = trend === 'up';
+const KpiCard = ({
+  icon: Icon,
+  iconBg,
+  iconColor,
+  label,
+  value,
+  delta,
+  sparkColor,
+  sparkData,
+  gradientId,
+}) => {
+  const positive = delta?.positive ?? true;
   const TrendIcon = positive ? ArrowUpRight : ArrowDownRight;
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
@@ -86,9 +110,13 @@ const KpiCard = ({ icon: Icon, iconBg, iconColor, label, value, delta, trend, sp
       <p className="text-sm text-gray-500">{label}</p>
       <p className="text-2xl sm:text-3xl font-extrabold text-gray-900 mt-1">{value}</p>
       <div className="flex items-center gap-1 mt-2 text-xs">
-        <span className={`flex items-center gap-0.5 font-semibold ${positive ? 'text-emerald-500' : 'text-rose-500'}`}>
+        <span
+          className={`flex items-center gap-0.5 font-semibold ${
+            positive ? 'text-emerald-500' : 'text-rose-500'
+          }`}
+        >
           <TrendIcon className="w-3.5 h-3.5" />
-          {delta}
+          {delta?.value || '0%'}
         </span>
         <span className="text-gray-400">vs yesterday</span>
       </div>
@@ -96,12 +124,18 @@ const KpiCard = ({ icon: Icon, iconBg, iconColor, label, value, delta, trend, sp
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={sparkData}>
             <defs>
-              <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={sparkColor} stopOpacity={0.35} />
                 <stop offset="100%" stopColor={sparkColor} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <Area type="monotone" dataKey="v" stroke={sparkColor} strokeWidth={2} fill={`url(#grad-${label})`} />
+            <Area
+              type="monotone"
+              dataKey="v"
+              stroke={sparkColor}
+              strokeWidth={2}
+              fill={`url(#${gradientId})`}
+            />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -120,89 +154,178 @@ const Section = ({ title, right, children, className = '' }) => (
 );
 
 const StatusPill = ({ status }) => {
+  const s = (status || '').toLowerCase();
   const map = {
     preparing: 'bg-orange-50 text-orange-600',
     ready: 'bg-emerald-50 text-emerald-600',
     pending: 'bg-amber-50 text-amber-600',
     completed: 'bg-blue-50 text-blue-600',
+    delivered: 'bg-emerald-50 text-emerald-600',
   };
   return (
-    <span className={`text-[11px] font-semibold px-2 py-1 rounded-full ${map[status] || 'bg-gray-100 text-gray-600'}`}>
+    <span
+      className={`text-[11px] font-semibold px-2 py-1 rounded-full ${
+        map[s] || 'bg-gray-100 text-gray-600'
+      }`}
+    >
       <span className="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1 align-middle" />
-      {status.charAt(0).toUpperCase() + status.slice(1)}
+      {(status || 'Pending').charAt(0).toUpperCase() + (status || 'Pending').slice(1)}
     </span>
   );
 };
 
-/* ------------------------------ main ------------------------------ */
+const TYPE_ICON = { DINE_IN: Utensils, TAKEAWAY: ShoppingBag, QR_CODE: QrCode };
+const TYPE_LABEL = { DINE_IN: 'Dine-In', TAKEAWAY: 'Takeaway', QR_CODE: 'QR Order' };
+
+/* =================================================================
+   Dashboard
+   ================================================================= */
 
 const Dashboard = ({ locationSettings }) => {
   const navigate = useNavigate();
   const { format: fmt } = useCurrency(locationSettings);
   const [orders, setOrders] = useState([]);
-  const [menuItems, setMenuItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const today = useMemo(() => new Date(), []);
-  const dateLabel = today.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  const [tick, setTick] = useState(0); // re-renders "X min ago" labels
+  const socketRef = useRef(null);
+  // eslint-disable-next-line
+  const today = useMemo(() => new Date(), [tick]);
+  const dateLabel = today.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 
+  /* ---------------- data loader ---------------- */
   const loadData = useCallback(async () => {
-    setLoading(true);
     try {
-      const [ordersRes, menuRes] = await Promise.all([
-        authFetch('/api/orders'),
-        authFetch('/api/menu-items'),
-      ]);
-      const ordersData = ordersRes.ok ? await ordersRes.json() : [];
-      const menuData = menuRes.ok ? await menuRes.json() : [];
-      setOrders(Array.isArray(ordersData) ? ordersData : []);
-      setMenuItems(Array.isArray(menuData) ? menuData : []);
+      const res = await authFetch('/api/orders');
+      const data = res.ok ? await res.json() : [];
+      setOrders(Array.isArray(data) ? data : []);
     } catch (e) {
-      setOrders([]);
-      setMenuItems([]);
+      setOrders((prev) => prev);
     } finally {
       setLoading(false);
     }
   }, []);
 
+  /* ---------------- real-time wiring ---------------- */
   useEffect(() => {
     const u = localStorage.getItem('user');
     const t = localStorage.getItem('token');
-    if (!u || !t) navigate('/login');
+    if (!u || !t) {
+      navigate('/login');
+      return undefined;
+    }
     loadData();
-  }, [navigate, loadData]);
 
-  /* metrics */
-  const completed = orders.filter((o) => o.status === 'completed');
-  const totalOrders = orders.length;
-  const totalSales = completed.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const totalItems = completed.reduce(
-    (s, o) => s + (Array.isArray(o.items) ? o.items.reduce((a, b) => a + (b.quantity || b.qty || 0), 0) : 0),
-    0
+    // socket: refresh on backend events
+    const socket = io(getSocketUrl());
+    socketRef.current = socket;
+    const refresh = () => loadData();
+    socket.on('order_created', refresh);
+    socket.on('order_status_updated', refresh);
+    socket.on('order_deleted', refresh);
+
+    // poll every 10s as fallback
+    const pollInterval = setInterval(loadData, 10000);
+    // tick every 30s for "X min ago" labels
+    const tickInterval = setInterval(() => setTick((v) => v + 1), 30000);
+
+    return () => {
+      socket.off('order_created', refresh);
+      socket.off('order_status_updated', refresh);
+      socket.off('order_deleted', refresh);
+      socket.disconnect();
+      clearInterval(pollInterval);
+      clearInterval(tickInterval);
+    };
+  }, [loadData, navigate]);
+
+  /* ---------------- partition ---------------- */
+  const completed = orders.filter((o) =>
+    ['completed', 'delivered'].includes((o.status || '').toLowerCase())
   );
-  const customers = new Set(completed.map((o) => o.customer_name || o.table_name || o.id)).size;
-
   const liveOrders = orders.filter(
-    (o) => o.status && !['completed', 'cancelled', 'delivered'].includes(o.status.toLowerCase())
+    (o) => !['completed', 'cancelled', 'delivered'].includes((o.status || '').toLowerCase())
   );
 
-  /* sales overview last 7 days */
+  /* ---------------- today / yesterday partitions ---------------- */
+  const now = today;
+  const yesterdayDate = new Date(now);
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+
+  const todayCompleted = completed.filter((o) => sameDay(orderTime(o), now));
+  const yesterdayCompleted = completed.filter((o) => sameDay(orderTime(o), yesterdayDate));
+  const todayAll = orders.filter((o) => sameDay(orderTime(o), now));
+  const yesterdayAll = orders.filter((o) => sameDay(orderTime(o), yesterdayDate));
+
+  /* ---------------- aggregate metrics (TODAY) ---------------- */
+  const totalOrders = todayAll.length;
+  const totalSales = todayCompleted.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalItems = todayCompleted.reduce((s, o) => s + itemsCount(o), 0);
+  const customers = new Set(
+    todayCompleted.map((o) => o.customer_name || o.table_name || `order-${o.id}`)
+  ).size;
+
+  /* ---------------- yesterday for deltas ---------------- */
+  const yOrders = yesterdayAll.length;
+  const ySales = yesterdayCompleted.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const yItems = yesterdayCompleted.reduce((s, o) => s + itemsCount(o), 0);
+  const yCustomers = new Set(
+    yesterdayCompleted.map((o) => o.customer_name || o.table_name || `order-${o.id}`)
+  ).size;
+
+  const ordersDelta = calcDelta(totalOrders, yOrders);
+  const salesDelta = calcDelta(totalSales, ySales);
+  const itemsDelta = calcDelta(totalItems, yItems);
+  const custDelta = calcDelta(customers, yCustomers);
+
+  /* ---------------- last 7 days for sales chart ---------------- */
   const last7 = useMemo(() => {
     const buckets = {};
     for (let i = 6; i >= 0; i -= 1) {
-      const d = new Date();
+      const d = new Date(now);
       d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      buckets[key] = { period: d.toLocaleDateString('en-US', { weekday: 'short' }), sales: 0 };
+      buckets[dayKey(d)] = {
+        period: d.toLocaleDateString('en-US', { weekday: 'short' }),
+        sales: 0,
+      };
     }
     completed.forEach((o) => {
-      const key = new Date(o.timestamp || o.created_at || Date.now()).toISOString().slice(0, 10);
-      if (buckets[key]) buckets[key].sales += Number(o.total) || 0;
+      const k = dayKey(orderTime(o));
+      if (buckets[k]) buckets[k].sales += Number(o.total) || 0;
     });
     return Object.values(buckets);
-  }, [completed]);
+    // eslint-disable-next-line
+  }, [completed, tick]);
 
-  /* orders by type */
-  const byTypeRaw = completed.reduce((acc, o) => {
+  /* this week vs last week sales delta (rolling 7-day windows) */
+  const thisWeekSales = useMemo(() => {
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - 6);
+    cutoff.setHours(0, 0, 0, 0);
+    return completed
+      .filter((o) => orderTime(o) >= cutoff)
+      .reduce((s, o) => s + (Number(o.total) || 0), 0);
+    // eslint-disable-next-line
+  }, [completed, tick]);
+  const lastWeekSales = useMemo(() => {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 13);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(now);
+    end.setDate(end.getDate() - 7);
+    end.setHours(23, 59, 59, 999);
+    return completed
+      .filter((o) => orderTime(o) >= start && orderTime(o) <= end)
+      .reduce((s, o) => s + (Number(o.total) || 0), 0);
+    // eslint-disable-next-line
+  }, [completed, tick]);
+  const weekDelta = calcDelta(thisWeekSales, lastWeekSales);
+
+  /* ---------------- orders by type (today) ---------------- */
+  const byTypeRaw = todayAll.reduce((acc, o) => {
     const k = (o.type || 'DINE_IN').toUpperCase();
     acc[k] = (acc[k] || 0) + 1;
     return acc;
@@ -212,56 +335,123 @@ const Dashboard = ({ locationSettings }) => {
     { name: 'Takeaway', value: byTypeRaw.TAKEAWAY || 0, color: '#10b981' },
     { name: 'QR Order', value: byTypeRaw.QR_CODE || 0, color: '#3b82f6' },
   ];
-  const totalTypeCount = orderTypeData.reduce((s, t) => s + t.value, 0) || totalOrders;
+  const totalTypeCount = orderTypeData.reduce((s, t) => s + t.value, 0);
 
-  /* top selling items */
+  /* ---------------- top selling items (this week) ---------------- */
   const itemSalesMap = {};
-  completed.forEach((o) => {
-    (o.items || []).forEach((it) => {
-      const key = it.name;
-      if (!key) return;
-      if (!itemSalesMap[key]) itemSalesMap[key] = { name: key, revenue: 0, orders: 0 };
-      itemSalesMap[key].revenue += (Number(it.price) || 0) * (it.quantity || it.qty || 1);
-      itemSalesMap[key].orders += it.quantity || it.qty || 1;
+  const weekCutoff = new Date(now);
+  weekCutoff.setDate(weekCutoff.getDate() - 6);
+  weekCutoff.setHours(0, 0, 0, 0);
+  completed
+    .filter((o) => orderTime(o) >= weekCutoff)
+    .forEach((o) => {
+      (o.items || []).forEach((it) => {
+        const key = it.name;
+        if (!key) return;
+        if (!itemSalesMap[key]) itemSalesMap[key] = { name: key, revenue: 0, orders: 0 };
+        const qty = Number(it.quantity || it.qty) || 1;
+        itemSalesMap[key].revenue += (Number(it.price) || 0) * qty;
+        itemSalesMap[key].orders += qty;
+      });
     });
-  });
   const topItems = Object.values(itemSalesMap)
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 5);
   const maxItemRevenue = Math.max(1, ...topItems.map((i) => i.revenue));
 
-  /* recent transactions */
-  const recentTx = completed.slice(-5).reverse();
+  /* ---------------- recent transactions ---------------- */
+  const recentTx = [...completed]
+    .sort((a, b) => orderTime(b).getTime() - orderTime(a).getTime())
+    .slice(0, 5);
 
-  /* peak hours */
-  const peakHours = buildHourlyTrend(orders);
-  const peakMax = peakHours.reduce((m, p) => (p.sales > m.sales ? p : m), { period: '', sales: 0 });
-
-  /* spark data — last 14 days revenue/orders/items/customers */
-  const buildDailyMetric = (extract) => {
+  /* ---------------- peak hours (today only) ---------------- */
+  const peakHours = useMemo(() => {
     const buckets = {};
-    for (let i = 13; i >= 0; i -= 1) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      buckets[d.toISOString().slice(0, 10)] = { i: 13 - i, v: 0 };
-    }
-    completed.forEach((o) => {
-      const key = new Date(o.timestamp || o.created_at || Date.now()).toISOString().slice(0, 10);
-      if (buckets[key]) buckets[key].v += extract(o);
+    for (let h = 9; h <= 23; h += 1) buckets[h] = 0;
+    todayCompleted.forEach((o) => {
+      const h = orderTime(o).getHours();
+      if (buckets[h] !== undefined) buckets[h] += Number(o.total) || 0;
     });
-    return buildSparkline(Object.values(buckets));
-  };
-
-  const salesSpark = buildDailyMetric((o) => Number(o.total) || 0);
-  const ordersSpark = buildDailyMetric(() => 1);
-  const itemsSpark = buildDailyMetric((o) =>
-    (o.items || []).reduce((a, b) => a + (b.quantity || b.qty || 0), 0)
+    return Object.keys(buckets).map((h) => ({
+      period: formatHourLabel(Number(h)),
+      sales: Math.round(buckets[h]),
+    }));
+    // eslint-disable-next-line
+  }, [todayCompleted, tick]);
+  const peakMax = peakHours.reduce(
+    (m, p) => (p.sales > m.sales ? p : m),
+    { period: '', sales: 0 }
   );
-  const custSpark = buildDailyMetric(() => 1);
 
-  /* bottom KPI bar */
-  const avgOrder = completed.length ? totalSales / completed.length : 0;
+  /* ---------------- sparklines (last 14 days, REAL data) ---------------- */
+  const buildSpark = useCallback(
+    (extract) => {
+      const buckets = {};
+      for (let i = 13; i >= 0; i -= 1) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        buckets[dayKey(d)] = { i: 13 - i, v: 0 };
+      }
+      completed.forEach((o) => {
+        const k = dayKey(orderTime(o));
+        if (buckets[k]) buckets[k].v += extract(o);
+      });
+      return Object.values(buckets);
+    },
+    // eslint-disable-next-line
+    [completed, tick]
+  );
 
+  const salesSpark = buildSpark((o) => Number(o.total) || 0);
+  const ordersSpark = buildSpark(() => 1);
+  const itemsSpark = buildSpark((o) => itemsCount(o));
+  const custSpark = buildSpark(() => 1);
+
+  /* ---------------- bottom KPI strip (all real) ---------------- */
+  const avgOrder = todayCompleted.length ? totalSales / todayCompleted.length : 0;
+
+  // table occupancy = distinct dine-in tables currently in active orders
+  const activeTables = new Set(
+    liveOrders
+      .filter((o) => (o.type || 'DINE_IN').toUpperCase() === 'DINE_IN')
+      .map((o) => o.table_name)
+      .filter(Boolean)
+  );
+
+  // repeat customers: among today's completed customers, share with >1 lifetime completed order
+  const customerCountMap = {};
+  completed.forEach((o) => {
+    const key = o.customer_name || o.table_name;
+    if (!key) return;
+    customerCountMap[key] = (customerCountMap[key] || 0) + 1;
+  });
+  const todaysCustomers = new Set(
+    todayCompleted.map((o) => o.customer_name || o.table_name).filter(Boolean)
+  );
+  let repeatCount = 0;
+  todaysCustomers.forEach((c) => {
+    if (customerCountMap[c] >= 2) repeatCount += 1;
+  });
+  const repeatPct = todaysCustomers.size
+    ? Math.round((repeatCount / todaysCustomers.size) * 100)
+    : 0;
+
+  // month growth: this month vs last month (full month sums)
+  const thisMonthStart = startOfMonth(now);
+  const lastMonthStart = new Date(thisMonthStart);
+  lastMonthStart.setMonth(lastMonthStart.getMonth() - 1);
+  const lastMonthEnd = new Date(thisMonthStart);
+  lastMonthEnd.setMilliseconds(-1);
+  const thisMonthSales = completed
+    .filter((o) => orderTime(o) >= thisMonthStart)
+    .reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const lastMonthSales = completed
+    .filter((o) => orderTime(o) >= lastMonthStart && orderTime(o) <= lastMonthEnd)
+    .reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const monthDelta = calcDelta(thisMonthSales, lastMonthSales);
+  const monthLabel = now.toLocaleDateString('en-US', { month: 'short' });
+
+  /* ----------------- render ----------------- */
   return (
     <div className="px-4 sm:px-6 lg:px-8 py-6">
       {/* ===== Page header ===== */}
@@ -294,10 +484,10 @@ const Dashboard = ({ locationSettings }) => {
           iconColor="text-orange-500"
           label="Total Orders"
           value={totalOrders}
-          delta="12.5%"
-          trend="up"
+          delta={ordersDelta}
           sparkColor="#f97316"
           sparkData={ordersSpark}
+          gradientId="spark-orders"
         />
         <KpiCard
           icon={DollarSign}
@@ -305,10 +495,10 @@ const Dashboard = ({ locationSettings }) => {
           iconColor="text-emerald-500"
           label="Total Sales"
           value={fmt(totalSales)}
-          delta="18.2%"
-          trend="up"
+          delta={salesDelta}
           sparkColor="#10b981"
           sparkData={salesSpark}
+          gradientId="spark-sales"
         />
         <KpiCard
           icon={Package}
@@ -316,10 +506,10 @@ const Dashboard = ({ locationSettings }) => {
           iconColor="text-amber-500"
           label="Total Items"
           value={totalItems}
-          delta="5.4%"
-          trend="down"
+          delta={itemsDelta}
           sparkColor="#f59e0b"
           sparkData={itemsSpark}
+          gradientId="spark-items"
         />
         <KpiCard
           icon={Users}
@@ -327,28 +517,37 @@ const Dashboard = ({ locationSettings }) => {
           iconColor="text-violet-500"
           label="Total Customers"
           value={customers}
-          delta="8.7%"
-          trend="up"
+          delta={custDelta}
           sparkColor="#8b5cf6"
           sparkData={custSpark}
+          gradientId="spark-customers"
         />
       </div>
 
-      {/* ===== Row 2: Sales overview + Orders by type + Live orders ===== */}
+      {/* ===== Row 2 ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
         <Section
           className="lg:col-span-6"
           title="Sales Overview"
           right={
-            <button className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
-              This Week <span className="text-gray-400">▾</span>
-            </button>
+            <span className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 bg-white">
+              This Week
+            </span>
           }
         >
           <div className="flex items-baseline gap-3">
-            <p className="text-2xl font-bold text-gray-900">{fmt(totalSales)}</p>
-            <span className="text-xs font-semibold text-emerald-500 inline-flex items-center gap-0.5">
-              <ArrowUpRight className="w-3.5 h-3.5" /> 18.2%
+            <p className="text-2xl font-bold text-gray-900">{fmt(thisWeekSales)}</p>
+            <span
+              className={`text-xs font-semibold inline-flex items-center gap-0.5 ${
+                weekDelta.positive ? 'text-emerald-500' : 'text-rose-500'
+              }`}
+            >
+              {weekDelta.positive ? (
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              ) : (
+                <ArrowDownRight className="w-3.5 h-3.5" />
+              )}
+              {weekDelta.value}
             </span>
             <span className="text-xs text-gray-400">vs last week</span>
           </div>
@@ -363,14 +562,34 @@ const Dashboard = ({ locationSettings }) => {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis dataKey="period" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => fmt(v)} />
+                <XAxis
+                  dataKey="period"
+                  tick={{ fontSize: 11, fill: '#94a3b8' }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 11, fill: '#94a3b8' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => fmt(v)}
+                />
                 <Tooltip
                   cursor={{ stroke: '#fed7aa', strokeWidth: 2 }}
-                  contentStyle={{ borderRadius: 12, border: '1px solid #f1f5f9', boxShadow: '0 6px 16px rgba(0,0,0,0.06)' }}
+                  contentStyle={{
+                    borderRadius: 12,
+                    border: '1px solid #f1f5f9',
+                    boxShadow: '0 6px 16px rgba(0,0,0,0.06)',
+                  }}
                   formatter={(v) => [fmt(v), 'Sales']}
                 />
-                <Area type="monotone" dataKey="sales" stroke="#f97316" strokeWidth={2.5} fill="url(#salesGrad)" />
+                <Area
+                  type="monotone"
+                  dataKey="sales"
+                  stroke="#f97316"
+                  strokeWidth={2.5}
+                  fill="url(#salesGrad)"
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -380,12 +599,25 @@ const Dashboard = ({ locationSettings }) => {
           <div className="relative h-48 flex items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={orderTypeData} dataKey="value" innerRadius={60} outerRadius={85} stroke="none">
-                  {orderTypeData.map((entry, idx) => (
+                <Pie
+                  data={
+                    totalTypeCount === 0
+                      ? [{ name: 'No data', value: 1, color: '#e5e7eb' }]
+                      : orderTypeData
+                  }
+                  dataKey="value"
+                  innerRadius={60}
+                  outerRadius={85}
+                  stroke="none"
+                >
+                  {(totalTypeCount === 0
+                    ? [{ name: 'No data', value: 1, color: '#e5e7eb' }]
+                    : orderTypeData
+                  ).map((entry, idx) => (
                     <Cell key={idx} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip />
+                {totalTypeCount > 0 && <Tooltip />}
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
@@ -397,7 +629,8 @@ const Dashboard = ({ locationSettings }) => {
             {orderTypeData.map((t) => (
               <div key={t.name} className="flex items-center gap-1.5 text-gray-600">
                 <span className="w-2 h-2 rounded-full" style={{ background: t.color }} />
-                {t.name}
+                {t.name}{' '}
+                <span className="text-gray-400">({t.value})</span>
               </div>
             ))}
           </div>
@@ -406,27 +639,42 @@ const Dashboard = ({ locationSettings }) => {
         <Section
           className="lg:col-span-3"
           title="Live Orders"
-          right={<span className="text-[11px] font-semibold text-orange-600 bg-orange-50 px-2 py-1 rounded-full">{liveOrders.length} Active</span>}
+          right={
+            <span className="text-[11px] font-semibold text-orange-600 bg-orange-50 px-2 py-1 rounded-full">
+              {liveOrders.length} Active
+            </span>
+          }
         >
           <div className="space-y-3">
             {liveOrders.slice(0, 4).map((o, idx) => {
               const status = (o.status || 'preparing').toLowerCase();
               const minutes = Math.max(
                 1,
-                Math.round(
-                  (Date.now() - new Date(o.timestamp || o.created_at || Date.now())) / 60000
-                )
+                Math.round((Date.now() - orderTime(o).getTime()) / 60000)
               );
-              const itemCount = Array.isArray(o.items) ? o.items.length : 0;
+              const typeKey = (o.type || 'DINE_IN').toUpperCase();
+              const TypeIcon = TYPE_ICON[typeKey] || Utensils;
+              const typeLabel = TYPE_LABEL[typeKey] || 'Dine-In';
+              const itemCt = Array.isArray(o.items) ? o.items.length : 0;
+              const displayLabel = o.table_name
+                ? typeKey === 'TAKEAWAY'
+                  ? `Takeaway ${o.table_name}`
+                  : o.table_name
+                : typeLabel;
               return (
-                <div key={o.id || idx} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-orange-200 transition">
+                <div
+                  key={o.id || idx}
+                  className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-orange-200 transition"
+                >
                   <div className="w-9 h-9 rounded-lg bg-orange-50 text-orange-500 flex items-center justify-center">
-                    <ShoppingCart className="w-4 h-4" />
+                    <TypeIcon className="w-4 h-4" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-800 truncate">Table {o.table_name || `T${idx + 1}`}</p>
+                    <p className="text-sm font-semibold text-gray-800 truncate">
+                      {displayLabel}
+                    </p>
                     <p className="text-[11px] text-gray-500 truncate">
-                      {o.type === 'TAKEAWAY' ? 'Takeaway' : 'Dine-In'} • {itemCount} items
+                      {typeLabel} • {itemCt} items
                     </p>
                   </div>
                   <div className="text-right">
@@ -441,19 +689,22 @@ const Dashboard = ({ locationSettings }) => {
             {liveOrders.length === 0 && !loading && (
               <p className="text-sm text-gray-400 text-center py-4">No live orders</p>
             )}
+            {liveOrders.length === 0 && loading && (
+              <p className="text-sm text-gray-400 text-center py-4">Loading…</p>
+            )}
           </div>
         </Section>
       </div>
 
-      {/* ===== Row 3: Top selling + Peak hours + Recent transactions ===== */}
+      {/* ===== Row 3 ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
         <Section
           className="lg:col-span-4"
           title="Top Selling Items"
           right={
-            <button className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
-              This Week <span className="text-gray-400">▾</span>
-            </button>
+            <span className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 bg-white">
+              This Week
+            </span>
           }
         >
           <div className="space-y-3">
@@ -470,10 +721,12 @@ const Dashboard = ({ locationSettings }) => {
                   <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full"
-                      style={{ width: `${Math.max(8, (it.revenue / maxItemRevenue) * 100)}%` }}
+                      style={{
+                        width: `${Math.max(8, (it.revenue / maxItemRevenue) * 100)}%`,
+                      }}
                     />
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-1">{it.orders} orders</p>
+                  <p className="text-[11px] text-gray-400 mt-1">{it.orders} sold</p>
                 </div>
               </div>
             ))}
@@ -481,26 +734,33 @@ const Dashboard = ({ locationSettings }) => {
               <p className="text-sm text-gray-400 text-center py-4">No data yet</p>
             )}
           </div>
-          <button className="mt-4 text-xs font-semibold text-orange-600 hover:text-orange-700">
-            View full menu report →
-          </button>
         </Section>
 
         <Section
           className="lg:col-span-4"
           title="Peak Sales Hours"
           right={
-            <button className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
-              Today <span className="text-gray-400">▾</span>
-            </button>
+            <span className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 bg-white">
+              Today
+            </span>
           }
         >
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={peakHours} barCategoryGap={6}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis dataKey="period" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => fmt(v).replace(/\.00$/, '')} />
+                <XAxis
+                  dataKey="period"
+                  tick={{ fontSize: 10, fill: '#94a3b8' }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: '#94a3b8' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => fmt(v).replace(/\.00$/, '')}
+                />
                 <Tooltip
                   cursor={{ fill: '#fff7ed' }}
                   contentStyle={{ borderRadius: 12, border: '1px solid #f1f5f9' }}
@@ -508,24 +768,27 @@ const Dashboard = ({ locationSettings }) => {
                 />
                 <Bar dataKey="sales" radius={[6, 6, 0, 0]}>
                   {peakHours.map((p, idx) => (
-                    <Cell key={idx} fill={p.period === peakMax.period ? '#f97316' : '#fdba74'} />
+                    <Cell
+                      key={idx}
+                      fill={p.period === peakMax.period && peakMax.sales > 0 ? '#f97316' : '#fdba74'}
+                    />
                   ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <button className="mt-4 text-xs font-semibold text-orange-600 hover:text-orange-700">
-            View full analytics →
-          </button>
         </Section>
 
         <Section className="lg:col-span-4" title="Recent Transactions">
           <div className="space-y-3">
             {recentTx.map((o) => {
-              const mins = Math.round((Date.now() - new Date(o.timestamp || o.created_at || Date.now())) / 60000);
+              const mins = Math.round((Date.now() - orderTime(o).getTime()) / 60000);
               const idStr = `#ORD-${String(o.id).padStart(5, '0')}`;
               return (
-                <div key={o.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 transition">
+                <div
+                  key={o.id}
+                  className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 transition"
+                >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center">
                       <DollarSign className="w-4 h-4" />
@@ -550,9 +813,6 @@ const Dashboard = ({ locationSettings }) => {
               <p className="text-sm text-gray-400 text-center py-4">No transactions yet</p>
             )}
           </div>
-          <button className="mt-3 text-xs font-semibold text-orange-600 hover:text-orange-700">
-            View all transactions →
-          </button>
         </Section>
       </div>
 
@@ -562,29 +822,29 @@ const Dashboard = ({ locationSettings }) => {
           icon={Wallet}
           iconBg="bg-emerald-50"
           iconColor="text-emerald-500"
-          label="AVERAGE ORDER VALUE"
+          label="AVG ORDER VALUE"
           value={fmt(avgOrder)}
         />
         <BottomKpi
           icon={Users}
           iconBg="bg-orange-50"
           iconColor="text-orange-500"
-          label="TABLE OCCUPANCY"
-          value="68%"
+          label="ACTIVE TABLES"
+          value={activeTables.size}
         />
         <BottomKpi
           icon={Repeat}
           iconBg="bg-violet-50"
           iconColor="text-violet-500"
           label="REPEAT CUSTOMERS"
-          value="42%"
+          value={`${repeatPct}%`}
         />
         <BottomKpi
           icon={TrendingUpAlt}
-          iconBg="bg-blue-50"
-          iconColor="text-blue-500"
+          iconBg={monthDelta.positive ? 'bg-blue-50' : 'bg-rose-50'}
+          iconColor={monthDelta.positive ? 'text-blue-500' : 'text-rose-500'}
           label="GROWTH THIS MONTH"
-          value="↑ 24.5%"
+          value={`${monthDelta.positive ? '↑' : '↓'} ${monthDelta.value.replace('+', '')}`}
         />
         <div className="rounded-2xl p-4 bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-md">
           <div className="flex items-center gap-3">
@@ -593,9 +853,9 @@ const Dashboard = ({ locationSettings }) => {
             </div>
             <div>
               <p className="text-[10px] uppercase font-bold tracking-wide opacity-90">
-                Total Revenue (May)
+                Total Revenue ({monthLabel})
               </p>
-              <p className="text-xl font-extrabold mt-0.5">{fmt(totalSales * 3)}</p>
+              <p className="text-xl font-extrabold mt-0.5">{fmt(thisMonthSales)}</p>
             </div>
           </div>
         </div>
@@ -611,7 +871,9 @@ const BottomKpi = ({ icon: Icon, iconBg, iconColor, label, value }) => (
         <Icon className={`w-5 h-5 ${iconColor}`} />
       </div>
       <div>
-        <p className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">{label}</p>
+        <p className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">
+          {label}
+        </p>
         <p className="text-lg font-bold text-gray-900 mt-0.5">{value}</p>
       </div>
     </div>
