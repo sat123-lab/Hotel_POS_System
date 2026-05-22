@@ -99,6 +99,8 @@ const SettingsPage = () => {
     contactPhone: initialExt.contactPhone || '+91 90000 80000',
     timezone: initialExt.timezone || 'GMT+5:30',
     currency: initialExt.currency || 'INR',
+    address: initialExt.address || '',
+    gstin: initialExt.gstin || '',
   });
   const [payments, setPayments] = useState({
     upiId: initialExt.upiId || '',
@@ -418,6 +420,28 @@ const GeneralForm = ({ value, onChange, onSave }) => {
             onChange={(e) => set('contactPhone', e.target.value)}
             className={inputCls}
             placeholder="+91 90000 00000"
+          />
+        </Field>
+        <div className="md:col-span-2">
+          <Field label="Restaurant Address">
+            <textarea
+              value={value.address}
+              onChange={(e) => set('address', e.target.value)}
+              className={`${inputCls} min-h-[68px] resize-y`}
+              placeholder="Opp. Samatha College, Sector-6, MVP Colony, Visakhapatnam"
+            />
+            <p className="text-[11px] text-gray-400 mt-1.5">
+              Prints at the top of every customer bill
+            </p>
+          </Field>
+        </div>
+        <Field label="GSTIN">
+          <input
+            type="text"
+            value={value.gstin}
+            onChange={(e) => set('gstin', e.target.value.toUpperCase())}
+            className={inputCls}
+            placeholder="37CFCPD4588M1ZZ"
           />
         </Field>
         <Field label="Local Timezone">
