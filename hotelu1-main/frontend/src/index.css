@@ -4,6 +4,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Remove Chrome / Safari yellow-blue autofill background on login inputs */
+.login-input:-webkit-autofill,
+.login-input:-webkit-autofill:hover,
+.login-input:-webkit-autofill:focus,
+.login-input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px rgba(255, 247, 237, 0.55) inset !important;
+  -webkit-text-fill-color: #1f2937 !important;
+  caret-color: #1f2937;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 body {
   font-family: "Inter", sans-serif;
   background-color: var(--app-bg, #F5F7FA);

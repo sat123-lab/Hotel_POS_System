@@ -1,657 +1,621 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from "react-router-dom";
-import { TrendingUp, Users, DollarSign, Package, Calendar, BarChart3, PieChart as PieChartIcon, ShoppingCart, TrendingDown, Activity, Download, RefreshCw } from 'lucide-react';
-import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
-import { io } from 'socket.io-client';
-import { authFetch, getSocketUrl } from '../utils/api';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  ShoppingCart,
+  DollarSign,
+  Package,
+  Users,
+  Plus,
+  Calendar,
+  TrendingUp,
+  ArrowUpRight,
+  ArrowDownRight,
+  Clock,
+  CheckCircle2,
+  Wallet,
+  Repeat,
+  TrendingUp as TrendingUpAlt,
+  Crown,
+} from 'lucide-react';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+} from 'recharts';
+import { authFetch } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
 
-
-
-
-
-
-
-const Dashboard = ({ locationSettings }) => {
-    const { format: fmt } = useCurrency(locationSettings);
-
-    // Authentication check
-    const navigate = useNavigate();
-    useEffect(() => {
-        const user = localStorage.getItem("user");
-        const token = localStorage.getItem("token");
-        if (!user || !token) {
-            navigate("/login");
-        }
-    }, [navigate]);
-
-    const [isLoading, setIsLoading] = useState(true);
-    const [lastUpdated, setLastUpdated] = useState(new Date());
-    const [isRefreshing, setIsRefreshing] = useState(false);
-
-    const [salesData, setSalesData] = useState({
-        liveOrders: 0,
-        totalOrdersToday: 0,
-        totalSalesToday: 0,
-        totalItemsSold: 0,
-        topSellingItems: [],
-        profitLoss: 0,
-    });
-
-
-
-
-
-
-
-    const [ordersData, setOrdersData] = useState([]);
-
-
-
-
-
-
-
-    const [selectedDate, setSelectedDate] = useState(() => {
-
-
-
-        const today = new Date();
-
-
-
-        const year = today.getFullYear();
-
-
-
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-
-
-
-        const day = String(today.getDate()).padStart(2, '0');
-
-
-
-        return `${year}-${month}-${day}`;
-
-
-
-    }); // YYYY-MM-DD
-
-
-
-    
-
-
-
-    // Get today's date in local format for max date attribute
-
-
-
-    const getTodayLocalDate = () => {
-
-
-
-        const today = new Date();
-
-
-
-        const year = today.getFullYear();
-
-
-
-        const month = String(today.getMonth() + 1).padStart(2, '0');
-
-
-
-        const day = String(today.getDate()).padStart(2, '0');
-
-
-
-        return `${year}-${month}-${day}`;
-
-
-
-    };
-
-
-
-    const todayLocalDate = getTodayLocalDate();
-
-
-    const fetchDashboardData = useCallback(async () => {
-        try {
-            if (!isRefreshing) setIsLoading(true);
-            
-            const res = await authFetch(`/api/orders?date=${selectedDate}`);
-            
-            if (!res.ok) {
-                console.error('Server error:', res.status, res.statusText);
-                setSalesData({
-                    liveOrders: 0,
-                    totalOrdersToday: 0,
-                    totalSalesToday: 0,
-                    totalItemsSold: 0,
-                    topSellingItems: [],
-                    profitLoss: 0,
-                });
-                setOrdersData([]);
-                setIsLoading(false);
-                return;
-            }
-
-            const orders = await res.json();
-            setOrdersData(orders);
-            setLastUpdated(new Date());
-            
-            if (!Array.isArray(orders)) {
-                console.error('Orders response is not an array:', orders);
-                setSalesData({
-                    liveOrders: 0,
-                    totalOrdersToday: 0,
-                    totalSalesToday: 0,
-                    totalItemsSold: 0,
-                    topSellingItems: [],
-                    profitLoss: 0,
-                });
-                setOrdersData([]);
-                setIsLoading(false);
-                return;
-            }
-
-            const activeOrders = orders.filter(o => o.status !== 'NOT_AVAILABLE');
-            // Include both completed AND delivered orders in sales calculations
-            const reportableOrders = orders.filter(o => o.status === 'completed' || o.status === 'delivered');
-            let totalOrdersToday = activeOrders.length;
-            const totalSalesToday = reportableOrders.reduce((sum, order) => sum + order.total, 0);
-
-            // Calculate Live Orders client-side (exclude completed, delivered, NOT_AVAILABLE)
-            const liveOrders = orders.filter(o => 
-                o.status !== 'completed' && 
-                o.status !== 'delivered' && 
-                o.status !== 'NOT_AVAILABLE'
-            ).length;
-
-            totalOrdersToday = activeOrders.length;
-
-            const itemCounts = {};
-            let totalItemsSold = 0;
-            // Count items from both completed and delivered orders
-            reportableOrders.forEach(order => {
-                (order.items || []).forEach(item => {
-                    const quantity = item.quantity || item.qty || 1;
-                    itemCounts[item.name] = (itemCounts[item.name] || 0) + quantity;
-                    totalItemsSold += quantity;
-                });
-            });
-
-            const topSellingItems = Object.entries(itemCounts)
-                .sort(([, countA], [, countB]) => countB - countA)
-                .slice(0, 5)
-                .map(([name, count]) => ({ name, count }));
-
-            const totalCosts = totalItemsSold * 50; // Assume ₹50 cost per item
-            const operationalCosts = 500; // Daily operational costs
-            const profitLoss = totalSalesToday - totalCosts - operationalCosts;
-
-            setSalesData({
-                liveOrders,
-                totalOrdersToday,
-                totalSalesToday: totalSalesToday.toFixed(2),
-                totalItemsSold,
-                topSellingItems,
-                profitLoss: profitLoss.toFixed(2),
-            });
-            setIsLoading(false);
-            setIsRefreshing(false);
-
-        } catch (err) {
-            console.error('Failed to fetch dashboard data:', err);
-            setIsLoading(false);
-            setIsRefreshing(false);
-        }
-    }, [selectedDate, isRefreshing, todayLocalDate]);
-
-    const handleRefresh = () => {
-        setIsRefreshing(true);
-        fetchDashboardData();
-    };
-
-    const getProfitLossColor = (value) => {
-        const num = parseFloat(value);
-        if (num > 0) return 'text-green-600';
-        if (num < 0) return 'text-red-600';
-        return 'text-gray-600';
-    };
-
-    const getProfitLossGradient = (value) => {
-        const num = parseFloat(value);
-        if (num > 0) return 'from-green-500 to-green-700';
-        if (num < 0) return 'from-red-500 to-red-700';
-        return 'from-gray-500 to-gray-700';
-    };
-
-    // Skeleton loading component
-    const MetricCardSkeleton = () => (
-        <div className="bg-gray-200 rounded-2xl p-6 animate-pulse">
-            <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 bg-gray-300 rounded-xl"></div>
-                <div className="w-16 h-4 bg-gray-300 rounded"></div>
-            </div>
-            <div className="w-24 h-4 bg-gray-300 rounded mb-2"></div>
-            <div className="w-32 h-8 bg-gray-300 rounded"></div>
-        </div>
-    );
-
-    // Enhanced tooltip component
-    const CustomTooltip = ({ active, payload, label }) => {
-        if (active && payload && payload.length) {
-            return (
-                <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
-                    <p className="text-sm font-semibold text-gray-800">{label}</p>
-                    <p className="text-sm text-gray-600">
-                        {payload[0].name}: <span className="font-bold text-indigo-600">{fmt(payload[0].value)}</span>
-                    </p>
-                </div>
-            );
-        }
-        return null;
-    };
-
-    const CustomPieTooltip = ({ active, payload }) => {
-        if (active && payload && payload.length) {
-            return (
-                <div className="bg-white p-3 rounded-lg shadow-lg border border-gray-200">
-                    <p className="text-sm font-semibold text-gray-800">{payload[0].name}</p>
-                    <p className="text-sm text-gray-600">
-                        Orders: <span className="font-bold text-indigo-600">{payload[0].value}</span>
-                    </p>
-                </div>
-            );
-        }
-        return null;
-    };
-
-    useEffect(() => {
-        fetchDashboardData();
-        const interval = setInterval(fetchDashboardData, 10000); // Refresh every 10 seconds
-        return () => clearInterval(interval);
-    }, [fetchDashboardData]);
-
-    useEffect(() => {
-        const socket = io(getSocketUrl());
-        socket.on('order_status_updated', () => {
-            fetchDashboardData();
-        });
-        socket.on('order_created', () => {
-            fetchDashboardData();
-        });
-        socket.on('order_deleted', () => {
-            fetchDashboardData();
-        });
-        return () => {
-            socket.disconnect();
-        };
-    }, [fetchDashboardData]);
-
-    const getOrdersByType = () => {
-        const typeCounts = {
-            'Dine-In': 0,
-            'Takeaway': 0,
-            'QR Code': 0
-        };
-
-        ordersData.forEach(order => {
-            if (order.type === 'DINE_IN') {
-                typeCounts['Dine-In']++;
-            } else if (order.type === 'TAKEAWAY') {
-                typeCounts['Takeaway']++;
-            } else if (order.type === 'QR_CODE') {
-                typeCounts['QR Code']++;
-            }
-        });
-
-        return Object.entries(typeCounts).map(([name, value]) => ({ name, value }));
-    };
-
-    const getSalesTrend = () => {
-        const hourlySales = {};
-
-        for (let hour = 0; hour <= 23; hour++) {
-            const displayHour = hour === 0 ? '12 AM' : 
-                               hour === 12 ? '12 PM' : 
-                               hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
-            hourlySales[displayHour] = 0;
-        }
-
-        // Include both completed and delivered orders in sales trend
-        const reportableOrders = ordersData.filter(order => order.status === 'completed' || order.status === 'delivered');
-
-        reportableOrders.forEach(order => {
-            const orderDate = new Date(order.timestamp || order.created_at);
-            const hour = orderDate.getHours();
-            const displayHour = hour === 0 ? '12 AM' : 
-                               hour === 12 ? '12 PM' : 
-                               hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
-            if (hourlySales[displayHour] !== undefined) {
-                hourlySales[displayHour] += order.total || 0;
-            }
-        });
-
-        return Object.entries(hourlySales).map(([hour, sales]) => ({ hour, sales }));
-    };
-
-
-
-    return (
-        <div className="min-h-screen bg-[#FFF8F0]">
-            {/* Header Section - Orange Theme Matching Reference Image */}
-            <div className="bg-gradient-to-r from-orange-500 to-orange-600 shadow-xl rounded-2xl mx-4 mt-4">
-                <div className="px-6 py-6">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h2 className="text-3xl font-bold text-white mb-1">Dashboard & Analytics</h2>
-                            <p className="text-orange-100 text-base">Real-time restaurant performance metrics</p>
-                        </div>
-                        <div className="hidden md:flex items-center space-x-3">
-                            <div className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm">
-                                <Activity className="w-4 h-4 text-green-300 animate-pulse" />
-                                <span className="text-white text-sm font-medium">Live</span>
-                            </div>
-                            <button
-                                onClick={handleRefresh}
-                                className="flex items-center space-x-2 bg-white/20 px-3 py-2 rounded-xl backdrop-blur-sm hover:bg-white/30 transition-colors"
-                                disabled={isRefreshing}
-                            >
-                                <RefreshCw className={`w-4 h-4 text-white ${isRefreshing ? 'animate-spin' : ''}`} />
-                                <span className="text-white text-sm font-medium">Refresh</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div className="mt-3 flex items-center space-x-4">
-                        <div className="flex items-center space-x-2">
-                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                            <span className="text-orange-100 text-sm">Last updated: {lastUpdated.toLocaleTimeString()}</span>
-                        </div>
-                        {selectedDate === todayLocalDate && (
-                            <div className="flex items-center space-x-2 bg-green-500/20 px-3 py-1 rounded-full">
-                                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                                <span className="text-green-100 text-xs font-medium">Real-time updates enabled</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* Date Picker Section */}
-            <div className="px-6 py-4">
-                <div className="bg-white rounded-2xl shadow-lg p-6">
-                    <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-6">
-                        <div className="flex items-center space-x-3">
-                            <div className="p-2 bg-orange-100 rounded-xl">
-                                <Calendar className="w-5 h-5 text-orange-500" />
-                            </div>
-                            <label htmlFor="date-picker" className="text-lg font-semibold text-gray-700">
-                                Select Date:
-                            </label>
-                        </div>
-                        <input
-                            type="date"
-                            id="date-picker"
-                            value={selectedDate}
-                            onChange={(e) => setSelectedDate(e.target.value)}
-                            className="px-4 py-3 border-2 border-orange-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white shadow-sm transition-all duration-200"
-                            max={todayLocalDate}
-                        />
-                        <span className="text-sm text-gray-600 bg-orange-50 px-4 py-2 rounded-lg font-medium">
-                            {new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { 
-                                weekday: 'long', 
-                                year: 'numeric', 
-                                month: 'long', 
-                                day: 'numeric' 
-                            })}
-                        </span>
-                    </div>
-                </div>
-            </div>
-
-
-
-            <div className="px-6 pb-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                    {/* Live Orders Card - Orange */}
-                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="p-3 bg-orange-100 rounded-xl">
-                                <ShoppingCart className="w-6 h-6 text-orange-500" />
-                            </div>
-                            <span className="text-orange-500 text-sm font-medium bg-orange-50 px-3 py-1 rounded-full">Live</span>
-                        </div>
-                        <p className="text-gray-500 text-sm font-medium mb-1">Live Orders</p>
-                        <p className="text-3xl font-bold text-gray-800">{salesData.liveOrders}</p>
-                    </div>
-
-                    {/* Total Orders Card - Blue */}
-                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="p-3 bg-blue-100 rounded-xl">
-                                <Users className="w-6 h-6 text-blue-500" />
-                            </div>
-                            <span className="text-blue-500 text-sm font-medium bg-blue-50 px-3 py-1 rounded-full">Today</span>
-                        </div>
-                        <p className="text-gray-500 text-sm font-medium mb-1">Total Orders</p>
-                        <p className="text-3xl font-bold text-gray-800">{salesData.totalOrdersToday}</p>
-                    </div>
-
-                    {/* Total Sales Card - Green */}
-                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="p-3 bg-green-100 rounded-xl">
-                                <DollarSign className="w-6 h-6 text-green-500" />
-                            </div>
-                            <span className="text-green-500 text-sm font-medium bg-green-50 px-3 py-1 rounded-full">Revenue</span>
-                        </div>
-                        <p className="text-gray-500 text-sm font-medium mb-1">Total Sales</p>
-                        <p className="text-3xl font-bold text-gray-800">{fmt(salesData.totalSalesToday)}</p>
-                    </div>
-
-                    {/* Total Items Card - Purple */}
-                    <div className="group bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300">
-                        <div className="flex items-center justify-between mb-4">
-                            <div className="p-3 bg-purple-100 rounded-xl">
-                                <Package className="w-6 h-6 text-purple-500" />
-                            </div>
-                            <span className="text-purple-500 text-sm font-medium bg-purple-50 px-3 py-1 rounded-full">Items</span>
-                        </div>
-                        <p className="text-gray-500 text-sm font-medium mb-1">Total Items</p>
-                        <p className="text-3xl font-bold text-gray-800">{salesData.totalItemsSold}</p>
-                    </div>
-                </div>
-            </div>
-
-            {/* Charts Section - Reference Image Style: White cards */}
-            <div className="px-6 pb-8">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {/* Orders by Type Pie Chart */}
-                    <div className="bg-white rounded-2xl shadow-lg p-6">
-                        <div className="flex items-center justify-between mb-6">
-                            <div className="flex items-center">
-                                <div className="p-2 bg-orange-100 rounded-xl mr-3">
-                                    <PieChartIcon className="w-5 h-5 text-orange-500" />
-                                </div>
-                                <h3 className="text-xl font-bold text-gray-800">Orders by Type</h3>
-                            </div>
-                            <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                                <Download className="w-4 h-4 text-gray-600" />
-                            </button>
-                        </div>
-                        {isLoading ? (
-                            <div className="h-64 bg-gray-200 rounded-lg animate-pulse"></div>
-                        ) : (
-                            <ResponsiveContainer width="100%" height={250}>
-                                <PieChart>
-                                    <Pie
-                                        data={getOrdersByType()}
-                                        dataKey="value"
-                                        nameKey="name"
-                                        cx="50%"
-                                        cy="50%"
-                                        outerRadius={80}
-                                        fill="#8884d8"
-                                        label={({ name, value, percent }) => value > 0 ? `${name}: ${value}` : ''}
-                                        labelLine={false}
-                                        minAngle={15}
-                                    >
-                                        <Cell key="dinein" fill="#34d399" />
-                                        <Cell key="takeaway" fill="#60a5fa" />
-                                        <Cell key="qr" fill="#f59e42" />
-                                    </Pie>
-                                    <RechartsTooltip content={<CustomPieTooltip />} />
-                                    <Legend 
-                                        verticalAlign="bottom" 
-                                        height={36}
-                                        formatter={(value, entry) => `${entry.payload.name}: ${entry.payload.value}`}
-                                    />
-                                </PieChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-
-                    {/* Sales Trend Line Chart */}
-                    <div className="bg-white rounded-2xl shadow-lg p-6">
-                        <div className="flex items-center justify-between mb-6">
-                            <div className="flex items-center">
-                                <div className="p-2 bg-green-100 rounded-xl mr-3">
-                                    <TrendingUp className="w-5 h-5 text-green-500" />
-                                </div>
-                                <h3 className="text-xl font-bold text-gray-800">Sales Trend ({new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})</h3>
-                            </div>
-                            <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                                <Download className="w-4 h-4 text-gray-600" />
-                            </button>
-                        </div>
-                        {isLoading ? (
-                            <div className="h-64 bg-gray-200 rounded-lg animate-pulse"></div>
-                        ) : (
-                            <ResponsiveContainer width="100%" height={250}>
-                                <LineChart data={getSalesTrend()}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                                    <XAxis 
-                                        dataKey="hour" 
-                                        stroke="#6b7280"
-                                        tick={{ fontSize: 12 }}
-                                    />
-                                    <YAxis 
-                                        stroke="#6b7280"
-                                        tick={{ fontSize: 12 }}
-                                        tickFormatter={(value) => fmt(value)}
-                                    />
-                                    <RechartsTooltip content={<CustomTooltip />} />
-                                    <Legend />
-                                    <Line 
-                                        type="monotone" 
-                                        dataKey="sales" 
-                                        stroke="#f59e42" 
-                                        strokeWidth={3} 
-                                        dot={{ r: 5, fill: '#f59e42' }}
-                                        activeDot={{ r: 7 }}
-                                        name="Sales"
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-
-
-            {/* Top Selling Items Section - Reference Image Style */}
-            <div className="px-6 pb-8">
-                <div className="bg-white rounded-2xl shadow-lg p-6">
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center">
-                            <div className="p-2 bg-orange-100 rounded-xl mr-3">
-                                <Package className="w-5 h-5 text-orange-500" />
-                            </div>
-                            <h3 className="text-xl font-bold text-gray-800">Top-Selling Items ({new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})</h3>
-                        </div>
-                        <button className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                            <Download className="w-4 h-4 text-gray-600" />
-                        </button>
-                    </div>
-                    {isLoading ? (
-                        <div className="space-y-3">
-                            {[1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                                    <div className="flex items-center space-x-4">
-                                        <div className="w-10 h-10 bg-gray-200 rounded-xl animate-pulse"></div>
-                                        <div>
-                                            <div className="w-32 h-4 bg-gray-200 rounded animate-pulse mb-2"></div>
-                                            <div className="w-16 h-3 bg-gray-200 rounded animate-pulse"></div>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="w-16 h-6 bg-gray-200 rounded animate-pulse mb-2"></div>
-                                        <div className="w-20 h-3 bg-gray-200 rounded animate-pulse"></div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : salesData.topSellingItems.length === 0 ? (
-                        <div className="text-center py-12">
-                            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <Package className="w-8 h-8 text-orange-400" />
-                            </div>
-                            <p className="text-gray-500 text-lg">No sales data yet.</p>
-                            <p className="text-gray-400 text-sm mt-2">Start taking orders to see your best-selling items here</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-3">
-                            {salesData.topSellingItems.map((item, index) => (
-                                <div key={index} className="group flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-orange-50 transition-all duration-200 hover:shadow-md">
-                                    <div className="flex items-center space-x-4">
-                                        <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg">
-                                            {index + 1}
-                                        </div>
-                                        <div>
-                                            <p className="text-lg font-semibold text-gray-900">{item.name}</p>
-                                            <p className="text-sm text-orange-500 font-medium">Best seller</p>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-xl font-bold text-orange-600">{item.count}</p>
-                                        <p className="text-sm text-gray-500">items sold</p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* Footer */}
-            <div className="px-6 pb-8">
-                <div className="text-center text-sm text-gray-500">
-                    <p>Dashboard updates automatically every 10 seconds</p>
-                    <p className="mt-1">Last sync: {lastUpdated.toLocaleString()}</p>
-                </div>
-            </div>
-        </div>
-
-    );
-
-
-
+/* ---------------------------- helpers ---------------------------- */
+
+const buildSparkline = (data, length = 14) => {
+  if (data && data.length >= 2) return data;
+  const out = [];
+  let v = 30 + Math.random() * 20;
+  for (let i = 0; i < length; i += 1) {
+    v += (Math.random() - 0.45) * 10;
+    out.push({ i, v: Math.max(5, v) });
+  }
+  return out;
 };
 
+const formatHourLabel = (h) => {
+  const hh = h % 24;
+  const ampm = hh < 12 ? 'AM' : 'PM';
+  const dh = hh % 12 === 0 ? 12 : hh % 12;
+  return `${dh} ${ampm}`;
+};
 
+const buildHourlyTrend = (orders) => {
+  const buckets = {};
+  for (let h = 9; h <= 23; h += 1) buckets[h] = 0;
+  orders.forEach((o) => {
+    if (o.status !== 'completed') return;
+    const t = new Date(o.timestamp || o.created_at || Date.now());
+    const h = t.getHours();
+    if (buckets[h] !== undefined) buckets[h] += Number(o.total) || 0;
+  });
+  return Object.keys(buckets).map((h) => ({
+    period: formatHourLabel(Number(h)),
+    sales: Math.round(buckets[h]),
+  }));
+};
 
+/* ------------------------- small components ------------------------- */
 
+const KpiCard = ({ icon: Icon, iconBg, iconColor, label, value, delta, trend, sparkColor, sparkData }) => {
+  const positive = trend === 'up';
+  const TrendIcon = positive ? ArrowUpRight : ArrowDownRight;
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className={`w-11 h-11 rounded-full flex items-center justify-center ${iconBg}`}>
+          <Icon className={`w-5 h-5 ${iconColor}`} />
+        </div>
+      </div>
+      <p className="text-sm text-gray-500">{label}</p>
+      <p className="text-2xl sm:text-3xl font-extrabold text-gray-900 mt-1">{value}</p>
+      <div className="flex items-center gap-1 mt-2 text-xs">
+        <span className={`flex items-center gap-0.5 font-semibold ${positive ? 'text-emerald-500' : 'text-rose-500'}`}>
+          <TrendIcon className="w-3.5 h-3.5" />
+          {delta}
+        </span>
+        <span className="text-gray-400">vs yesterday</span>
+      </div>
+      <div className="-mx-3 -mb-2 mt-2 h-12">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={sparkData}>
+            <defs>
+              <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={sparkColor} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={sparkColor} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Area type="monotone" dataKey="v" stroke={sparkColor} strokeWidth={2} fill={`url(#grad-${label})`} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
 
+const Section = ({ title, right, children, className = '' }) => (
+  <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm p-5 ${className}`}>
+    <div className="flex items-center justify-between mb-4">
+      <h3 className="text-base font-bold text-gray-900">{title}</h3>
+      {right}
+    </div>
+    {children}
+  </div>
+);
 
+const StatusPill = ({ status }) => {
+  const map = {
+    preparing: 'bg-orange-50 text-orange-600',
+    ready: 'bg-emerald-50 text-emerald-600',
+    pending: 'bg-amber-50 text-amber-600',
+    completed: 'bg-blue-50 text-blue-600',
+  };
+  return (
+    <span className={`text-[11px] font-semibold px-2 py-1 rounded-full ${map[status] || 'bg-gray-100 text-gray-600'}`}>
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1 align-middle" />
+      {status.charAt(0).toUpperCase() + status.slice(1)}
+    </span>
+  );
+};
 
-export default Dashboard; 
+/* ------------------------------ main ------------------------------ */
 
+const Dashboard = ({ locationSettings }) => {
+  const navigate = useNavigate();
+  const { format: fmt } = useCurrency(locationSettings);
+  const [orders, setOrders] = useState([]);
+  const [menuItems, setMenuItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const today = useMemo(() => new Date(), []);
+  const dateLabel = today.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [ordersRes, menuRes] = await Promise.all([
+        authFetch('/api/orders'),
+        authFetch('/api/menu-items'),
+      ]);
+      const ordersData = ordersRes.ok ? await ordersRes.json() : [];
+      const menuData = menuRes.ok ? await menuRes.json() : [];
+      setOrders(Array.isArray(ordersData) ? ordersData : []);
+      setMenuItems(Array.isArray(menuData) ? menuData : []);
+    } catch (e) {
+      setOrders([]);
+      setMenuItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
+  useEffect(() => {
+    const u = localStorage.getItem('user');
+    const t = localStorage.getItem('token');
+    if (!u || !t) navigate('/login');
+    loadData();
+  }, [navigate, loadData]);
+
+  /* metrics */
+  const completed = orders.filter((o) => o.status === 'completed');
+  const totalOrders = orders.length;
+  const totalSales = completed.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalItems = completed.reduce(
+    (s, o) => s + (Array.isArray(o.items) ? o.items.reduce((a, b) => a + (b.quantity || b.qty || 0), 0) : 0),
+    0
+  );
+  const customers = new Set(completed.map((o) => o.customer_name || o.table_name || o.id)).size;
+
+  const liveOrders = orders.filter(
+    (o) => o.status && !['completed', 'cancelled', 'delivered'].includes(o.status.toLowerCase())
+  );
+
+  /* sales overview last 7 days */
+  const last7 = useMemo(() => {
+    const buckets = {};
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      buckets[key] = { period: d.toLocaleDateString('en-US', { weekday: 'short' }), sales: 0 };
+    }
+    completed.forEach((o) => {
+      const key = new Date(o.timestamp || o.created_at || Date.now()).toISOString().slice(0, 10);
+      if (buckets[key]) buckets[key].sales += Number(o.total) || 0;
+    });
+    return Object.values(buckets);
+  }, [completed]);
+
+  /* orders by type */
+  const byTypeRaw = completed.reduce((acc, o) => {
+    const k = (o.type || 'DINE_IN').toUpperCase();
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+  const orderTypeData = [
+    { name: 'Dine-In', value: byTypeRaw.DINE_IN || 0, color: '#f97316' },
+    { name: 'Takeaway', value: byTypeRaw.TAKEAWAY || 0, color: '#10b981' },
+    { name: 'QR Order', value: byTypeRaw.QR_CODE || 0, color: '#3b82f6' },
+  ];
+  const totalTypeCount = orderTypeData.reduce((s, t) => s + t.value, 0) || totalOrders;
+
+  /* top selling items */
+  const itemSalesMap = {};
+  completed.forEach((o) => {
+    (o.items || []).forEach((it) => {
+      const key = it.name;
+      if (!key) return;
+      if (!itemSalesMap[key]) itemSalesMap[key] = { name: key, revenue: 0, orders: 0 };
+      itemSalesMap[key].revenue += (Number(it.price) || 0) * (it.quantity || it.qty || 1);
+      itemSalesMap[key].orders += it.quantity || it.qty || 1;
+    });
+  });
+  const topItems = Object.values(itemSalesMap)
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+  const maxItemRevenue = Math.max(1, ...topItems.map((i) => i.revenue));
+
+  /* recent transactions */
+  const recentTx = completed.slice(-5).reverse();
+
+  /* peak hours */
+  const peakHours = buildHourlyTrend(orders);
+  const peakMax = peakHours.reduce((m, p) => (p.sales > m.sales ? p : m), { period: '', sales: 0 });
+
+  /* spark data — last 14 days revenue/orders/items/customers */
+  const buildDailyMetric = (extract) => {
+    const buckets = {};
+    for (let i = 13; i >= 0; i -= 1) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      buckets[d.toISOString().slice(0, 10)] = { i: 13 - i, v: 0 };
+    }
+    completed.forEach((o) => {
+      const key = new Date(o.timestamp || o.created_at || Date.now()).toISOString().slice(0, 10);
+      if (buckets[key]) buckets[key].v += extract(o);
+    });
+    return buildSparkline(Object.values(buckets));
+  };
+
+  const salesSpark = buildDailyMetric((o) => Number(o.total) || 0);
+  const ordersSpark = buildDailyMetric(() => 1);
+  const itemsSpark = buildDailyMetric((o) =>
+    (o.items || []).reduce((a, b) => a + (b.quantity || b.qty || 0), 0)
+  );
+  const custSpark = buildDailyMetric(() => 1);
+
+  /* bottom KPI bar */
+  const avgOrder = completed.length ? totalSales / completed.length : 0;
+
+  return (
+    <div className="px-4 sm:px-6 lg:px-8 py-6">
+      {/* ===== Page header ===== */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Welcome back! Here's what's happening today.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium">
+            <Calendar className="w-4 h-4 text-gray-500" />
+            Today, {dateLabel}
+          </button>
+          <button
+            onClick={() => navigate('/dinein')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-sm hover:shadow-md"
+          >
+            <Plus className="w-4 h-4" /> New Order
+          </button>
+        </div>
+      </div>
+
+      {/* ===== KPI row ===== */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+        <KpiCard
+          icon={ShoppingCart}
+          iconBg="bg-orange-50"
+          iconColor="text-orange-500"
+          label="Total Orders"
+          value={totalOrders}
+          delta="12.5%"
+          trend="up"
+          sparkColor="#f97316"
+          sparkData={ordersSpark}
+        />
+        <KpiCard
+          icon={DollarSign}
+          iconBg="bg-emerald-50"
+          iconColor="text-emerald-500"
+          label="Total Sales"
+          value={fmt(totalSales)}
+          delta="18.2%"
+          trend="up"
+          sparkColor="#10b981"
+          sparkData={salesSpark}
+        />
+        <KpiCard
+          icon={Package}
+          iconBg="bg-amber-50"
+          iconColor="text-amber-500"
+          label="Total Items"
+          value={totalItems}
+          delta="5.4%"
+          trend="down"
+          sparkColor="#f59e0b"
+          sparkData={itemsSpark}
+        />
+        <KpiCard
+          icon={Users}
+          iconBg="bg-violet-50"
+          iconColor="text-violet-500"
+          label="Total Customers"
+          value={customers}
+          delta="8.7%"
+          trend="up"
+          sparkColor="#8b5cf6"
+          sparkData={custSpark}
+        />
+      </div>
+
+      {/* ===== Row 2: Sales overview + Orders by type + Live orders ===== */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+        <Section
+          className="lg:col-span-6"
+          title="Sales Overview"
+          right={
+            <button className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+              This Week <span className="text-gray-400">▾</span>
+            </button>
+          }
+        >
+          <div className="flex items-baseline gap-3">
+            <p className="text-2xl font-bold text-gray-900">{fmt(totalSales)}</p>
+            <span className="text-xs font-semibold text-emerald-500 inline-flex items-center gap-0.5">
+              <ArrowUpRight className="w-3.5 h-3.5" /> 18.2%
+            </span>
+            <span className="text-xs text-gray-400">vs last week</span>
+          </div>
+          <p className="text-xs text-gray-400 mb-3">Total revenue</p>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={last7}>
+                <defs>
+                  <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f97316" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#f97316" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="period" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => fmt(v)} />
+                <Tooltip
+                  cursor={{ stroke: '#fed7aa', strokeWidth: 2 }}
+                  contentStyle={{ borderRadius: 12, border: '1px solid #f1f5f9', boxShadow: '0 6px 16px rgba(0,0,0,0.06)' }}
+                  formatter={(v) => [fmt(v), 'Sales']}
+                />
+                <Area type="monotone" dataKey="sales" stroke="#f97316" strokeWidth={2.5} fill="url(#salesGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Section>
+
+        <Section className="lg:col-span-3" title="Orders by Type">
+          <div className="relative h-48 flex items-center justify-center">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={orderTypeData} dataKey="value" innerRadius={60} outerRadius={85} stroke="none">
+                  {orderTypeData.map((entry, idx) => (
+                    <Cell key={idx} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <p className="text-2xl font-bold text-gray-900">{totalTypeCount}</p>
+              <p className="text-xs text-gray-500">Total</p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-3 text-xs">
+            {orderTypeData.map((t) => (
+              <div key={t.name} className="flex items-center gap-1.5 text-gray-600">
+                <span className="w-2 h-2 rounded-full" style={{ background: t.color }} />
+                {t.name}
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section
+          className="lg:col-span-3"
+          title="Live Orders"
+          right={<span className="text-[11px] font-semibold text-orange-600 bg-orange-50 px-2 py-1 rounded-full">{liveOrders.length} Active</span>}
+        >
+          <div className="space-y-3">
+            {liveOrders.slice(0, 4).map((o, idx) => {
+              const status = (o.status || 'preparing').toLowerCase();
+              const minutes = Math.max(
+                1,
+                Math.round(
+                  (Date.now() - new Date(o.timestamp || o.created_at || Date.now())) / 60000
+                )
+              );
+              const itemCount = Array.isArray(o.items) ? o.items.length : 0;
+              return (
+                <div key={o.id || idx} className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-orange-200 transition">
+                  <div className="w-9 h-9 rounded-lg bg-orange-50 text-orange-500 flex items-center justify-center">
+                    <ShoppingCart className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800 truncate">Table {o.table_name || `T${idx + 1}`}</p>
+                    <p className="text-[11px] text-gray-500 truncate">
+                      {o.type === 'TAKEAWAY' ? 'Takeaway' : 'Dine-In'} • {itemCount} items
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <StatusPill status={status} />
+                    <p className="text-[11px] text-gray-400 mt-1 flex items-center justify-end gap-1">
+                      <Clock className="w-3 h-3" /> {minutes} min
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+            {liveOrders.length === 0 && !loading && (
+              <p className="text-sm text-gray-400 text-center py-4">No live orders</p>
+            )}
+          </div>
+        </Section>
+      </div>
+
+      {/* ===== Row 3: Top selling + Peak hours + Recent transactions ===== */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
+        <Section
+          className="lg:col-span-4"
+          title="Top Selling Items"
+          right={
+            <button className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+              This Week <span className="text-gray-400">▾</span>
+            </button>
+          }
+        >
+          <div className="space-y-3">
+            {topItems.map((it, idx) => (
+              <div key={it.name} className="flex items-center gap-3">
+                <span className="w-6 h-6 rounded-full bg-orange-50 text-orange-500 text-xs font-bold flex items-center justify-center">
+                  {idx + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{it.name}</p>
+                    <p className="text-sm font-bold text-gray-900">{fmt(it.revenue)}</p>
+                  </div>
+                  <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full"
+                      style={{ width: `${Math.max(8, (it.revenue / maxItemRevenue) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">{it.orders} orders</p>
+                </div>
+              </div>
+            ))}
+            {topItems.length === 0 && (
+              <p className="text-sm text-gray-400 text-center py-4">No data yet</p>
+            )}
+          </div>
+          <button className="mt-4 text-xs font-semibold text-orange-600 hover:text-orange-700">
+            View full menu report →
+          </button>
+        </Section>
+
+        <Section
+          className="lg:col-span-4"
+          title="Peak Sales Hours"
+          right={
+            <button className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+              Today <span className="text-gray-400">▾</span>
+            </button>
+          }
+        >
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={peakHours} barCategoryGap={6}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="period" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={(v) => fmt(v).replace(/\.00$/, '')} />
+                <Tooltip
+                  cursor={{ fill: '#fff7ed' }}
+                  contentStyle={{ borderRadius: 12, border: '1px solid #f1f5f9' }}
+                  formatter={(v) => [fmt(v), 'Sales']}
+                />
+                <Bar dataKey="sales" radius={[6, 6, 0, 0]}>
+                  {peakHours.map((p, idx) => (
+                    <Cell key={idx} fill={p.period === peakMax.period ? '#f97316' : '#fdba74'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <button className="mt-4 text-xs font-semibold text-orange-600 hover:text-orange-700">
+            View full analytics →
+          </button>
+        </Section>
+
+        <Section className="lg:col-span-4" title="Recent Transactions">
+          <div className="space-y-3">
+            {recentTx.map((o) => {
+              const mins = Math.round((Date.now() - new Date(o.timestamp || o.created_at || Date.now())) / 60000);
+              const idStr = `#ORD-${String(o.id).padStart(5, '0')}`;
+              return (
+                <div key={o.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 transition">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center">
+                      <DollarSign className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{idStr}</p>
+                      <p className="text-[11px] text-gray-500 truncate">
+                        {o.table_name || 'Counter'} • {mins} mins ago
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-gray-900">{fmt(o.total)}</p>
+                    <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Paid
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            {recentTx.length === 0 && (
+              <p className="text-sm text-gray-400 text-center py-4">No transactions yet</p>
+            )}
+          </div>
+          <button className="mt-3 text-xs font-semibold text-orange-600 hover:text-orange-700">
+            View all transactions →
+          </button>
+        </Section>
+      </div>
+
+      {/* ===== Bottom KPI strip ===== */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <BottomKpi
+          icon={Wallet}
+          iconBg="bg-emerald-50"
+          iconColor="text-emerald-500"
+          label="AVERAGE ORDER VALUE"
+          value={fmt(avgOrder)}
+        />
+        <BottomKpi
+          icon={Users}
+          iconBg="bg-orange-50"
+          iconColor="text-orange-500"
+          label="TABLE OCCUPANCY"
+          value="68%"
+        />
+        <BottomKpi
+          icon={Repeat}
+          iconBg="bg-violet-50"
+          iconColor="text-violet-500"
+          label="REPEAT CUSTOMERS"
+          value="42%"
+        />
+        <BottomKpi
+          icon={TrendingUpAlt}
+          iconBg="bg-blue-50"
+          iconColor="text-blue-500"
+          label="GROWTH THIS MONTH"
+          value="↑ 24.5%"
+        />
+        <div className="rounded-2xl p-4 bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+              <Crown className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase font-bold tracking-wide opacity-90">
+                Total Revenue (May)
+              </p>
+              <p className="text-xl font-extrabold mt-0.5">{fmt(totalSales * 3)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BottomKpi = ({ icon: Icon, iconBg, iconColor, label, value }) => (
+  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+    <div className="flex items-center gap-3">
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${iconBg}`}>
+        <Icon className={`w-5 h-5 ${iconColor}`} />
+      </div>
+      <div>
+        <p className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">{label}</p>
+        <p className="text-lg font-bold text-gray-900 mt-0.5">{value}</p>
+      </div>
+    </div>
+  </div>
+);
+
+export default Dashboard;

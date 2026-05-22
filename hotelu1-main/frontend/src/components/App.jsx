@@ -1,8 +1,10 @@
 import React, { useState, useEffect, startTransition, Suspense, lazy } from 'react';
 import ErrorBoundary from './ErrorBoundary';
 import Sidebar from './Sidebar';
+import TopHeader from './TopHeader';
 import Login from './Login';
 import Dashboard from './Dashboard';
+import OrdersPage from './OrdersPage';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Reports from './Reports';
 import QRManagement from './QRManagement';
@@ -154,6 +156,11 @@ const App = () => {
     }
     if (!currentUser) return null;
     const { role } = currentUser;
+    if (activeTab === 'orders') {
+      return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'manager' || role === 'waiter')
+        ? <OrdersPage locationSettings={locationSettings} />
+        : <NoAccessMessage />;
+    }
     switch (activeTab) {
       case 'reports':
         return (role === 'admin' || role === 'manager' || role === 'franchise' || role === 'subfranchise') ? (
@@ -216,7 +223,7 @@ const App = () => {
     }
 
     return (
-      <div className="flex min-h-screen font-inter relative">
+      <div className="flex min-h-screen font-inter relative bg-[#fafafb]">
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -225,9 +232,10 @@ const App = () => {
           handleLocationChange={handleLocationChange}
           handleLogout={handleLogout}
         />
-        <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto bg-[#FFF8F0]">
-          {children}
-        </main>
+        <div className="flex-1 flex flex-col min-w-0 pt-16 lg:pt-0">
+          <TopHeader currentUser={currentUser} handleLogout={handleLogout} />
+          <main className="flex-1 overflow-y-auto bg-[#fafafb]">{children}</main>
+        </div>
       </div>
     );
   };
@@ -246,7 +254,7 @@ const App = () => {
     }
 
     return (
-      <div className="flex min-h-screen font-inter relative">
+      <div className="flex min-h-screen font-inter relative bg-[#fafafb]">
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -255,9 +263,10 @@ const App = () => {
           handleLocationChange={handleLocationChange}
           handleLogout={handleLogout}
         />
-        <main className="flex-1 lg:ml-0 pt-16 lg:pt-0 p-4 lg:p-8 overflow-y-auto bg-[#FFF8F0]">
-          {renderContent()}
-        </main>
+        <div className="flex-1 flex flex-col min-w-0 pt-16 lg:pt-0">
+          <TopHeader currentUser={currentUser} handleLogout={handleLogout} />
+          <main className="flex-1 overflow-y-auto bg-[#fafafb]">{renderContent()}</main>
+        </div>
       </div>
     );
   };
@@ -281,6 +290,16 @@ const App = () => {
           <Route path="/dashboard" element={
             <ProtectedRoute>
               <DashboardLayout />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/orders" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise', 'franchise', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
+                <MenuLayout>
+                  <OrdersPage locationSettings={locationSettings} />
+                </MenuLayout>
+              </PermissionBasedRoute>
             </ProtectedRoute>
           } />
           
