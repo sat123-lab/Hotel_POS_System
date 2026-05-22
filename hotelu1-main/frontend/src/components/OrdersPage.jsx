@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   XCircle,
   Filter,
-  Calendar,
   Download,
   ChevronRight,
   Printer,
@@ -20,6 +19,7 @@ import {
 import { io } from 'socket.io-client';
 import { authFetch, getSocketUrl } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
+import DatePickerButton, { getTodayLocalDate } from './DatePickerButton';
 
 /* =================================================================
    Constants
@@ -62,11 +62,6 @@ const formatId = (n) => `#ORD-${n}`;
 const orderTime = (o) => new Date(o.timestamp || o.created_at || Date.now());
 const minsAgo = (t) =>
   Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 60000));
-const sameDay = (a, b) =>
-  a.getFullYear() === b.getFullYear() &&
-  a.getMonth() === b.getMonth() &&
-  a.getDate() === b.getDate();
-
 const StatusPill = ({ status, dot = true }) => {
   const key = (status || '').toLowerCase();
   const c = STATUS_COLORS[key] || { bg: 'bg-gray-100', text: 'text-gray-600' };
@@ -91,7 +86,8 @@ const OrdersPage = ({ locationSettings }) => {
   const [selectedId, setSelectedId] = useState(null);
   const [activeStatus, setActiveStatus] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [todayOnly, setTodayOnly] = useState(true);
+  const [selectedDate, setSelectedDate] = useState(getTodayLocalDate);
+  const [allDates, setAllDates] = useState(false);
   const [showTypeMenu, setShowTypeMenu] = useState(false);
   const [loading, setLoading] = useState(true);
   const [, setTick] = useState(0);
@@ -101,7 +97,8 @@ const OrdersPage = ({ locationSettings }) => {
   /* ---------------- loader ---------------- */
   const load = useCallback(async () => {
     try {
-      const res = await authFetch('/api/orders');
+      const url = allDates ? '/api/orders' : `/api/orders?date=${selectedDate}`;
+      const res = await authFetch(url);
       const data = res.ok ? await res.json() : [];
       const list = Array.isArray(data) ? data : [];
       setOrders(list);
@@ -114,7 +111,7 @@ const OrdersPage = ({ locationSettings }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedDate, allDates]);
 
   /* ---------------- real-time wiring ---------------- */
   useEffect(() => {
@@ -157,17 +154,13 @@ const OrdersPage = ({ locationSettings }) => {
   }, []);
 
   /* ---------------- filtering ---------------- */
-  const now = new Date();
-
   const visibleOrders = useMemo(() => {
     let list = orders;
-    if (todayOnly) list = list.filter((o) => sameDay(orderTime(o), now));
     if (typeFilter !== 'all') {
       list = list.filter((o) => (o.type || 'DINE_IN').toUpperCase() === typeFilter);
     }
     return list;
-    // eslint-disable-next-line
-  }, [orders, todayOnly, typeFilter]);
+  }, [orders, typeFilter]);
 
   const counts = useMemo(() => {
     const c = {
@@ -234,12 +227,6 @@ const OrdersPage = ({ locationSettings }) => {
     return { subtotal, cgst, sgst, total: subtotal + cgst + sgst };
   };
 
-  const today = new Date();
-  const dateLabel = today.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  });
   const activeTypeLabel =
     TYPE_FILTER_OPTIONS.find((t) => t.id === typeFilter)?.label || 'All Types';
 
@@ -288,18 +275,16 @@ const OrdersPage = ({ locationSettings }) => {
               </div>
             )}
           </div>
-          <button
-            onClick={() => setTodayOnly((v) => !v)}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-sm transition ${
-              todayOnly
-                ? 'border-orange-200 text-orange-600 bg-orange-50'
-                : 'border-gray-200 text-gray-700 bg-white hover:bg-gray-50'
-            }`}
-            title={todayOnly ? 'Showing today only — click for all dates' : 'Showing all dates — click for today only'}
-          >
-            <Calendar className="w-4 h-4" />
-            {todayOnly ? `Today, ${dateLabel}` : 'All Dates'}
-          </button>
+          <DatePickerButton
+            value={selectedDate}
+            onChange={(d) => {
+              setAllDates(false);
+              setSelectedDate(d);
+            }}
+            allDates={allDates}
+            onAllDates={setAllDates}
+            showAllDatesOption
+          />
           <button
             onClick={exportCSV}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-sm hover:shadow-md"

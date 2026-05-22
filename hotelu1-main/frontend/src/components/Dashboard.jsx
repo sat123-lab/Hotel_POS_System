@@ -6,7 +6,6 @@ import {
   Package,
   Users,
   Plus,
-  Calendar,
   ArrowUpRight,
   ArrowDownRight,
   Clock,
@@ -36,6 +35,11 @@ import {
 import { io } from 'socket.io-client';
 import { authFetch, getSocketUrl } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
+import DatePickerButton, {
+  getTodayLocalDate,
+  addDaysToIso,
+  parseIsoDate,
+} from './DatePickerButton';
 
 /* =================================================================
    Helpers
@@ -187,19 +191,21 @@ const Dashboard = ({ locationSettings }) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0); // re-renders "X min ago" labels
+  const [selectedDate, setSelectedDate] = useState(getTodayLocalDate);
   const socketRef = useRef(null);
+  const todayLocalDate = getTodayLocalDate();
+  const isViewingToday = selectedDate === todayLocalDate;
   // eslint-disable-next-line
-  const today = useMemo(() => new Date(), [tick]);
-  const dateLabel = today.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
+  const now = useMemo(() => parseIsoDate(selectedDate), [selectedDate, tick]);
+  const viewDate = now;
 
-  /* ---------------- data loader ---------------- */
+  /* ---------------- data loader (date-aware, same API as before redesign) ---------------- */
   const loadData = useCallback(async () => {
     try {
-      const res = await authFetch('/api/orders');
+      const rangeStart = addDaysToIso(selectedDate, -29);
+      const res = await authFetch(
+        `/api/orders?startDate=${rangeStart}&endDate=${selectedDate}`
+      );
       const data = res.ok ? await res.json() : [];
       setOrders(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -207,9 +213,9 @@ const Dashboard = ({ locationSettings }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedDate]);
 
-  /* ---------------- real-time wiring ---------------- */
+  /* ---------------- auth + reload when date changes ---------------- */
   useEffect(() => {
     const u = localStorage.getItem('user');
     const t = localStorage.getItem('token');
@@ -217,9 +223,15 @@ const Dashboard = ({ locationSettings }) => {
       navigate('/login');
       return undefined;
     }
+    setLoading(true);
     loadData();
+    return undefined;
+  }, [loadData, navigate]);
 
-    // socket: refresh on backend events
+  /* ---------------- real-time wiring (today only) ---------------- */
+  useEffect(() => {
+    if (!isViewingToday) return undefined;
+
     const socket = io(getSocketUrl());
     socketRef.current = socket;
     const refresh = () => loadData();
@@ -227,9 +239,7 @@ const Dashboard = ({ locationSettings }) => {
     socket.on('order_status_updated', refresh);
     socket.on('order_deleted', refresh);
 
-    // poll every 10s as fallback
     const pollInterval = setInterval(loadData, 10000);
-    // tick every 30s for "X min ago" labels
     const tickInterval = setInterval(() => setTick((v) => v + 1), 30000);
 
     return () => {
@@ -240,7 +250,7 @@ const Dashboard = ({ locationSettings }) => {
       clearInterval(pollInterval);
       clearInterval(tickInterval);
     };
-  }, [loadData, navigate]);
+  }, [loadData, isViewingToday]);
 
   /* ---------------- partition ---------------- */
   const completed = orders.filter((o) =>
@@ -250,30 +260,34 @@ const Dashboard = ({ locationSettings }) => {
     (o) => !['completed', 'cancelled', 'delivered'].includes((o.status || '').toLowerCase())
   );
 
-  /* ---------------- today / yesterday partitions ---------------- */
-  const now = today;
-  const yesterdayDate = new Date(now);
+  /* ---------------- selected day / previous day partitions ---------------- */
+  const yesterdayDate = new Date(viewDate);
   yesterdayDate.setDate(yesterdayDate.getDate() - 1);
 
-  const todayCompleted = completed.filter((o) => sameDay(orderTime(o), now));
-  const yesterdayCompleted = completed.filter((o) => sameDay(orderTime(o), yesterdayDate));
-  const todayAll = orders.filter((o) => sameDay(orderTime(o), now));
-  const yesterdayAll = orders.filter((o) => sameDay(orderTime(o), yesterdayDate));
+  const dayOrders = orders.filter((o) => sameDay(orderTime(o), viewDate));
+  const prevDayOrders = orders.filter((o) => sameDay(orderTime(o), yesterdayDate));
 
-  /* ---------------- aggregate metrics (TODAY) ---------------- */
-  const totalOrders = todayAll.length;
-  const totalSales = todayCompleted.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const totalItems = todayCompleted.reduce((s, o) => s + itemsCount(o), 0);
+  const dayCompleted = dayOrders.filter((o) =>
+    ['completed', 'delivered'].includes((o.status || '').toLowerCase())
+  );
+  const prevDayCompleted = prevDayOrders.filter((o) =>
+    ['completed', 'delivered'].includes((o.status || '').toLowerCase())
+  );
+
+  /* ---------------- aggregate metrics (selected date) ---------------- */
+  const totalOrders = dayOrders.length;
+  const totalSales = dayCompleted.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalItems = dayCompleted.reduce((s, o) => s + itemsCount(o), 0);
   const customers = new Set(
-    todayCompleted.map((o) => o.customer_name || o.table_name || `order-${o.id}`)
+    dayCompleted.map((o) => o.customer_name || o.table_name || `order-${o.id}`)
   ).size;
 
   /* ---------------- yesterday for deltas ---------------- */
-  const yOrders = yesterdayAll.length;
-  const ySales = yesterdayCompleted.reduce((s, o) => s + (Number(o.total) || 0), 0);
-  const yItems = yesterdayCompleted.reduce((s, o) => s + itemsCount(o), 0);
+  const yOrders = prevDayOrders.length;
+  const ySales = prevDayCompleted.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const yItems = prevDayCompleted.reduce((s, o) => s + itemsCount(o), 0);
   const yCustomers = new Set(
-    yesterdayCompleted.map((o) => o.customer_name || o.table_name || `order-${o.id}`)
+    prevDayCompleted.map((o) => o.customer_name || o.table_name || `order-${o.id}`)
   ).size;
 
   const ordersDelta = calcDelta(totalOrders, yOrders);
@@ -285,7 +299,7 @@ const Dashboard = ({ locationSettings }) => {
   const last7 = useMemo(() => {
     const buckets = {};
     for (let i = 6; i >= 0; i -= 1) {
-      const d = new Date(now);
+      const d = new Date(viewDate);
       d.setDate(d.getDate() - i);
       buckets[dayKey(d)] = {
         period: d.toLocaleDateString('en-US', { weekday: 'short' }),
@@ -298,23 +312,23 @@ const Dashboard = ({ locationSettings }) => {
     });
     return Object.values(buckets);
     // eslint-disable-next-line
-  }, [completed, tick]);
+  }, [completed, selectedDate, tick]);
 
-  /* this week vs last week sales delta (rolling 7-day windows) */
+  /* this week vs last week sales delta (rolling 7-day windows ending on selected date) */
   const thisWeekSales = useMemo(() => {
-    const cutoff = new Date(now);
+    const cutoff = new Date(viewDate);
     cutoff.setDate(cutoff.getDate() - 6);
     cutoff.setHours(0, 0, 0, 0);
     return completed
-      .filter((o) => orderTime(o) >= cutoff)
+      .filter((o) => orderTime(o) >= cutoff && orderTime(o) <= viewDate)
       .reduce((s, o) => s + (Number(o.total) || 0), 0);
     // eslint-disable-next-line
-  }, [completed, tick]);
+  }, [completed, selectedDate, tick]);
   const lastWeekSales = useMemo(() => {
-    const start = new Date(now);
+    const start = new Date(viewDate);
     start.setDate(start.getDate() - 13);
     start.setHours(0, 0, 0, 0);
-    const end = new Date(now);
+    const end = new Date(viewDate);
     end.setDate(end.getDate() - 7);
     end.setHours(23, 59, 59, 999);
     return completed
@@ -324,8 +338,8 @@ const Dashboard = ({ locationSettings }) => {
   }, [completed, tick]);
   const weekDelta = calcDelta(thisWeekSales, lastWeekSales);
 
-  /* ---------------- orders by type (today) ---------------- */
-  const byTypeRaw = todayAll.reduce((acc, o) => {
+  /* ---------------- orders by type (selected day) ---------------- */
+  const byTypeRaw = dayOrders.reduce((acc, o) => {
     const k = (o.type || 'DINE_IN').toUpperCase();
     acc[k] = (acc[k] || 0) + 1;
     return acc;
@@ -339,11 +353,11 @@ const Dashboard = ({ locationSettings }) => {
 
   /* ---------------- top selling items (this week) ---------------- */
   const itemSalesMap = {};
-  const weekCutoff = new Date(now);
+  const weekCutoff = new Date(viewDate);
   weekCutoff.setDate(weekCutoff.getDate() - 6);
   weekCutoff.setHours(0, 0, 0, 0);
   completed
-    .filter((o) => orderTime(o) >= weekCutoff)
+    .filter((o) => orderTime(o) >= weekCutoff && orderTime(o) <= viewDate)
     .forEach((o) => {
       (o.items || []).forEach((it) => {
         const key = it.name;
@@ -359,16 +373,16 @@ const Dashboard = ({ locationSettings }) => {
     .slice(0, 5);
   const maxItemRevenue = Math.max(1, ...topItems.map((i) => i.revenue));
 
-  /* ---------------- recent transactions ---------------- */
-  const recentTx = [...completed]
+  /* ---------------- recent transactions (selected day) ---------------- */
+  const recentTx = [...dayCompleted]
     .sort((a, b) => orderTime(b).getTime() - orderTime(a).getTime())
     .slice(0, 5);
 
-  /* ---------------- peak hours (today only) ---------------- */
+  /* ---------------- peak hours (selected day) ---------------- */
   const peakHours = useMemo(() => {
     const buckets = {};
     for (let h = 9; h <= 23; h += 1) buckets[h] = 0;
-    todayCompleted.forEach((o) => {
+    dayCompleted.forEach((o) => {
       const h = orderTime(o).getHours();
       if (buckets[h] !== undefined) buckets[h] += Number(o.total) || 0;
     });
@@ -377,7 +391,7 @@ const Dashboard = ({ locationSettings }) => {
       sales: Math.round(buckets[h]),
     }));
     // eslint-disable-next-line
-  }, [todayCompleted, tick]);
+  }, [dayCompleted, tick]);
   const peakMax = peakHours.reduce(
     (m, p) => (p.sales > m.sales ? p : m),
     { period: '', sales: 0 }
@@ -388,7 +402,7 @@ const Dashboard = ({ locationSettings }) => {
     (extract) => {
       const buckets = {};
       for (let i = 13; i >= 0; i -= 1) {
-        const d = new Date(now);
+        const d = new Date(viewDate);
         d.setDate(d.getDate() - i);
         buckets[dayKey(d)] = { i: 13 - i, v: 0 };
       }
@@ -408,11 +422,11 @@ const Dashboard = ({ locationSettings }) => {
   const custSpark = buildSpark(() => 1);
 
   /* ---------------- bottom KPI strip (all real) ---------------- */
-  const avgOrder = todayCompleted.length ? totalSales / todayCompleted.length : 0;
+  const avgOrder = dayCompleted.length ? totalSales / dayCompleted.length : 0;
 
-  // table occupancy = distinct dine-in tables currently in active orders
+  // table occupancy = distinct dine-in tables in active orders (today only)
   const activeTables = new Set(
-    liveOrders
+    (isViewingToday ? liveOrders : [])
       .filter((o) => (o.type || 'DINE_IN').toUpperCase() === 'DINE_IN')
       .map((o) => o.table_name)
       .filter(Boolean)
@@ -425,19 +439,19 @@ const Dashboard = ({ locationSettings }) => {
     if (!key) return;
     customerCountMap[key] = (customerCountMap[key] || 0) + 1;
   });
-  const todaysCustomers = new Set(
-    todayCompleted.map((o) => o.customer_name || o.table_name).filter(Boolean)
+  const daysCustomers = new Set(
+    dayCompleted.map((o) => o.customer_name || o.table_name).filter(Boolean)
   );
   let repeatCount = 0;
-  todaysCustomers.forEach((c) => {
+  daysCustomers.forEach((c) => {
     if (customerCountMap[c] >= 2) repeatCount += 1;
   });
-  const repeatPct = todaysCustomers.size
-    ? Math.round((repeatCount / todaysCustomers.size) * 100)
+  const repeatPct = daysCustomers.size
+    ? Math.round((repeatCount / daysCustomers.size) * 100)
     : 0;
 
-  // month growth: this month vs last month (full month sums)
-  const thisMonthStart = startOfMonth(now);
+  // month growth: month of selected date vs previous month
+  const thisMonthStart = startOfMonth(viewDate);
   const lastMonthStart = new Date(thisMonthStart);
   lastMonthStart.setMonth(lastMonthStart.getMonth() - 1);
   const lastMonthEnd = new Date(thisMonthStart);
@@ -449,7 +463,7 @@ const Dashboard = ({ locationSettings }) => {
     .filter((o) => orderTime(o) >= lastMonthStart && orderTime(o) <= lastMonthEnd)
     .reduce((s, o) => s + (Number(o.total) || 0), 0);
   const monthDelta = calcDelta(thisMonthSales, lastMonthSales);
-  const monthLabel = now.toLocaleDateString('en-US', { month: 'short' });
+  const monthLabel = viewDate.toLocaleDateString('en-US', { month: 'short' });
 
   /* ----------------- render ----------------- */
   return (
@@ -459,14 +473,18 @@ const Dashboard = ({ locationSettings }) => {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Welcome back! Here's what's happening today.
+            {isViewingToday
+              ? "Welcome back! Here's what's happening today."
+              : `Showing data for ${viewDate.toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  month: 'long',
+                  day: 'numeric',
+                  year: 'numeric',
+                })}.`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium">
-            <Calendar className="w-4 h-4 text-gray-500" />
-            Today, {dateLabel}
-          </button>
+          <DatePickerButton value={selectedDate} onChange={setSelectedDate} />
           <button
             onClick={() => navigate('/dinein')}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-sm hover:shadow-md"
@@ -686,10 +704,15 @@ const Dashboard = ({ locationSettings }) => {
                 </div>
               );
             })}
-            {liveOrders.length === 0 && !loading && (
+            {!isViewingToday && (
+              <p className="text-sm text-gray-400 text-center py-4">
+                Live orders are only shown for today. Pick today in the calendar.
+              </p>
+            )}
+            {isViewingToday && liveOrders.length === 0 && !loading && (
               <p className="text-sm text-gray-400 text-center py-4">No live orders</p>
             )}
-            {liveOrders.length === 0 && loading && (
+            {isViewingToday && liveOrders.length === 0 && loading && (
               <p className="text-sm text-gray-400 text-center py-4">Loading…</p>
             )}
           </div>
@@ -741,7 +764,9 @@ const Dashboard = ({ locationSettings }) => {
           title="Peak Sales Hours"
           right={
             <span className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 bg-white">
-              Today
+              {isViewingToday
+                ? 'Today'
+                : viewDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
             </span>
           }
         >
