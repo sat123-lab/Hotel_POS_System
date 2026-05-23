@@ -1,17 +1,45 @@
 import React, { useState, useEffect } from 'react';
-import { Navigate } from 'react-router-dom';
 import NoAccessMessage from './NoAccessMessage';
 
 import { getAPI_URL } from '../utils/api';
+import {
+  canRoleAccessModule,
+  fetchPermissionsMatrixFromServer,
+} from '../utils/permissions';
 
-const PermissionBasedRoute = ({ children, requiredPermissions = [], requiredRoles = [] }) => {
+/**
+ * Route guard that combines two sources of truth:
+ *
+ *  1. The Module Permissions Matrix saved by the admin (Settings →
+ *     User Management → Module Permissions Matrix). For staff roles
+ *     (manager/waiter/chef/cashier) this is authoritative — if the
+ *     admin unticked a module, the route is blocked even if the
+ *     server-side permissions allow it, and vice-versa.
+ *  2. The legacy server-issued permission codes (`/api/my-permissions`)
+ *     which still apply to franchise / sub-franchise / unknown roles.
+ *
+ * Pass `requiredModule="dashboard"` (any matrix module ID) to opt in
+ * to the matrix check. The existing `requiredRoles` /
+ * `requiredPermissions` props keep working as a fallback for non-staff
+ * roles.
+ */
+const PermissionBasedRoute = ({
+  children,
+  requiredPermissions = [],
+  requiredRoles = [],
+  requiredModule = null,
+}) => {
   const [userPermissions, setUserPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const user = JSON.parse(localStorage.getItem('user') || '{}');
-  const userRole = user.role;
+  const userRole = String(user.role || '').toLowerCase();
+  const isStaffRole = ['manager', 'waiter', 'chef', 'cashier'].includes(userRole);
 
   useEffect(() => {
     fetchUserPermissions();
+    // Also pull the latest matrix from the server so freshly-logged-in
+    // staff users get the admin's saved permissions on any browser.
+    fetchPermissionsMatrixFromServer().catch(() => {});
   }, []);
 
   const fetchUserPermissions = async () => {
@@ -25,8 +53,8 @@ const PermissionBasedRoute = ({ children, requiredPermissions = [], requiredRole
       const API_URL = getAPI_URL();
       const response = await fetch(`${API_URL}/api/my-permissions`, {
         headers: {
-          'Authorization': `Bearer ${token}`
-        }
+          Authorization: `Bearer ${token}`,
+        },
       });
 
       if (response.ok) {
@@ -51,25 +79,32 @@ const PermissionBasedRoute = ({ children, requiredPermissions = [], requiredRole
     );
   }
 
-  // Admin has all permissions
+  // Admin always passes.
   if (userRole === 'admin') {
     return children;
   }
 
-  // Check if user has any of the required roles
+  // Staff roles: matrix is authoritative.
+  if (isStaffRole && requiredModule) {
+    return canRoleAccessModule(userRole, requiredModule) ? children : <NoAccessMessage />;
+  }
+
+  // Allow if role is in the requiredRoles allow-list (used for
+  // franchise / sub-franchise routes).
   if (requiredRoles.length > 0 && requiredRoles.includes(userRole)) {
     return children;
   }
 
-  // Check if user has any of the required permissions
+  // Fall back to legacy server-issued permission codes.
   if (requiredPermissions.length > 0) {
-    const hasPermission = requiredPermissions.some(perm => userPermissions.includes(perm));
+    const hasPermission = requiredPermissions.some((perm) =>
+      userPermissions.includes(perm)
+    );
     if (hasPermission) {
       return children;
     }
   }
 
-  // If neither role nor permission matches, deny access
   return <NoAccessMessage />;
 };
 

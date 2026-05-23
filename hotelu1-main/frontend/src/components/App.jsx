@@ -29,6 +29,7 @@ import NotificationsPage from './NotificationsPage';
 import SettingsPage from './SettingsPage';
 import { NotificationsProvider } from '../contexts/NotificationsContext';
 import { getLocationSettingsForCountry } from '../utils/currency';
+import { canRoleAccessModule } from '../utils/permissions';
 
 // Loading component for Suspense fallback - Reference Image Design
 const LoadingSpinner = () => (
@@ -158,41 +159,78 @@ const App = () => {
     }
     if (!currentUser) return null;
     const { role } = currentUser;
+
+    // Matrix-aware gate: admin always passes, the staff roles
+    // (manager/waiter/chef/cashier) consult the Module Permissions
+    // Matrix saved by the admin, and franchise/sub-franchise fall
+    // back to the legacy role allow-lists below.
+    const allow = (moduleId, fallbackRoles = []) => {
+      if (role === 'admin') return true;
+      if (['manager', 'waiter', 'chef', 'cashier'].includes(role)) {
+        return canRoleAccessModule(role, moduleId);
+      }
+      return fallbackRoles.includes(role);
+    };
+
     if (activeTab === 'orders') {
-      return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'manager' || role === 'waiter')
+      return allow('dine_in', ['franchise', 'subfranchise'])
         ? <OrdersPage locationSettings={locationSettings} />
         : <NoAccessMessage />;
     }
     switch (activeTab) {
       case 'reports':
-        return (role === 'admin' || role === 'manager' || role === 'franchise' || role === 'subfranchise') ? (
+        return allow('reports', ['franchise', 'subfranchise']) ? (
           <Reports locationSettings={locationSettings} />
         ) : (
           <NoAccessMessage />
         );
       case 'qr-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <QRManagement locationSettings={locationSettings} /> : <NoAccessMessage />;
+        return allow('qr_management', ['subfranchise']) ? (
+          <QRManagement locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'dine-in-management':
-        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
+        return allow('dine_in', ['franchise', 'subfranchise']) ? (
+          <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'takeaway-management':
-        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} /> : <NoAccessMessage />;
+        return allow('takeaway', ['franchise', 'subfranchise']) ? (
+          <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'inventory':
-        return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <InventoryManagement /> : <NoAccessMessage />;
+        return allow('inventory', ['subfranchise']) ? <InventoryManagement /> : <NoAccessMessage />;
       case 'dashboard':
         if (role === 'subfranchise' || role === 'franchise') {
           return <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} setActiveTab={setActiveTab} />;
         }
-        return (role === 'admin' || role === 'manager') ? (
+        return allow('dashboard') ? (
           <Dashboard locationSettings={locationSettings} />
         ) : (
           <NoAccessMessage />
         );
       case 'billing':
-        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'waiter' || role === 'manager') ? <BillingPage locationSettings={locationSettings} /> : <NoAccessMessage />;
+        return allow('billing', ['franchise', 'subfranchise']) ? (
+          <BillingPage locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'kds':
-        return (role === 'admin' || role === 'franchise' || role === 'subfranchise' || role === 'chef' || role === 'manager' || role === 'waiter') ? <KitchenDisplaySystem locationSettings={locationSettings} /> : <NoAccessMessage />;
+        return allow('kitchen_display', ['franchise', 'subfranchise']) ? (
+          <KitchenDisplaySystem locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'menu-management':
-        return (role === 'admin' || role === 'subfranchise' || role === 'manager') ? <MenuManagement locationSettings={locationSettings} /> : <NoAccessMessage />;
+        return allow('menu_management', ['subfranchise']) ? (
+          <MenuManagement locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'user-management':
         return role === 'admin' ? <UserManagement token={localStorage.getItem('token')} /> : <NoAccessMessage />;
       case 'permission-management':
@@ -212,9 +250,11 @@ const App = () => {
       case 'notifications':
         return <NotificationsPage />;
       case 'settings':
-        return role === 'admin' || role === 'manager' || role === 'subfranchise' || role === 'franchise'
-          ? <SettingsPage />
-          : <NoAccessMessage />;
+        return allow('settings', ['subfranchise', 'franchise']) ? (
+          <SettingsPage />
+        ) : (
+          <NoAccessMessage />
+        );
       default:
         if (role === 'chef') return <KitchenDisplaySystem locationSettings={locationSettings} />;
         if (role === 'waiter') return <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />;
@@ -308,7 +348,7 @@ const App = () => {
 
           <Route path="/orders" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise', 'franchise', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
+              <PermissionBasedRoute requiredModule="dine_in" requiredRoles={['admin', 'manager', 'subfranchise', 'franchise', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
                 <MenuLayout>
                   <OrdersPage locationSettings={locationSettings} />
                 </MenuLayout>
@@ -318,7 +358,7 @@ const App = () => {
           
           <Route path="/menu" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_menu', 'manage_menu', 'create_menu_item', 'edit_menu_item', 'delete_menu_item']}>
+              <PermissionBasedRoute requiredModule="menu_management" requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_menu', 'manage_menu', 'create_menu_item', 'edit_menu_item', 'delete_menu_item']}>
                 <MenuLayout>
                   <MenuManagement locationSettings={locationSettings} />
                 </MenuLayout>
@@ -328,7 +368,7 @@ const App = () => {
           
           <Route path="/dinein" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
+              <PermissionBasedRoute requiredModule="dine_in" requiredRoles={['admin', 'manager', 'subfranchise', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
                 <MenuLayout>
                   <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
                 </MenuLayout>
@@ -338,7 +378,7 @@ const App = () => {
           
           <Route path="/inventory" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_inventory', 'manage_inventory', 'edit_inventory']}>
+              <PermissionBasedRoute requiredModule="inventory" requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_inventory', 'manage_inventory', 'edit_inventory']}>
                 <MenuLayout>
                   <InventoryManagement />
                 </MenuLayout>
@@ -348,7 +388,7 @@ const App = () => {
           
           <Route path="/billing" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'subfranchise', 'waiter']} requiredPermissions={['view_billing', 'process_payments', 'view_bills']}>
+              <PermissionBasedRoute requiredModule="billing" requiredRoles={['admin', 'manager', 'subfranchise', 'waiter']} requiredPermissions={['view_billing', 'process_payments', 'view_bills']}>
                 <MenuLayout>
                   <BillingPage locationSettings={locationSettings} />
                 </MenuLayout>
@@ -358,7 +398,7 @@ const App = () => {
           
           <Route path="/reports" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager']} requiredPermissions={['view_reports', 'view_dashboard']}>
+              <PermissionBasedRoute requiredModule="reports" requiredRoles={['admin', 'manager']} requiredPermissions={['view_reports', 'view_dashboard']}>
                 <MenuLayout>
                   <Reports locationSettings={locationSettings} />
                 </MenuLayout>
@@ -368,7 +408,7 @@ const App = () => {
           
           <Route path="/kitchen" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'chef', 'manager', 'waiter']} requiredPermissions={['kitchen_display']}>
+              <PermissionBasedRoute requiredModule="kitchen_display" requiredRoles={['admin', 'chef', 'manager', 'waiter']} requiredPermissions={['kitchen_display']}>
                 <MenuLayout>
                   <KitchenDisplaySystem locationSettings={locationSettings} />
                 </MenuLayout>
@@ -378,7 +418,7 @@ const App = () => {
           
           <Route path="/qr-management" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['manage_qr_codes']}>
+              <PermissionBasedRoute requiredModule="qr_management" requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['manage_qr_codes']}>
                 <MenuLayout>
                   <QRManagement locationSettings={locationSettings} />
                 </MenuLayout>
@@ -388,7 +428,7 @@ const App = () => {
           
           <Route path="/takeaway" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
+              <PermissionBasedRoute requiredModule="takeaway" requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
                 <MenuLayout>
                   <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
                 </MenuLayout>
