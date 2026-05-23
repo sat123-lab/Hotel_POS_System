@@ -1,8 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import { authFetch, getAPI_URL } from '../utils/api';
 import { enrichOrderWithTotals, fetchAndCacheGlobalSettings } from '../utils/orderTotals';
 import Notification from './Notification';
 import useCurrency from '../hooks/useCurrency';
+import { getUPIConfig } from '../config/upiConfig';
+import {
+  loadRestaurantInfo,
+  buildKitchenSlipHtml,
+  buildCustomerReceiptHtml,
+  calculateTotals as calcReceiptTotals,
+  loadTaxDiscountSettings,
+  openReceiptForPrint,
+} from '../utils/receiptPrint';
 
 const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, nextOrderId, setNextOrderId, orderType, initialOrder }) => {
     const { format: fmt } = useCurrency(locationSettings);
@@ -22,6 +32,7 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [pendingOrder, setPendingOrder] = useState(null);
     const [paymentAmount, setPaymentAmount] = useState(0);
+    const [upiQrUrl, setUpiQrUrl] = useState('');
 
     useEffect(() => {
         console.log('OrderEntryModal: Fetching menu items...');
@@ -143,10 +154,77 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
         setTimeout(() => setNotification(null), 3000);
     };
 
+    // Generate the UPI QR whenever the user selects UPI as the
+    // payment method on a pending takeaway order. The QR encodes the
+    // exact bill total so any UPI app (PhonePe, GPay, Paytm, BHIM)
+    // pre-fills the amount on scan.
+    useEffect(() => {
+        let cancelled = false;
+        if (showPaymentModal && paymentMethod === 'upi' && pendingOrder) {
+            const totals = enrichOrderWithTotals(pendingOrder);
+            const cfg = getUPIConfig();
+            // If no real UPI ID configured, surface an inline message
+            // (handled in JSX) — skip QR generation.
+            if (!cfg.upiId || cfg.upiId === 'merchant@upi') {
+                setUpiQrUrl('');
+                return undefined;
+            }
+            const params = new URLSearchParams({
+                pa: cfg.upiId,
+                pn: cfg.payeeName,
+                am: Number(totals.total || 0).toFixed(2),
+                cu: cfg.currency || 'INR',
+                tn: cfg.transactionNoteTemplate.replace(
+                    '{orderId}',
+                    pendingOrder.id || ''
+                ),
+                tr: `ORD${pendingOrder.id || ''}${Date.now()}`,
+            });
+            const upiUrl = `upi://pay?${params.toString()}`;
+            QRCode.toDataURL(upiUrl, { width: 240, margin: 1 })
+                .then((url) => {
+                    if (!cancelled) setUpiQrUrl(url);
+                })
+                .catch(() => {
+                    if (!cancelled) setUpiQrUrl('');
+                });
+        } else {
+            setUpiQrUrl('');
+        }
+        return () => {
+            cancelled = true;
+        };
+    }, [showPaymentModal, paymentMethod, pendingOrder]);
+
+    // Print kitchen token + customer bill (thermal 80mm) for the
+    // just-paid takeaway order. Called automatically after the
+    // payment is marked complete.
+    const printTakeawayBill = async (order, methodLabel) => {
+        try {
+            const info = loadRestaurantInfo();
+            const taxDiscount = loadTaxDiscountSettings();
+            const totals = calcReceiptTotals(order, taxDiscount);
+            const kitchenHtml = buildKitchenSlipHtml(order, info);
+            const paymentLabel = String(methodLabel || 'Cash').toUpperCase();
+            // For paid takeaway bills there's no need for a UPI QR
+            // on the printed slip — the customer has already paid.
+            const customerHtml = buildCustomerReceiptHtml(order, totals, info, {
+                qrCodeDataUrl: '',
+                paymentLabel,
+            });
+            openReceiptForPrint(
+                `${kitchenHtml}${customerHtml}`,
+                `Takeaway Bill #${order.id}`
+            );
+        } catch (e) {
+            console.error('Print failed:', e);
+        }
+    };
+
     // Handle payment completion for takeaway orders
     const handlePaymentComplete = async () => {
         if (!pendingOrder) return;
-        
+
         try {
             // Update order status to completed/delivered
             const response = await authFetch(`/api/orders/${pendingOrder.id}/status`, {
@@ -158,34 +236,43 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
                     paymentStatus: 'paid'
                 })
             });
-            
+
             if (!response.ok) {
                 // If status update fails, still proceed with receipt
                 console.warn('Status update failed, proceeding with receipt');
             }
-            
+
             const updatedOrder = await response.json().catch(() => pendingOrder);
-            
+            const finalOrder = { ...pendingOrder, ...updatedOrder, paymentMethod };
+
             // Close payment modal
             setShowPaymentModal(false);
-            
+            setUpiQrUrl('');
+
             // Show token receipt
-            setConfirmedOrder({...pendingOrder, ...updatedOrder, paymentMethod});
+            setConfirmedOrder(finalOrder);
             setShowReceipt(true);
-            
+
             // Call onOrderPlaced to add to active orders
-            onOrderPlaced({...pendingOrder, ...updatedOrder, paymentMethod});
-            
+            onOrderPlaced(finalOrder);
+
+            // Auto-open the printable bill (kitchen token + customer
+            // receipt). User can hit Cancel in the print dialog if
+            // they don't want a paper copy.
+            printTakeawayBill(finalOrder, paymentMethod);
+
             // Close main order modal
             onClose();
-            
+
         } catch (error) {
             console.error('Payment error:', error);
             // Even if error, show receipt
             setShowPaymentModal(false);
+            setUpiQrUrl('');
             setConfirmedOrder(pendingOrder);
             setShowReceipt(true);
             onOrderPlaced(pendingOrder);
+            printTakeawayBill(pendingOrder, paymentMethod);
             onClose();
         }
     };
@@ -1049,6 +1136,48 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
                                 </button>
                             </div>
                         </div>
+
+                        {/* UPI QR — appears the moment UPI is picked. The
+                            customer scans it and the bill amount is
+                            pre-filled in any UPI app. */}
+                        {paymentMethod === 'upi' && (
+                            <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/60 border-2 border-emerald-200 rounded-2xl p-4 flex flex-col items-center text-center">
+                                {upiQrUrl ? (
+                                    <>
+                                        <p className="text-sm font-bold text-emerald-700">
+                                            Scan to pay {fmt(enrichOrderWithTotals(pendingOrder).total)}
+                                        </p>
+                                        <p className="text-[11px] text-emerald-600/80 mt-0.5">
+                                            Works with PhonePe · Google Pay · Paytm · BHIM
+                                        </p>
+                                        <div className="my-3 bg-white border border-emerald-200 rounded-2xl p-2 shadow-sm">
+                                            <img
+                                                src={upiQrUrl}
+                                                alt="UPI QR"
+                                                className="w-[200px] h-[200px]"
+                                            />
+                                        </div>
+                                        <p className="text-[11px] text-gray-500 break-all px-3">
+                                            {getUPIConfig().upiId} · {getUPIConfig().payeeName}
+                                        </p>
+                                        <p className="text-[11px] text-emerald-600 mt-1 font-medium">
+                                            After the customer pays, click "Complete Payment" below.
+                                        </p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p className="text-sm font-bold text-amber-700">
+                                            UPI ID not configured
+                                        </p>
+                                        <p className="text-[11px] text-amber-700/80 mt-0.5 px-3">
+                                            Open <span className="font-semibold">Settings → Payment Gateways</span> and
+                                            enter your UPI ID (e.g. <code>name@ptsbi</code>, <code>name@okicici</code>).
+                                            The QR will then appear here automatically.
+                                        </p>
+                                    </>
+                                )}
+                            </div>
+                        )}
 
                         {/* Action Buttons */}
                         <div className="flex gap-3 pt-4">
