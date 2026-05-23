@@ -12,6 +12,7 @@ import {
   Smartphone,
   Download,
   Receipt,
+  ArrowLeft,
 } from 'lucide-react';
 import useCurrency from '../hooks/useCurrency';
 import {
@@ -21,7 +22,6 @@ import {
   calculateTotals as calcReceiptTotalsShared,
   openReceiptForPrint,
 } from '../utils/receiptPrint';
-import { getUPIConfig as getUPIConfigShared } from '../config/upiConfig';
 
 /* ------------------------------------------------------------------ */
 /*  Status helpers                                                     */
@@ -111,8 +111,6 @@ const BillingPage = ({ locationSettings }) => {
   const [manualTaxRate, setManualTaxRate] = useState(5);
   const [activeStatus, setActiveStatus] = useState('all');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [showUpiQr, setShowUpiQr] = useState(false);
-  const [upiQrDataUrl, setUpiQrDataUrl] = useState('');
   const [successAmount, setSuccessAmount] = useState(null);
   const [paying, setPaying] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -357,28 +355,31 @@ const BillingPage = ({ locationSettings }) => {
 
       if (!response.ok) throw new Error('Payment failed');
 
+      // Snapshot the just-paid order so we can print after the
+      // local state updates (printing reads from selectedOrder).
+      const paidOrder = {
+        ...selectedOrder,
+        status: 'completed',
+        payment_method: method,
+        bill_status: 'paid',
+      };
+
       setShowPaymentModal(false);
-      setShowUpiQr(false);
       setSuccessAmount(totals.total || selectedOrder.total);
       setTimeout(() => setSuccessAmount(null), 1800);
 
       setOrders((prev) =>
-        prev.map((o) =>
-          o.id === selectedOrder.id
-            ? { ...o, status: 'completed', payment_method: method, bill_status: 'paid' }
-            : o
-        )
+        prev.map((o) => (o.id === selectedOrder.id ? paidOrder : o))
       );
-      setSelectedOrder((prev) =>
-        prev ? { ...prev, status: 'completed', payment_method: method, bill_status: 'paid' } : prev
-      );
-      fetchAllOrders();
+      setSelectedOrder(paidOrder);
 
-      // Auto-print the bill the moment payment succeeds. Cash, Card
-      // and UPI all print the same kitchen-token + customer-bill
-      // pair (kitchen token only for takeaway). User can hit Cancel
-      // in the print dialog if they don't want a paper copy.
-      printAfterPayment(selectedOrder, method);
+      // Auto-print the bill (thermal 80mm; takeaway = kitchen
+      // token + customer copy, dine-in = customer copy only). The
+      // print dialog opens in a new window — the cashier can hit
+      // Cancel if a paper copy isn't required.
+      printBillForOrder(paidOrder, method);
+
+      fetchAllOrders();
     } catch (error) {
       console.error('Error completing payment:', error);
       setNotification({ message: 'Error completing payment.', type: 'error' });
@@ -388,52 +389,40 @@ const BillingPage = ({ locationSettings }) => {
     }
   };
 
+  // Internal helper that prints any specific order using the same
+  // shared 80mm renderer the View Bill modal uses. Kept separate
+  // from `handlePrintBill` (which prints the currently-selected
+  // order) so the auto-print after payment is robust to React state
+  // not having flushed yet.
+  const printBillForOrder = (order, method) => {
+    if (!order) return;
+    const taxPercent = Number((taxRate * 100).toFixed(2));
+    const totals = calcReceiptTotalsShared(order, {
+      taxPercent,
+      discountPercent,
+      discountType,
+    });
+    const info = loadRestaurantInfoShared();
+    const isTakeaway = String(order.type).toUpperCase() === 'TAKEAWAY';
+    const paymentLabel = String(method || 'Cash').toUpperCase();
+    const kitchenSlipHtml = isTakeaway
+      ? buildKitchenSlipHtmlShared(order, info)
+      : '';
+    const customerHtml = buildCustomerReceiptHtmlShared(order, totals, info, {
+      qrCodeDataUrl: '',
+      paymentLabel,
+    });
+    openReceiptForPrint(
+      `${kitchenSlipHtml}${customerHtml}`,
+      `Bill #${order.id}`
+    );
+  };
+
   /* --------------------------- print ---------------------------
      The receipt rendering logic lives in utils/receiptPrint.js so
      the View Bill modal on the Orders page and the printed thermal
      slip stay in lock-step (CGST + SGST split, configured tax %,
      etc.). */
-
-  // Print receipt automatically after a payment has been recorded.
-  // Takes the order + the chosen payment method directly so it does
-  // not depend on possibly-stale React state.
-  const printAfterPayment = (order, method) => {
-    if (!order) return;
-    try {
-      const isTakeaway = String(order.type).toUpperCase() === 'TAKEAWAY';
-      const taxPercent = Number((taxRate * 100).toFixed(2));
-      const receiptTotals = calcReceiptTotalsShared(order, {
-        taxPercent,
-        discountPercent,
-        discountType,
-      });
-      const info = loadRestaurantInfoShared();
-      const paymentLabel =
-        method === 'cash'
-          ? 'Cash'
-          : method === 'upi'
-          ? 'UPI'
-          : method === 'card'
-          ? 'Card'
-          : String(method || 'Cash').toUpperCase();
-      const kitchenSlipHtml = isTakeaway
-        ? buildKitchenSlipHtmlShared(order, info)
-        : '';
-      const customerHtml = buildCustomerReceiptHtmlShared(
-        order,
-        receiptTotals,
-        info,
-        { qrCodeDataUrl: '', paymentLabel }
-      );
-      openReceiptForPrint(
-        `${kitchenSlipHtml}${customerHtml}`,
-        `Bill #${order.id}`
-      );
-    } catch (e) {
-      console.error('Auto-print failed:', e);
-    }
-  };
-
   const handlePrintBill = async () => {
     if (!selectedOrder) {
       setNotification({ message: 'No order selected to print.', type: 'error' });
@@ -833,44 +822,15 @@ const BillingPage = ({ locationSettings }) => {
       {/* Payment Modal */}
       {showPaymentModal && selectedOrder && (
         <PaymentModal
+          order={selectedOrder}
           amount={currentOrderTotals.total}
           fmt={fmt}
           paying={paying}
           onSelect={async (method) => {
             setPaymentMethod(method);
-            if (method === 'upi') {
-              // Show UPI QR — auto-print happens once the cashier
-              // confirms the customer has paid.
-              const qr = await generateUPIQRCode(
-                currentOrderTotals.total,
-                selectedOrder.id
-              );
-              setUpiQrDataUrl(qr || '');
-              setShowPaymentModal(false);
-              setShowUpiQr(true);
-            } else {
-              await handleCompletePayment(method);
-            }
+            await handleCompletePayment(method);
           }}
           onCancel={() => setShowPaymentModal(false)}
-        />
-      )}
-
-      {/* UPI QR Modal */}
-      {showUpiQr && selectedOrder && (
-        <UpiQrModal
-          amount={currentOrderTotals.total}
-          fmt={fmt}
-          paying={paying}
-          qrDataUrl={upiQrDataUrl}
-          onCancel={() => {
-            setShowUpiQr(false);
-            setUpiQrDataUrl('');
-          }}
-          onConfirm={async () => {
-            await handleCompletePayment('upi');
-            setUpiQrDataUrl('');
-          }}
         />
       )}
 
@@ -916,12 +876,130 @@ const BillingPage = ({ locationSettings }) => {
 /*  Modals                                                             */
 /* ------------------------------------------------------------------ */
 
-const PaymentModal = ({ amount, fmt, paying, onSelect, onCancel }) => {
+const PaymentModal = ({ order, amount, fmt, paying, onSelect, onCancel }) => {
   const methods = [
     { id: 'cash', label: 'Cash', Icon: Banknote },
     { id: 'card', label: 'Card', Icon: CreditCard },
     { id: 'upi', label: 'UPI', Icon: Smartphone },
   ];
+
+  // Step 1 = method picker, Step 2 = UPI QR + confirm.
+  const [step, setStep] = useState('pick');
+  const [upiQr, setUpiQr] = useState('');
+  const [qrLoading, setQrLoading] = useState(false);
+
+  // Generate the UPI QR with the live bill amount baked in.
+  useEffect(() => {
+    if (step !== 'upi') return undefined;
+    let cancelled = false;
+    setQrLoading(true);
+    const cfg = getUPIConfig();
+    if (!cfg.upiId) {
+      setUpiQr('');
+      setQrLoading(false);
+      return undefined;
+    }
+    const params = new URLSearchParams({
+      pa: cfg.upiId,
+      pn: cfg.payeeName,
+      am: Number(amount || 0).toFixed(2),
+      cu: cfg.currency || 'INR',
+      tn: cfg.transactionNoteTemplate.replace('{orderId}', order?.id ?? ''),
+      tr: `ORD${order?.id ?? ''}${Date.now()}`,
+    });
+    QRCode.toDataURL(`upi://pay?${params.toString()}`, {
+      width: 240,
+      margin: 1,
+    })
+      .then((url) => {
+        if (!cancelled) setUpiQr(url);
+      })
+      .catch(() => {
+        if (!cancelled) setUpiQr('');
+      })
+      .finally(() => {
+        if (!cancelled) setQrLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, amount, order]);
+
+  // Cash / Card → run the payment immediately (no extra confirm
+  // step — the cashier already pressed View & Pay → Cash).
+  const handlePick = (id) => {
+    if (id === 'upi') {
+      setStep('upi');
+      return;
+    }
+    onSelect(id);
+  };
+
+  /* ---------- Render ---------- */
+  if (step === 'upi') {
+    const cfg = getUPIConfig();
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in">
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => setStep('pick')}
+              disabled={paying}
+              className="text-gray-500 hover:text-gray-700 inline-flex items-center gap-1 text-xs font-medium disabled:opacity-50"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" /> Back
+            </button>
+            <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
+              UPI
+            </span>
+          </div>
+
+          <h3 className="text-base font-bold text-gray-900 mt-3">
+            Scan to pay {fmt(amount)}
+          </h3>
+          <p className="text-[12px] text-gray-500 mt-0.5">
+            Works with PhonePe · Google Pay · Paytm · BHIM
+          </p>
+
+          <div className="my-4 flex flex-col items-center">
+            <div className="bg-white border-2 border-emerald-200 rounded-2xl p-3 shadow-sm">
+              {qrLoading || !upiQr ? (
+                <div className="w-[210px] h-[210px] flex items-center justify-center text-[11px] text-gray-400 text-center px-3">
+                  {cfg.upiId
+                    ? 'Generating QR…'
+                    : 'No UPI ID configured. Settings → Payment Gateways'}
+                </div>
+              ) : (
+                <img src={upiQr} alt="UPI QR" className="w-[210px] h-[210px]" />
+              )}
+            </div>
+            {cfg.upiId && (
+              <p className="text-[11px] text-gray-500 mt-2 break-all text-center">
+                {cfg.upiId} · {cfg.payeeName}
+              </p>
+            )}
+          </div>
+
+          <button
+            onClick={() => onSelect('upi')}
+            disabled={paying || !upiQr}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white text-sm font-semibold shadow-sm hover:shadow-md transition disabled:opacity-60"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            {paying ? 'Processing…' : 'Payment Received · Print Bill'}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={paying}
+            className="w-full mt-2 py-3 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium transition disabled:opacity-60"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in">
@@ -933,7 +1011,7 @@ const PaymentModal = ({ amount, fmt, paying, onSelect, onCancel }) => {
             <button
               key={id}
               disabled={paying}
-              onClick={() => onSelect(id)}
+              onClick={() => handlePick(id)}
               className="w-full inline-flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-800 font-medium text-sm transition active:scale-[0.99] disabled:opacity-60"
             >
               <Icon className="w-4 h-4 text-gray-600" />
@@ -966,67 +1044,5 @@ const SuccessModal = ({ amount, fmt }) => (
     </div>
   </div>
 );
-
-const UpiQrModal = ({ amount, fmt, paying, qrDataUrl, onCancel, onConfirm }) => {
-  const cfg = getUPIConfigShared();
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in">
-        <h3 className="text-base font-bold text-gray-900 text-center">
-          Scan to Pay
-        </h3>
-        <p className="text-2xl font-bold text-emerald-600 text-center mt-1">
-          {fmt(amount)}
-        </p>
-        <p className="text-[11px] text-gray-500 text-center mt-1">
-          Works with PhonePe · Google Pay · Paytm · BHIM
-        </p>
-
-        <div className="my-4 flex items-center justify-center">
-          {qrDataUrl ? (
-            <div className="bg-white border-2 border-emerald-200 rounded-2xl p-3 shadow-sm">
-              <img
-                src={qrDataUrl}
-                alt="UPI QR"
-                className="w-[220px] h-[220px]"
-              />
-            </div>
-          ) : (
-            <div className="w-[220px] h-[220px] bg-gray-50 border border-gray-200 rounded-2xl flex items-center justify-center text-xs text-gray-400 px-4 text-center">
-              Generating QR…
-            </div>
-          )}
-        </div>
-
-        {cfg.upiId && (
-          <div className="text-center mb-4">
-            <p className="text-sm font-semibold text-gray-900">
-              {cfg.payeeName}
-            </p>
-            <p className="text-[11px] text-gray-500 break-all px-2">
-              {cfg.upiId}
-            </p>
-          </div>
-        )}
-
-        <button
-          disabled={paying}
-          onClick={onConfirm}
-          className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white text-sm font-bold shadow-md hover:shadow-lg transition disabled:opacity-60 active:scale-[0.99]"
-        >
-          {paying ? 'Confirming…' : 'Payment Received · Print Bill'}
-        </button>
-        <button
-          onClick={onCancel}
-          disabled={paying}
-          className="w-full mt-2 py-3 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium transition disabled:opacity-60"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-};
 
 export default BillingPage;
