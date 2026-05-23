@@ -45,52 +45,95 @@ export const groupItemsByName = (items) => {
 };
 
 /**
- * Compute totals for a receipt.
- * If the order has a server-side `total` and the bill is paid, we
- * preserve that grand total exactly (so the displayed bill matches
- * what the customer actually paid). Otherwise we recompute.
+ * Load the active tax + discount preferences saved in Settings →
+ * Billing & Taxation. Falls back to a sensible default if nothing
+ * has been saved yet.
+ *
+ * Returns:
+ *   { taxPercent, discountPercent, discountType }
+ */
+export const loadTaxDiscountSettings = () => {
+  try {
+    const raw = localStorage.getItem('globalTaxDiscount');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        taxPercent: Number(parsed.taxPercent ?? 5) || 0,
+        discountPercent: Number(parsed.discountPercent ?? 0) || 0,
+        discountType: parsed.discountType || 'percent',
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { taxPercent: 5, discountPercent: 0, discountType: 'percent' };
+};
+
+/**
+ * Compute totals for a receipt using the configured tax + discount.
+ * The math is always consistent (subtotal − discount + tax = grand
+ * total), so the printed bill never has a mismatched line.
+ *
+ * Tax is split into CGST + SGST (each = taxPercent / 2) to match the
+ * Indian GST format shown on the order detail panel.
  */
 export const calculateTotals = (
   order,
-  { taxRate = 0.05, discountPercent = 0, discountType = 'percent' } = {}
+  {
+    taxPercent = 5,
+    discountPercent = 0,
+    discountType = 'percent',
+  } = {}
 ) => {
-  if (!order)
-    return {
-      subtotal: 0,
-      discount: 0,
-      discountAmount: 0,
-      afterDiscount: 0,
-      tax: 0,
-      total: 0,
-    };
+  const empty = {
+    subtotal: 0,
+    discountPercent: 0,
+    discountType: 'percent',
+    discountAmount: 0,
+    afterDiscount: 0,
+    taxPercent: 0,
+    cgstPercent: 0,
+    sgstPercent: 0,
+    cgst: 0,
+    sgst: 0,
+    tax: 0,
+    total: 0,
+  };
+  if (!order) return empty;
+
   const items = order.items || [];
   const subtotal = items.reduce(
     (sum, it) =>
       sum + (Number(it.price) || 0) * (it.quantity || it.qty || 1),
     0
   );
-  let discountAmount = 0;
-  if (discountPercent > 0) {
-    discountAmount =
-      discountType === 'percent'
-        ? subtotal * (discountPercent / 100)
-        : Number(discountPercent) || 0;
-  }
-  const afterDiscount = subtotal - discountAmount;
-  const tax = afterDiscount * taxRate;
-  const computedTotal = afterDiscount + tax;
 
-  // If the server already finalised the total, prefer it.
-  const serverTotal = Number(order.total);
-  const total = Number.isFinite(serverTotal) && serverTotal > 0
-    ? serverTotal
-    : computedTotal;
+  const dPct = Number(discountPercent) || 0;
+  let discountAmount = 0;
+  if (dPct > 0) {
+    discountAmount =
+      discountType === 'percent' ? subtotal * (dPct / 100) : dPct;
+  }
+  const afterDiscount = Math.max(0, subtotal - discountAmount);
+
+  const tPct = Number(taxPercent) || 0;
+  const halfPct = tPct / 2;
+  const cgst = afterDiscount * (halfPct / 100);
+  const sgst = afterDiscount * (halfPct / 100);
+  const tax = cgst + sgst;
+  const total = afterDiscount + tax;
 
   return {
     subtotal,
-    discount: discountPercent,
+    discountPercent: dPct,
+    discountType,
     discountAmount,
     afterDiscount,
+    taxPercent: tPct,
+    cgstPercent: halfPct,
+    sgstPercent: halfPct,
+    cgst,
+    sgst,
     tax,
     total,
   };
@@ -134,11 +177,15 @@ export const buildCustomerReceiptHtml = (order, totals, info, options = {}) => {
   const {
     qrCodeDataUrl = '',
     paymentLabel = 'Cash',
-    discountPercent = 0,
-    discountType = 'percent',
-    taxPercent = 5,
     cashier = 'biller',
   } = options;
+  // Prefer values that came from `calculateTotals` so the displayed
+  // breakdown always matches the math.
+  const discountPercent = totals.discountPercent ?? 0;
+  const discountType = totals.discountType || 'percent';
+  const taxPercent = totals.taxPercent ?? 0;
+  const cgstPercent = totals.cgstPercent ?? taxPercent / 2;
+  const sgstPercent = totals.sgstPercent ?? taxPercent / 2;
 
   const grouped = groupItemsByName(order.items || []);
   const totalQty = grouped.reduce(
@@ -236,9 +283,15 @@ export const buildCustomerReceiptHtml = (order, totals, info, options = {}) => {
              ).toFixed(2)}</span></div>`
           : ''
       }
-      <div class="row small"><span>Tax (${taxPercent}%)</span><span>${Number(
-    totals.tax
-  ).toFixed(2)}</span></div>
+      <div class="row small"><span>CGST (${Number(cgstPercent).toFixed(
+        2
+      )}%)</span><span>${Number(totals.cgst).toFixed(2)}</span></div>
+      <div class="row small"><span>SGST (${Number(sgstPercent).toFixed(
+        2
+      )}%)</span><span>${Number(totals.sgst).toFixed(2)}</span></div>
+      <div class="row small bold"><span>Total Tax (${Number(taxPercent).toFixed(
+        2
+      )}%)</span><span>${Number(totals.tax).toFixed(2)}</span></div>
       <div class="dashed"></div>
 
       <div class="row grand">

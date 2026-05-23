@@ -23,6 +23,7 @@ import useCurrency from '../hooks/useCurrency';
 import DatePickerButton, { getTodayLocalDate } from './DatePickerButton';
 import {
   loadRestaurantInfo,
+  loadTaxDiscountSettings,
   buildKitchenSlipHtml,
   buildCustomerReceiptHtml,
   calculateTotals as calcReceiptTotals,
@@ -273,17 +274,12 @@ const OrdersPage = ({ locationSettings }) => {
     URL.revokeObjectURL(url);
   };
 
-  const computeTotals = (o) => {
-    const items = o?.items || [];
-    const subtotal = items.reduce(
-      (s, it) => s + (Number(it.price) || 0) * (it.quantity || it.qty || 1),
-      0
-    );
-    const taxRate = (locationSettings?.taxRate ?? 0.05) / 2;
-    const cgst = subtotal * taxRate;
-    const sgst = subtotal * taxRate;
-    return { subtotal, cgst, sgst, total: subtotal + cgst + sgst };
-  };
+  // Single source of truth for totals — uses the same calculator as
+  // the printed receipt so the on-screen numbers and the bill always
+  // agree, and they honour whatever taxes/discount have been saved
+  // in Settings → Billing & Taxation.
+  const computeTotals = (o) =>
+    calcReceiptTotals(o, loadTaxDiscountSettings());
 
   const activeTypeLabel =
     TYPE_FILTER_OPTIONS.find((t) => t.id === typeFilter)?.label || 'All Types';
@@ -538,7 +534,6 @@ const OrdersPage = ({ locationSettings }) => {
               order={selected}
               fmt={fmt}
               totals={computeTotals(selected)}
-              locationSettings={locationSettings}
             />
           ) : (
             <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-gray-500">
@@ -592,7 +587,7 @@ const buildTimeline = (order) => {
   ];
 };
 
-const OrderDetailPanel = ({ order, fmt, totals, locationSettings }) => {
+const OrderDetailPanel = ({ order, fmt, totals }) => {
   const created = orderTime(order);
   const status = (order.status || 'pending').toLowerCase();
   const paid =
@@ -605,15 +600,13 @@ const OrderDetailPanel = ({ order, fmt, totals, locationSettings }) => {
   // Build the printable receipt HTML for the current order. Used by
   // both the "Print Bill" and "View Bill" actions so dine-in and
   // takeaway bills always look identical to the thermal printout.
+  // The tax/discount values come from the user's saved settings, so
+  // whatever is configured under Settings → Billing & Taxation drives
+  // the bill (CGST + SGST split = taxPercent / 2 each).
   const buildPrintableHtml = () => {
     const info = loadRestaurantInfo();
-    const taxRate = locationSettings?.taxRate ?? 0.05;
-    const receiptTotals = calcReceiptTotals(order, {
-      taxRate,
-      discountPercent: 0,
-      discountType: 'percent',
-    });
-    const taxPercent = Number((taxRate * 100).toFixed(2));
+    const taxDiscount = loadTaxDiscountSettings();
+    const receiptTotals = calcReceiptTotals(order, taxDiscount);
     const orderPaid = isOrderPaid(order);
     const paymentLabel = orderPaid
       ? order.payment_method
@@ -623,9 +616,6 @@ const OrderDetailPanel = ({ order, fmt, totals, locationSettings }) => {
     const customerHtml = buildCustomerReceiptHtml(order, receiptTotals, info, {
       qrCodeDataUrl: '',
       paymentLabel,
-      discountPercent: 0,
-      discountType: 'percent',
-      taxPercent,
     });
     const kitchenHtml =
       typeKey === 'TAKEAWAY' ? buildKitchenSlipHtml(order, info) : '';
@@ -783,18 +773,38 @@ const OrderDetailPanel = ({ order, fmt, totals, locationSettings }) => {
           <span>Subtotal</span>
           <span>{fmt(totals.subtotal)}</span>
         </div>
+        {totals.discountPercent > 0 && (
+          <>
+            <div className="flex justify-between text-gray-600">
+              <span>
+                Discount (
+                {totals.discountType === 'percent'
+                  ? `${totals.discountPercent}%`
+                  : `${Number(totals.discountPercent).toFixed(2)}`}
+                )
+              </span>
+              <span className="text-rose-500">
+                -{fmt(totals.discountAmount)}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-600">
+              <span>After Discount</span>
+              <span>{fmt(totals.afterDiscount)}</span>
+            </div>
+          </>
+        )}
         <div className="flex justify-between text-gray-600">
-          <span>CGST (2.5%)</span>
+          <span>CGST ({Number(totals.cgstPercent).toFixed(2)}%)</span>
           <span>{fmt(totals.cgst)}</span>
         </div>
         <div className="flex justify-between text-gray-600">
-          <span>SGST (2.5%)</span>
+          <span>SGST ({Number(totals.sgstPercent).toFixed(2)}%)</span>
           <span>{fmt(totals.sgst)}</span>
         </div>
         <div className="flex justify-between pt-2 border-t border-gray-100">
           <span className="font-bold text-gray-900">Total Amount</span>
           <span className="font-extrabold text-orange-500">
-            {fmt(Number(order.total) || totals.total)}
+            {fmt(totals.total)}
           </span>
         </div>
       </div>
