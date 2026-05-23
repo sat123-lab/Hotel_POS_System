@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import QRCode from 'qrcode';
+import { getUPIConfig } from '../config/upiConfig';
 import {
   Inbox,
   Clock,
@@ -603,7 +605,34 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
   // The tax/discount values come from the user's saved settings, so
   // whatever is configured under Settings → Billing & Taxation drives
   // the bill (CGST + SGST split = taxPercent / 2 each).
-  const buildPrintableHtml = () => {
+  //
+  // For unpaid orders we also embed a UPI QR with the bill amount
+  // baked in — scanning it with any UPI app (PhonePe, GPay, Paytm,
+  // BHIM) will pre-fill the exact total against the merchant's
+  // saved UPI ID (Settings → Payments → UPI ID).
+  const generateUpiQr = async (totals) => {
+    try {
+      const cfg = getUPIConfig();
+      // Skip QR if no real UPI ID has been configured yet.
+      if (!cfg.upiId || cfg.upiId === 'merchant@upi') return '';
+      const params = new URLSearchParams({
+        pa: cfg.upiId,
+        pn: cfg.payeeName,
+        am: Number(totals.total).toFixed(2),
+        cu: cfg.currency || 'INR',
+        tn: cfg.transactionNoteTemplate.replace('{orderId}', order.id),
+        tr: `ORD${order.id}${Date.now()}`,
+      });
+      return await QRCode.toDataURL(`upi://pay?${params.toString()}`, {
+        width: 220,
+        margin: 1,
+      });
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const buildPrintableHtml = async () => {
     const info = loadRestaurantInfo();
     const taxDiscount = loadTaxDiscountSettings();
     const receiptTotals = calcReceiptTotals(order, taxDiscount);
@@ -613,8 +642,9 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
         ? String(order.payment_method).toUpperCase()
         : 'Cash'
       : 'Pending';
+    const qrCodeDataUrl = orderPaid ? '' : await generateUpiQr(receiptTotals);
     const customerHtml = buildCustomerReceiptHtml(order, receiptTotals, info, {
-      qrCodeDataUrl: '',
+      qrCodeDataUrl,
       paymentLabel,
     });
     const kitchenHtml =
@@ -622,8 +652,8 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
     return { html: `${kitchenHtml}${customerHtml}`, totals: receiptTotals };
   };
 
-  const handlePrint = () => {
-    const { html } = buildPrintableHtml();
+  const handlePrint = async () => {
+    const { html } = await buildPrintableHtml();
     openReceiptForPrint(html, `Bill #${order.id}`);
   };
 
@@ -845,8 +875,24 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
    ================================================================= */
 
 const BillPreviewModal = ({ order, buildPrintableHtml, onClose, onPrint }) => {
-  const { html } = buildPrintableHtml();
+  const [html, setHtml] = useState('');
   const isTakeaway = String(order.type).toUpperCase() === 'TAKEAWAY';
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(buildPrintableHtml())
+      .then((result) => {
+        if (!cancelled && result && typeof result.html === 'string') {
+          setHtml(result.html);
+        }
+      })
+      .catch(() => {
+        /* keep empty html — preview shows blank */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [buildPrintableHtml]);
 
   const fullDoc = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>${RECEIPT_STYLES}

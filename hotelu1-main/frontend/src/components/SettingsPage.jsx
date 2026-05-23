@@ -10,7 +10,9 @@ import {
   Percent,
   Tag,
   Check,
+  QrCode as QrCodeIcon,
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { getAPI_URL } from '../utils/api';
 
 /* ------------------------------------------------------------------ */
@@ -557,36 +559,135 @@ const BillingForm = ({ draft, setDraft, billing, dirty, setDirty, onSave }) => {
 
 const PaymentsForm = ({ value, onChange, onSave }) => {
   const set = (k, v) => onChange({ ...value, [k]: v });
+
+  // Live preview of the UPI QR for ₹100 so the merchant can scan it
+  // with their phone and confirm the right account/name shows up
+  // before printing real bills.
+  const [previewQr, setPreviewQr] = useState('');
+  const upiId = (value.upiId || '').trim();
+  const payeeName = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('systemSettingsExtended_v1');
+      const s = raw ? JSON.parse(raw) : {};
+      return (s.restaurantName && String(s.restaurantName).trim()) || 'Restaurant POS';
+    } catch {
+      return 'Restaurant POS';
+    }
+  }, []);
+
+  const sampleAmount = '100.00';
+  const sampleUpiUrl = upiId
+    ? `upi://pay?${new URLSearchParams({
+        pa: upiId,
+        pn: payeeName,
+        am: sampleAmount,
+        cu: 'INR',
+        tn: 'Bill Payment Sample',
+      }).toString()}`
+    : '';
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!sampleUpiUrl) {
+      setPreviewQr('');
+      return undefined;
+    }
+    QRCode.toDataURL(sampleUpiUrl, { width: 220, margin: 1 })
+      .then((url) => {
+        if (!cancelled) setPreviewQr(url);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewQr('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sampleUpiUrl]);
+
   return (
     <div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <Field label="UPI ID">
-          <input
-            type="text"
-            value={value.upiId}
-            onChange={(e) => set('upiId', e.target.value)}
-            className={inputCls}
-            placeholder="merchant@upi"
-          />
-        </Field>
-        <Field label="Razorpay Key">
-          <input
-            type="text"
-            value={value.razorpayKey}
-            onChange={(e) => set('razorpayKey', e.target.value)}
-            className={inputCls}
-            placeholder="rzp_live_..."
-          />
-        </Field>
-        <Field label="Stripe Secret Key">
-          <input
-            type="text"
-            value={value.stripeKey}
-            onChange={(e) => set('stripeKey', e.target.value)}
-            className={inputCls}
-            placeholder="sk_live_..."
-          />
-        </Field>
+      <div className="bg-orange-50/60 border border-orange-100 rounded-2xl p-4 mb-5 flex items-start gap-3">
+        <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
+          <QrCodeIcon className="w-4 h-4" />
+        </div>
+        <div className="text-sm text-gray-700">
+          <p className="font-semibold text-gray-900">Bill QR auto-fills the amount</p>
+          <p className="text-gray-600 mt-0.5">
+            Enter your real UPI ID below (e.g. <code className="text-xs bg-white px-1 py-0.5 rounded border">8484843035@ptsbi</code>,{' '}
+            <code className="text-xs bg-white px-1 py-0.5 rounded border">name@okicici</code>,{' '}
+            <code className="text-xs bg-white px-1 py-0.5 rounded border">name@ybl</code>).
+            When a customer scans the bill QR with PhonePe, Google Pay, Paytm or BHIM,
+            the bill amount and your account will be pre-filled automatically.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-5">
+          <Field label="UPI ID">
+            <input
+              type="text"
+              value={value.upiId}
+              onChange={(e) => set('upiId', e.target.value)}
+              className={inputCls}
+              placeholder="yourname@upi"
+            />
+            <p className="text-[11px] text-gray-500 mt-1.5">
+              Payee name on the QR is taken from{' '}
+              <span className="font-semibold text-gray-700">{payeeName}</span>{' '}
+              (Settings → General → Restaurant Name).
+            </p>
+          </Field>
+          <Field label="Razorpay Key">
+            <input
+              type="text"
+              value={value.razorpayKey}
+              onChange={(e) => set('razorpayKey', e.target.value)}
+              className={inputCls}
+              placeholder="rzp_live_..."
+            />
+          </Field>
+          <Field label="Stripe Secret Key">
+            <input
+              type="text"
+              value={value.stripeKey}
+              onChange={(e) => set('stripeKey', e.target.value)}
+              className={inputCls}
+              placeholder="sk_live_..."
+            />
+          </Field>
+        </div>
+
+        {/* Live UPI test QR */}
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 flex flex-col items-center text-center">
+          <p className="text-xs uppercase tracking-wide text-gray-500 font-semibold">
+            Test QR · ₹{sampleAmount}
+          </p>
+          <p className="text-sm font-bold text-gray-900 mt-1 truncate max-w-full">
+            {payeeName}
+          </p>
+          <div className="my-3 w-[180px] h-[180px] bg-gray-50 border border-gray-100 rounded-xl flex items-center justify-center overflow-hidden">
+            {previewQr ? (
+              <img
+                src={previewQr}
+                alt="UPI preview QR"
+                className="w-[170px] h-[170px]"
+              />
+            ) : (
+              <div className="text-[11px] text-gray-400 px-3">
+                Enter a valid UPI ID to preview the live QR
+              </div>
+            )}
+          </div>
+          {upiId ? (
+            <p className="text-[11px] text-gray-500 break-all">
+              {upiId}
+            </p>
+          ) : null}
+          <p className="text-[10px] text-gray-400 mt-2">
+            Scan with any UPI app to verify
+          </p>
+        </div>
       </div>
       <SaveBar onSave={onSave} />
     </div>
