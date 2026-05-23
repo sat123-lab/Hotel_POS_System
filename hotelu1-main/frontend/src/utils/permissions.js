@@ -2,28 +2,35 @@
 /*  Role/module permission helpers                                     */
 /*                                                                     */
 /*  The Module Permissions Matrix (UserManagement → Module Permissions */
-/*  Matrix tab) is saved to localStorage under                         */
-/*  `rolePermissionsMatrix`. The shape is:                             */
+/*  Matrix tab) is saved to BOTH localStorage and the server-side      */
+/*  /api/settings table under the key `rolePermissionsMatrix`. The     */
+/*  shape is:                                                          */
 /*                                                                     */
 /*    { [roleId]: { [moduleId]: boolean } }                            */
 /*                                                                     */
 /*  Module IDs are the ones declared in UserManagement.jsx (MODULES). */
 /*  Sidebar / route guards use this util so that toggling a module on  */
-/*  or off in the matrix instantly controls what each role can see.    */
+/*  or off in the matrix controls what each role can see — and the     */
+/*  server copy ensures the same permissions apply across browsers,    */
+/*  devices and freshly-logged-in staff users.                         */
 /* ------------------------------------------------------------------ */
 
+import { getAPI_URL } from './api';
+
 const STORAGE_KEY = 'rolePermissionsMatrix';
+const SETTING_KEY = 'rolePermissionsMatrix';
 export const PERMISSIONS_UPDATED_EVENT = 'permissions-matrix-updated';
 
 // Default matrix is duplicated here (kept in sync with
-// UserManagement.jsx) so guards work even before the admin has saved
-// the matrix once.
+// UserManagement.jsx MODULES list) so guards work even before the
+// admin has saved the matrix once.
 export const DEFAULT_ROLE_MATRIX = {
   admin: {
     dashboard: true,
     reports: true,
     qr_management: true,
     dine_in: true,
+    takeaway: true,
     inventory: true,
     billing: true,
     kitchen_display: true,
@@ -39,6 +46,7 @@ export const DEFAULT_ROLE_MATRIX = {
     reports: true,
     qr_management: true,
     dine_in: true,
+    takeaway: true,
     inventory: true,
     billing: true,
     kitchen_display: true,
@@ -54,6 +62,7 @@ export const DEFAULT_ROLE_MATRIX = {
     reports: false,
     qr_management: false,
     dine_in: true,
+    takeaway: true,
     inventory: false,
     billing: false,
     kitchen_display: true,
@@ -69,6 +78,7 @@ export const DEFAULT_ROLE_MATRIX = {
     reports: false,
     qr_management: false,
     dine_in: false,
+    takeaway: false,
     inventory: false,
     billing: false,
     kitchen_display: true,
@@ -84,6 +94,7 @@ export const DEFAULT_ROLE_MATRIX = {
     reports: false,
     qr_management: false,
     dine_in: false,
+    takeaway: true,
     inventory: false,
     billing: true,
     kitchen_display: false,
@@ -117,11 +128,14 @@ export const loadPermissionsMatrix = () => {
   }
 };
 
+/**
+ * Persist the matrix to localStorage AND the server-side settings
+ * table. Falls back gracefully if either side fails — the in-memory
+ * UI update succeeds even when the network is offline.
+ */
 export const savePermissionsMatrix = (matrix) => {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(matrix));
-    // Notify any listeners (sidebar, guards) so they re-render
-    // without requiring a page reload.
     try {
       window.dispatchEvent(new CustomEvent(PERMISSIONS_UPDATED_EVENT));
     } catch {
@@ -129,6 +143,60 @@ export const savePermissionsMatrix = (matrix) => {
     }
   } catch {
     /* noop */
+  }
+  // Best-effort persist to server so other users (different
+  // browsers / devices) pick up the new permissions.
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${getAPI_URL()}/api/settings`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        key: SETTING_KEY,
+        value: matrix,
+        description: 'Role → module permissions matrix',
+      }),
+    }).catch(() => {
+      /* noop */
+    });
+  } catch {
+    /* noop */
+  }
+};
+
+/**
+ * Pull the matrix from the server settings table and write it into
+ * localStorage so the rest of the app reads a consistent value.
+ * Should be called once on mount of the main app shell. Returns the
+ * fetched matrix (or null if no server copy exists yet).
+ */
+export const fetchPermissionsMatrixFromServer = async () => {
+  try {
+    const res = await fetch(
+      `${getAPI_URL()}/api/settings?key=${encodeURIComponent(SETTING_KEY)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data.value && typeof data.value === 'object') {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data.value));
+        try {
+          window.dispatchEvent(new CustomEvent(PERMISSIONS_UPDATED_EVENT));
+        } catch {
+          /* noop */
+        }
+      } catch {
+        /* noop */
+      }
+      return data.value;
+    }
+    return null;
+  } catch {
+    return null;
   }
 };
 

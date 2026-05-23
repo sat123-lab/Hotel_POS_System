@@ -27,6 +27,7 @@ import { useNotifications } from '../contexts/NotificationsContext';
 import {
   canRoleAccessModule,
   loadPermissionsMatrix,
+  fetchPermissionsMatrixFromServer,
   PERMISSIONS_UPDATED_EVENT,
 } from '../utils/permissions';
 
@@ -80,14 +81,24 @@ const Sidebar = ({
   // sync without forcing a page reload.
   React.useEffect(() => {
     const reload = () => setMatrix(loadPermissionsMatrix());
-    window.addEventListener(PERMISSIONS_UPDATED_EVENT, reload);
-    window.addEventListener('storage', (e) => {
+    const onStorage = (e) => {
       if (e.key === 'rolePermissionsMatrix') reload();
+    };
+    window.addEventListener(PERMISSIONS_UPDATED_EVENT, reload);
+    window.addEventListener('storage', onStorage);
+
+    // Pull the latest matrix from the server every time a user logs
+    // in so a freshly logged-in waiter / chef / cashier on a brand
+    // new browser still picks up the admin's saved permissions.
+    fetchPermissionsMatrixFromServer().then((serverMatrix) => {
+      if (serverMatrix) reload();
     });
+
     return () => {
       window.removeEventListener(PERMISSIONS_UPDATED_EVENT, reload);
+      window.removeEventListener('storage', onStorage);
     };
-  }, []);
+  }, [currentUser]);
 
   const fetchUserPermissions = async () => {
     try {
@@ -309,7 +320,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {canSee('billing', ['manage_orders', 'create_order', 'view_orders']) && (
+            {canSee('takeaway', ['manage_orders', 'create_order', 'view_orders']) && (
               <li>
                 <NavItem
                   icon={ShoppingBag}
