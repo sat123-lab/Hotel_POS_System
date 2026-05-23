@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Notification from './Notification';
 import { getAPI_URL } from '../utils/api';
+import { savePermissionsMatrix } from '../utils/permissions';
 import {
   Users,
   Shield,
@@ -426,13 +427,17 @@ const UserManagement = ({ token }) => {
 
   const saveMatrix = () => {
     try {
-      localStorage.setItem('rolePermissionsMatrix', JSON.stringify(matrix));
+      // savePermissionsMatrix persists to localStorage AND fires a
+      // window event so the Sidebar (and any other listeners) can
+      // re-render immediately — no page reload required.
+      savePermissionsMatrix(matrix);
       setDirty(false);
       setNotification({
-        message: 'Permissions matrix saved.',
+        message:
+          'Permissions matrix saved. Roles will see the new modules on their next page load.',
         type: 'success',
       });
-      setTimeout(() => setNotification(null), 2200);
+      setTimeout(() => setNotification(null), 2600);
     } catch (err) {
       setNotification({ message: 'Failed to save matrix.', type: 'error' });
     }

@@ -24,6 +24,11 @@ import {
 } from 'lucide-react';
 import { getAPI_URL } from '../utils/api';
 import { useNotifications } from '../contexts/NotificationsContext';
+import {
+  canRoleAccessModule,
+  loadPermissionsMatrix,
+  PERMISSIONS_UPDATED_EVENT,
+} from '../utils/permissions';
 
 const navIconClass = (active) =>
   `w-5 h-5 ${active ? 'text-orange-500' : 'text-gray-400 group-hover:text-orange-500'}`;
@@ -62,12 +67,27 @@ const Sidebar = ({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [userPermissions, setUserPermissions] = useState([]);
   const [loadingPermissions, setLoadingPermissions] = useState(true);
+  const [matrix, setMatrix] = useState(() => loadPermissionsMatrix());
   const { unreadCount } = useNotifications();
 
   React.useEffect(() => {
     fetchUserPermissions();
     // eslint-disable-next-line
   }, [currentUser]);
+
+  // Re-load the matrix whenever an admin saves the Module Permissions
+  // Matrix (or another tab updates it). This keeps the sidebar in
+  // sync without forcing a page reload.
+  React.useEffect(() => {
+    const reload = () => setMatrix(loadPermissionsMatrix());
+    window.addEventListener(PERMISSIONS_UPDATED_EVENT, reload);
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'rolePermissionsMatrix') reload();
+    });
+    return () => {
+      window.removeEventListener(PERMISSIONS_UPDATED_EVENT, reload);
+    };
+  }, []);
 
   const fetchUserPermissions = async () => {
     try {
@@ -90,11 +110,31 @@ const Sidebar = ({
   const isSubFranchise = currentUser?.role === 'subfranchise';
   const isFranchiseOwner = currentUser?.role === 'franchise';
   const isFranchiseLogin = isSubFranchise || isFranchiseOwner;
+  const role = String(currentUser?.role || '').toLowerCase();
+  const isStaffRole = ['manager', 'waiter', 'chef', 'cashier'].includes(role);
 
   const hasPermission = (p) =>
-    currentUser?.role === 'admin' ? true : userPermissions.includes(p);
+    role === 'admin' ? true : userPermissions.includes(p);
   const hasAnyPermission = (ps) =>
-    currentUser?.role === 'admin' ? true : ps.some((p) => userPermissions.includes(p));
+    role === 'admin' ? true : ps.some((p) => userPermissions.includes(p));
+
+  // canSee(moduleId, fallbackPerms) — single source-of-truth gate.
+  //
+  // - Admin  → always visible.
+  // - Staff (manager/waiter/chef/cashier) → the Module Permissions
+  //   Matrix saved by the admin is authoritative. Whatever modules
+  //   are checked for that role are shown; everything else is hidden.
+  // - Franchise/sub-franchise/unknown roles → fall back to the
+  //   server-issued permission codes (preserves existing behaviour).
+  const canSee = (moduleId, fallbackPerms) => {
+    if (role === 'admin') return true;
+    if (isStaffRole) {
+      return canRoleAccessModule(role, moduleId, matrix);
+    }
+    if (Array.isArray(fallbackPerms)) return hasAnyPermission(fallbackPerms);
+    if (typeof fallbackPerms === 'string') return hasPermission(fallbackPerms);
+    return true;
+  };
 
   const handleTabClick = (tab) => {
     setActiveTab(tab);
@@ -225,7 +265,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {!isFranchiseLogin && hasPermission('view_dashboard') && (
+            {!isFranchiseLogin && canSee('dashboard', 'view_dashboard') && (
               <li>
                 <NavItem
                   icon={LayoutGrid}
@@ -236,7 +276,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {hasAnyPermission(['manage_orders', 'create_order', 'view_orders']) && (
+            {canSee('dine_in', ['manage_orders', 'create_order', 'view_orders']) && (
               <li>
                 <NavItem
                   icon={ClipboardList}
@@ -247,7 +287,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {hasAnyPermission(['view_billing', 'process_payments', 'view_bills']) && (
+            {canSee('billing', ['view_billing', 'process_payments', 'view_bills']) && (
               <li>
                 <NavItem
                   icon={Receipt}
@@ -258,7 +298,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {hasAnyPermission(['manage_orders', 'create_order', 'view_orders']) && (
+            {canSee('dine_in', ['manage_orders', 'create_order', 'view_orders']) && (
               <li>
                 <NavItem
                   icon={Utensils}
@@ -269,7 +309,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {hasAnyPermission(['manage_orders', 'create_order', 'view_orders']) && (
+            {canSee('billing', ['manage_orders', 'create_order', 'view_orders']) && (
               <li>
                 <NavItem
                   icon={ShoppingBag}
@@ -280,7 +320,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {hasPermission('kitchen_display') && (
+            {canSee('kitchen_display', 'kitchen_display') && (
               <li>
                 <NavItem
                   icon={ChefHat}
@@ -292,7 +332,13 @@ const Sidebar = ({
             )}
 
             {!isFranchiseLogin &&
-              hasAnyPermission(['view_menu', 'manage_menu', 'create_menu_item', 'edit_menu_item', 'delete_menu_item']) && (
+              canSee('menu_management', [
+                'view_menu',
+                'manage_menu',
+                'create_menu_item',
+                'edit_menu_item',
+                'delete_menu_item',
+              ]) && (
                 <li>
                   <NavItem
                     icon={Utensils}
@@ -303,7 +349,7 @@ const Sidebar = ({
                 </li>
               )}
 
-            {hasPermission('view_reports') && (
+            {canSee('reports', 'view_reports') && (
               <li>
                 <NavItem
                   icon={BarChart3}
@@ -315,7 +361,11 @@ const Sidebar = ({
             )}
 
             {!isFranchiseLogin &&
-              hasAnyPermission(['view_inventory', 'manage_inventory', 'edit_inventory']) && (
+              canSee('inventory', [
+                'view_inventory',
+                'manage_inventory',
+                'edit_inventory',
+              ]) && (
                 <li>
                   <NavItem
                     icon={Package}
@@ -326,7 +376,7 @@ const Sidebar = ({
                 </li>
               )}
 
-            {!isFranchiseLogin && hasPermission('manage_qr_codes') && (
+            {!isFranchiseLogin && canSee('qr_management', 'manage_qr_codes') && (
               <li>
                 <NavItem
                   icon={QrCode}
@@ -337,7 +387,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {currentUser?.role === 'admin' && (
+            {canSee('user_management') && role === 'admin' && (
               <li>
                 <NavItem
                   icon={Users}
@@ -348,7 +398,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {currentUser?.role === 'admin' && (
+            {canSee('franchise') && role === 'admin' && (
               <li>
                 <NavItem
                   icon={Building}
@@ -359,8 +409,8 @@ const Sidebar = ({
               </li>
             )}
 
-            {hasPermission('manage_subfranchise') &&
-              (currentUser?.role === 'admin' || isFranchiseOwner) && (
+            {canSee('franchise', 'manage_subfranchise') &&
+              (role === 'admin' || isFranchiseOwner) && (
                 <li>
                   <NavItem
                     icon={Users}
@@ -381,7 +431,7 @@ const Sidebar = ({
               />
             </li>
 
-            {!isFranchiseLogin && (
+            {!isFranchiseLogin && canSee('settings') && (
               <li>
                 <NavItem
                   icon={Settings}

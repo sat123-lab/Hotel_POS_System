@@ -1,0 +1,174 @@
+/* ------------------------------------------------------------------ */
+/*  Role/module permission helpers                                     */
+/*                                                                     */
+/*  The Module Permissions Matrix (UserManagement → Module Permissions */
+/*  Matrix tab) is saved to localStorage under                         */
+/*  `rolePermissionsMatrix`. The shape is:                             */
+/*                                                                     */
+/*    { [roleId]: { [moduleId]: boolean } }                            */
+/*                                                                     */
+/*  Module IDs are the ones declared in UserManagement.jsx (MODULES). */
+/*  Sidebar / route guards use this util so that toggling a module on  */
+/*  or off in the matrix instantly controls what each role can see.    */
+/* ------------------------------------------------------------------ */
+
+const STORAGE_KEY = 'rolePermissionsMatrix';
+export const PERMISSIONS_UPDATED_EVENT = 'permissions-matrix-updated';
+
+// Default matrix is duplicated here (kept in sync with
+// UserManagement.jsx) so guards work even before the admin has saved
+// the matrix once.
+export const DEFAULT_ROLE_MATRIX = {
+  admin: {
+    dashboard: true,
+    reports: true,
+    qr_management: true,
+    dine_in: true,
+    inventory: true,
+    billing: true,
+    kitchen_display: true,
+    menu_management: true,
+    user_management: true,
+    permissions: true,
+    franchise: true,
+    settings: true,
+    customers: true,
+  },
+  manager: {
+    dashboard: true,
+    reports: true,
+    qr_management: true,
+    dine_in: true,
+    inventory: true,
+    billing: true,
+    kitchen_display: true,
+    menu_management: true,
+    user_management: false,
+    permissions: false,
+    franchise: true,
+    settings: true,
+    customers: true,
+  },
+  waiter: {
+    dashboard: true,
+    reports: false,
+    qr_management: false,
+    dine_in: true,
+    inventory: false,
+    billing: false,
+    kitchen_display: true,
+    menu_management: false,
+    user_management: false,
+    permissions: false,
+    franchise: false,
+    settings: false,
+    customers: false,
+  },
+  chef: {
+    dashboard: true,
+    reports: false,
+    qr_management: false,
+    dine_in: false,
+    inventory: false,
+    billing: false,
+    kitchen_display: true,
+    menu_management: true,
+    user_management: false,
+    permissions: false,
+    franchise: false,
+    settings: false,
+    customers: false,
+  },
+  cashier: {
+    dashboard: true,
+    reports: false,
+    qr_management: false,
+    dine_in: false,
+    inventory: false,
+    billing: true,
+    kitchen_display: false,
+    menu_management: false,
+    user_management: false,
+    permissions: false,
+    franchise: false,
+    settings: false,
+    customers: true,
+  },
+};
+
+export const loadPermissionsMatrix = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_ROLE_MATRIX;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return DEFAULT_ROLE_MATRIX;
+    // Merge with defaults so any roles/modules missing in the saved
+    // matrix still resolve to a sensible value.
+    const merged = { ...DEFAULT_ROLE_MATRIX };
+    Object.keys(parsed).forEach((roleId) => {
+      merged[roleId] = {
+        ...(DEFAULT_ROLE_MATRIX[roleId] || {}),
+        ...(parsed[roleId] || {}),
+      };
+    });
+    return merged;
+  } catch {
+    return DEFAULT_ROLE_MATRIX;
+  }
+};
+
+export const savePermissionsMatrix = (matrix) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(matrix));
+    // Notify any listeners (sidebar, guards) so they re-render
+    // without requiring a page reload.
+    try {
+      window.dispatchEvent(new CustomEvent(PERMISSIONS_UPDATED_EVENT));
+    } catch {
+      /* noop */
+    }
+  } catch {
+    /* noop */
+  }
+};
+
+const normaliseRole = (role) => {
+  const r = String(role || '').trim().toLowerCase();
+  // Common aliases — backend sometimes labels admin accounts as
+  // "owner" / "superadmin" / "administrator".
+  if (['administrator', 'owner', 'superadmin', 'super_admin'].includes(r)) {
+    return 'admin';
+  }
+  return r;
+};
+
+/**
+ * Returns true when a role is allowed to see a given module ID. If
+ * the role isn't in the matrix at all (e.g. `franchise`, `subfranchise`,
+ * unknown custom roles), we default to allowing it — those flows have
+ * their own dedicated guards in the UI.
+ *
+ * Admin / super-admin are always allowed.
+ */
+export const canRoleAccessModule = (role, moduleId, matrix) => {
+  const r = normaliseRole(role);
+  if (r === 'admin') return true;
+  // Roles that aren't part of the staff matrix (franchise/subfranchise
+  // owners) — leave their existing guards untouched.
+  if (!['admin', 'manager', 'waiter', 'chef', 'cashier'].includes(r)) {
+    return true;
+  }
+  const m = matrix || loadPermissionsMatrix();
+  const roleMap = m[r];
+  if (!roleMap || !(moduleId in roleMap)) {
+    // Unknown module → fall back to default matrix
+    const def = DEFAULT_ROLE_MATRIX[r];
+    return def ? !!def[moduleId] : false;
+  }
+  return !!roleMap[moduleId];
+};
+
+export const canRoleAccessAnyModule = (role, moduleIds, matrix) => {
+  if (!Array.isArray(moduleIds) || moduleIds.length === 0) return true;
+  return moduleIds.some((m) => canRoleAccessModule(role, m, matrix));
+};
