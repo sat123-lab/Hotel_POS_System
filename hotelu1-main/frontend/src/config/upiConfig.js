@@ -7,12 +7,17 @@
 // account, and any UPI app (Google Pay, PhonePe, Paytm, BHIM, etc.)
 // will auto-fill the bill amount when the QR is scanned.
 
+// Default merchant UPI account for this deployment. The bill QR will
+// pre-fill the bill amount against this account on every UPI app
+// (PhonePe, Google Pay, Paytm, BHIM) right out of the box.
+//
+// The merchant can always override these values from
+// Settings → Payment Gateways and Settings → General → Restaurant
+// Name; if the user hasn't entered anything, the values below are
+// used.
 const FALLBACK_UPI_CONFIG = {
-    // Used only if the user has not yet entered a real UPI ID.
-    // Real UPI apps WILL reject this and the QR will not pre-fill
-    // any amount — make sure to set Settings → Payments → UPI ID.
-    upiId: 'merchant@upi',
-    payeeName: 'Restaurant POS',
+    upiId: '8484843035@ptsbi',
+    payeeName: 'Marisetti Ravi Manikanth',
     merchantCategoryCode: '5944',
     currency: 'INR',
     transactionNoteTemplate: 'Bill Payment for Order #{orderId}',

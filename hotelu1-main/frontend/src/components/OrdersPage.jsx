@@ -613,8 +613,8 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
   const generateUpiQr = async (totals) => {
     try {
       const cfg = getUPIConfig();
-      // Skip QR if no real UPI ID has been configured yet.
-      if (!cfg.upiId || cfg.upiId === 'merchant@upi') return '';
+      // Only skip if the UPI ID is completely missing.
+      if (!cfg.upiId) return '';
       const params = new URLSearchParams({
         pa: cfg.upiId,
         pn: cfg.payeeName,

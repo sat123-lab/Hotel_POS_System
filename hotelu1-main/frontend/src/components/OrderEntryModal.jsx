@@ -163,9 +163,8 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
         if (showPaymentModal && paymentMethod === 'upi' && pendingOrder) {
             const totals = enrichOrderWithTotals(pendingOrder);
             const cfg = getUPIConfig();
-            // If no real UPI ID configured, surface an inline message
-            // (handled in JSX) — skip QR generation.
-            if (!cfg.upiId || cfg.upiId === 'merchant@upi') {
+            // Only skip if the UPI ID has been wiped out completely.
+            if (!cfg.upiId) {
                 setUpiQrUrl('');
                 return undefined;
             }
