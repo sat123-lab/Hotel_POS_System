@@ -15,11 +15,21 @@ import {
   Utensils,
   ShoppingBag,
   QrCode,
+  X as XIcon,
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { authFetch, getSocketUrl } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
 import DatePickerButton, { getTodayLocalDate } from './DatePickerButton';
+import {
+  loadRestaurantInfo,
+  buildKitchenSlipHtml,
+  buildCustomerReceiptHtml,
+  calculateTotals as calcReceiptTotals,
+  RECEIPT_STYLES,
+  openReceiptForPrint,
+  isOrderPaid,
+} from '../utils/receiptPrint';
 
 /* =================================================================
    Constants
@@ -528,6 +538,7 @@ const OrdersPage = ({ locationSettings }) => {
               order={selected}
               fmt={fmt}
               totals={computeTotals(selected)}
+              locationSettings={locationSettings}
             />
           ) : (
             <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-gray-500">
@@ -581,7 +592,7 @@ const buildTimeline = (order) => {
   ];
 };
 
-const OrderDetailPanel = ({ order, fmt, totals }) => {
+const OrderDetailPanel = ({ order, fmt, totals, locationSettings }) => {
   const created = orderTime(order);
   const status = (order.status || 'pending').toLowerCase();
   const paid =
@@ -589,8 +600,44 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
   const items = Array.isArray(order.items) ? order.items : [];
   const typeKey = (order.type || 'DINE_IN').toUpperCase();
   const timeline = buildTimeline(order);
+  const [showPreview, setShowPreview] = useState(false);
 
-  const handlePrint = () => window.print();
+  // Build the printable receipt HTML for the current order. Used by
+  // both the "Print Bill" and "View Bill" actions so dine-in and
+  // takeaway bills always look identical to the thermal printout.
+  const buildPrintableHtml = () => {
+    const info = loadRestaurantInfo();
+    const taxRate = locationSettings?.taxRate ?? 0.05;
+    const receiptTotals = calcReceiptTotals(order, {
+      taxRate,
+      discountPercent: 0,
+      discountType: 'percent',
+    });
+    const taxPercent = Number((taxRate * 100).toFixed(2));
+    const orderPaid = isOrderPaid(order);
+    const paymentLabel = orderPaid
+      ? order.payment_method
+        ? String(order.payment_method).toUpperCase()
+        : 'Cash'
+      : 'Pending';
+    const customerHtml = buildCustomerReceiptHtml(order, receiptTotals, info, {
+      qrCodeDataUrl: '',
+      paymentLabel,
+      discountPercent: 0,
+      discountType: 'percent',
+      taxPercent,
+    });
+    const kitchenHtml =
+      typeKey === 'TAKEAWAY' ? buildKitchenSlipHtml(order, info) : '';
+    return { html: `${kitchenHtml}${customerHtml}`, totals: receiptTotals };
+  };
+
+  const handlePrint = () => {
+    const { html } = buildPrintableHtml();
+    openReceiptForPrint(html, `Bill #${order.id}`);
+  };
+
+  const handleView = () => setShowPreview(true);
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
@@ -760,13 +807,98 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
           <Printer className="w-4 h-4" /> Print Bill
         </button>
         <button
-          onClick={() => {
-            window.location.href = '/billing';
-          }}
+          onClick={handleView}
           className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-sm hover:shadow-md"
         >
           <FileText className="w-4 h-4" /> View Bill
         </button>
+      </div>
+
+      {showPreview && (
+        <BillPreviewModal
+          order={order}
+          buildPrintableHtml={buildPrintableHtml}
+          onClose={() => setShowPreview(false)}
+          onPrint={handlePrint}
+        />
+      )}
+    </div>
+  );
+};
+
+/* =================================================================
+   Bill Preview Modal
+   Shows the thermal-style 80mm receipt inside an iframe so the
+   styles are isolated. Works for both Dine-In and Takeaway: takeaway
+   orders include the kitchen token slip first, then the customer
+   bill below — exactly matching the printed output.
+   ================================================================= */
+
+const BillPreviewModal = ({ order, buildPrintableHtml, onClose, onPrint }) => {
+  const { html } = buildPrintableHtml();
+  const isTakeaway = String(order.type).toUpperCase() === 'TAKEAWAY';
+
+  const fullDoc = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>${RECEIPT_STYLES}
+  body { padding: 8px 0; }
+</style></head><body>${html}</body></html>`;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <div>
+            <p className="text-base font-bold text-gray-900">
+              Bill Preview · {formatId(order.id)}
+            </p>
+            <p className="text-xs text-gray-500">
+              {isTakeaway
+                ? 'Takeaway · Kitchen token + customer bill'
+                : 'Dine-In · Customer bill'}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-gray-500 hover:bg-gray-100"
+            aria-label="Close"
+          >
+            <XIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Receipt body (rendered in an iframe to isolate the
+            thermal styles from the surrounding app). */}
+        <div className="flex-1 overflow-auto bg-gray-100 px-3 py-4 flex justify-center">
+          <iframe
+            title={`Bill ${order.id}`}
+            srcDoc={fullDoc}
+            className="bg-white rounded-md shadow-md border border-gray-200"
+            style={{ width: '320px', height: '70vh' }}
+          />
+        </div>
+
+        {/* Footer actions */}
+        <div className="grid grid-cols-2 gap-2 p-3 border-t border-gray-100 bg-white">
+          <button
+            onClick={onClose}
+            className="px-3 py-2.5 rounded-xl border border-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+          >
+            Close
+          </button>
+          <button
+            onClick={onPrint}
+            className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-sm hover:shadow-md"
+          >
+            <Printer className="w-4 h-4" /> Print Bill
+          </button>
+        </div>
       </div>
     </div>
   );
