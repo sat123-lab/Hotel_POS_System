@@ -21,6 +21,7 @@ import {
   calculateTotals as calcReceiptTotalsShared,
   openReceiptForPrint,
 } from '../utils/receiptPrint';
+import { getUPIConfig as getUPIConfigShared } from '../config/upiConfig';
 
 /* ------------------------------------------------------------------ */
 /*  Status helpers                                                     */
@@ -110,6 +111,8 @@ const BillingPage = ({ locationSettings }) => {
   const [manualTaxRate, setManualTaxRate] = useState(5);
   const [activeStatus, setActiveStatus] = useState('all');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showUpiQr, setShowUpiQr] = useState(false);
+  const [upiQrDataUrl, setUpiQrDataUrl] = useState('');
   const [successAmount, setSuccessAmount] = useState(null);
   const [paying, setPaying] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -355,6 +358,7 @@ const BillingPage = ({ locationSettings }) => {
       if (!response.ok) throw new Error('Payment failed');
 
       setShowPaymentModal(false);
+      setShowUpiQr(false);
       setSuccessAmount(totals.total || selectedOrder.total);
       setTimeout(() => setSuccessAmount(null), 1800);
 
@@ -369,6 +373,12 @@ const BillingPage = ({ locationSettings }) => {
         prev ? { ...prev, status: 'completed', payment_method: method, bill_status: 'paid' } : prev
       );
       fetchAllOrders();
+
+      // Auto-print the bill the moment payment succeeds. Cash, Card
+      // and UPI all print the same kitchen-token + customer-bill
+      // pair (kitchen token only for takeaway). User can hit Cancel
+      // in the print dialog if they don't want a paper copy.
+      printAfterPayment(selectedOrder, method);
     } catch (error) {
       console.error('Error completing payment:', error);
       setNotification({ message: 'Error completing payment.', type: 'error' });
@@ -383,6 +393,47 @@ const BillingPage = ({ locationSettings }) => {
      the View Bill modal on the Orders page and the printed thermal
      slip stay in lock-step (CGST + SGST split, configured tax %,
      etc.). */
+
+  // Print receipt automatically after a payment has been recorded.
+  // Takes the order + the chosen payment method directly so it does
+  // not depend on possibly-stale React state.
+  const printAfterPayment = (order, method) => {
+    if (!order) return;
+    try {
+      const isTakeaway = String(order.type).toUpperCase() === 'TAKEAWAY';
+      const taxPercent = Number((taxRate * 100).toFixed(2));
+      const receiptTotals = calcReceiptTotalsShared(order, {
+        taxPercent,
+        discountPercent,
+        discountType,
+      });
+      const info = loadRestaurantInfoShared();
+      const paymentLabel =
+        method === 'cash'
+          ? 'Cash'
+          : method === 'upi'
+          ? 'UPI'
+          : method === 'card'
+          ? 'Card'
+          : String(method || 'Cash').toUpperCase();
+      const kitchenSlipHtml = isTakeaway
+        ? buildKitchenSlipHtmlShared(order, info)
+        : '';
+      const customerHtml = buildCustomerReceiptHtmlShared(
+        order,
+        receiptTotals,
+        info,
+        { qrCodeDataUrl: '', paymentLabel }
+      );
+      openReceiptForPrint(
+        `${kitchenSlipHtml}${customerHtml}`,
+        `Bill #${order.id}`
+      );
+    } catch (e) {
+      console.error('Auto-print failed:', e);
+    }
+  };
+
   const handlePrintBill = async () => {
     if (!selectedOrder) {
       setNotification({ message: 'No order selected to print.', type: 'error' });
@@ -787,9 +838,39 @@ const BillingPage = ({ locationSettings }) => {
           paying={paying}
           onSelect={async (method) => {
             setPaymentMethod(method);
-            await handleCompletePayment(method);
+            if (method === 'upi') {
+              // Show UPI QR — auto-print happens once the cashier
+              // confirms the customer has paid.
+              const qr = await generateUPIQRCode(
+                currentOrderTotals.total,
+                selectedOrder.id
+              );
+              setUpiQrDataUrl(qr || '');
+              setShowPaymentModal(false);
+              setShowUpiQr(true);
+            } else {
+              await handleCompletePayment(method);
+            }
           }}
           onCancel={() => setShowPaymentModal(false)}
+        />
+      )}
+
+      {/* UPI QR Modal */}
+      {showUpiQr && selectedOrder && (
+        <UpiQrModal
+          amount={currentOrderTotals.total}
+          fmt={fmt}
+          paying={paying}
+          qrDataUrl={upiQrDataUrl}
+          onCancel={() => {
+            setShowUpiQr(false);
+            setUpiQrDataUrl('');
+          }}
+          onConfirm={async () => {
+            await handleCompletePayment('upi');
+            setUpiQrDataUrl('');
+          }}
         />
       )}
 
@@ -885,5 +966,67 @@ const SuccessModal = ({ amount, fmt }) => (
     </div>
   </div>
 );
+
+const UpiQrModal = ({ amount, fmt, paying, qrDataUrl, onCancel, onConfirm }) => {
+  const cfg = getUPIConfigShared();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-modal-in">
+        <h3 className="text-base font-bold text-gray-900 text-center">
+          Scan to Pay
+        </h3>
+        <p className="text-2xl font-bold text-emerald-600 text-center mt-1">
+          {fmt(amount)}
+        </p>
+        <p className="text-[11px] text-gray-500 text-center mt-1">
+          Works with PhonePe · Google Pay · Paytm · BHIM
+        </p>
+
+        <div className="my-4 flex items-center justify-center">
+          {qrDataUrl ? (
+            <div className="bg-white border-2 border-emerald-200 rounded-2xl p-3 shadow-sm">
+              <img
+                src={qrDataUrl}
+                alt="UPI QR"
+                className="w-[220px] h-[220px]"
+              />
+            </div>
+          ) : (
+            <div className="w-[220px] h-[220px] bg-gray-50 border border-gray-200 rounded-2xl flex items-center justify-center text-xs text-gray-400 px-4 text-center">
+              Generating QR…
+            </div>
+          )}
+        </div>
+
+        {cfg.upiId && (
+          <div className="text-center mb-4">
+            <p className="text-sm font-semibold text-gray-900">
+              {cfg.payeeName}
+            </p>
+            <p className="text-[11px] text-gray-500 break-all px-2">
+              {cfg.upiId}
+            </p>
+          </div>
+        )}
+
+        <button
+          disabled={paying}
+          onClick={onConfirm}
+          className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white text-sm font-bold shadow-md hover:shadow-lg transition disabled:opacity-60 active:scale-[0.99]"
+        >
+          {paying ? 'Confirming…' : 'Payment Received · Print Bill'}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={paying}
+          className="w-full mt-2 py-3 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-500 text-sm font-medium transition disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export default BillingPage;
