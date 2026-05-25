@@ -246,6 +246,21 @@ html.dark .bg-\[\#FAFAFB\] {
   background-color: #161E2E;
 }
 
+/* Custom arbitrary page backgrounds used across the app */
+html.dark .bg-\[\#F7F7F8\],
+html.dark .bg-\[\#f7f7f8\] {
+  background-color: #0F172A; /* page background */
+}
+html.dark .bg-\[\#FFFAF3\],
+html.dark .bg-\[\#fffaf3\],
+html.dark .bg-\[\#FFF8F0\],
+html.dark .bg-\[\#fff8f0\],
+html.dark .bg-\[\#fff7ef\],
+html.dark .bg-\[\#FFF7EF\] {
+  /* warm/orange-tinted accent panels — keep the warm hue but make dark */
+  background-color: rgba(249, 115, 22, 0.08);
+}
+
 html.dark .bg-gray-50,
 html.dark .bg-slate-50,
 html.dark .bg-zinc-50,
@@ -337,6 +352,22 @@ html.dark .text-slate-900,
 html.dark .text-neutral-900,
 html.dark .text-black {
   color: #F3F4F6;
+}
+
+/* Page headings — make sure they stay highly legible no matter what
+   other utility classes are applied alongside them. */
+html.dark h1,
+html.dark h2,
+html.dark h3 {
+  color: #F8FAFC;
+}
+html.dark h1.text-gray-900,
+html.dark h2.text-gray-900,
+html.dark h3.text-gray-900,
+html.dark h1.text-gray-800,
+html.dark h2.text-gray-800,
+html.dark h3.text-gray-800 {
+  color: #F8FAFC;
 }
 
 html.dark .text-gray-800,
