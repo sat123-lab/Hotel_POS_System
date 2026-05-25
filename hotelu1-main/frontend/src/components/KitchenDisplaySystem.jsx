@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Notification from './Notification';
 import {
   Clock,
@@ -9,7 +9,15 @@ import {
   Flame,
   ArrowRight,
   Check,
+  Bell,
+  BellOff,
 } from 'lucide-react';
+import {
+  playNewOrderBell,
+  getSoundSettings,
+  setSoundEnabled,
+  primeAudio,
+} from '../utils/notificationSound';
 import { authFetch, getSocketUrl } from '../utils/api';
 import { io } from 'socket.io-client';
 import { getLocationSettingsForCountry } from '../utils/currency';
@@ -36,6 +44,27 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
   const [permissions, setPermissions] = useState([]);
   const [userRole, setUserRole] = useState('');
   const [socket, setSocket] = useState(null);
+  const [soundOn, setSoundOn] = useState(() => getSoundSettings().enabled);
+  const [pulseId, setPulseId] = useState(null);
+
+  // Remember the IDs we've already seen so the polling loop only rings
+  // for genuinely new orders (not for every refresh).
+  const knownOrderIdsRef = useRef(new Set());
+  const initialLoadDoneRef = useRef(false);
+
+  const announceNewOrder = (order) => {
+    playNewOrderBell();
+    const tableLabel = order?.table_name || order?.customer_name || 'Counter';
+    setNotification({
+      message: `New order #${order?.id ?? ''} — ${tableLabel}`,
+      type: 'success',
+    });
+    setTimeout(() => setNotification(null), 3500);
+    if (order?.id != null) {
+      setPulseId(order.id);
+      setTimeout(() => setPulseId((cur) => (cur === order.id ? null : cur)), 4500);
+    }
+  };
 
   /* ----------------------- Effects ----------------------- */
   useEffect(() => {
@@ -49,14 +78,29 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
     const newSocket = io(getSocketUrl());
     setSocket(newSocket);
 
+    // When the server pings us about a new order, trigger an
+    // immediate refetch instead of ringing here directly. The poll
+    // loop already detects unseen IDs and rings the bell once, so
+    // routing everything through one place avoids double-ringing
+    // when both `new_order` and `order_created` events fire for the
+    // same order.
+    const handleNewOrder = () => {
+      fetchOrders();
+    };
+    newSocket.on('new_order', handleNewOrder);
+    newSocket.on('order_created', handleNewOrder);
+
     const orderInterval = setInterval(fetchOrders, 2000);
     const permissionInterval = setInterval(fetchPermissions, 5000);
 
     return () => {
       clearInterval(orderInterval);
       clearInterval(permissionInterval);
+      newSocket.off('new_order', handleNewOrder);
+      newSocket.off('order_created', handleNewOrder);
       newSocket.disconnect();
     };
+    // eslint-disable-next-line
   }, []);
 
   /* ----------------------- Data ----------------------- */
@@ -76,16 +120,35 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
       const response = await authFetch('/api/orders');
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      setOrders(
-        data.filter(
-          (o) =>
-            o.status !== 'completed' &&
-            o.status !== 'NOT_AVAILABLE' &&
-            o.status !== 'delivered' &&
-            o.items &&
-            o.items.length > 0
-        )
+      const kitchenOrders = data.filter(
+        (o) =>
+          o.status !== 'completed' &&
+          o.status !== 'NOT_AVAILABLE' &&
+          o.status !== 'delivered' &&
+          o.items &&
+          o.items.length > 0
       );
+
+      // Bell-on-poll: if the very first load just finished, seed the
+      // "known IDs" set without ringing. After that, any order whose
+      // ID we haven't seen + that's still pending counts as a new
+      // arrival and rings the bell.
+      if (!initialLoadDoneRef.current) {
+        kitchenOrders.forEach((o) =>
+          knownOrderIdsRef.current.add(Number(o.id))
+        );
+        initialLoadDoneRef.current = true;
+      } else {
+        kitchenOrders.forEach((o) => {
+          const id = Number(o.id);
+          if (!knownOrderIdsRef.current.has(id)) {
+            knownOrderIdsRef.current.add(id);
+            if (o.status === 'pending') announceNewOrder(o);
+          }
+        });
+      }
+
+      setOrders(kitchenOrders);
     } catch (err) {
       console.error('Error fetching orders:', err);
       if (err.message && !err.message.includes('401')) {
@@ -235,8 +298,15 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
     const seconds = Math.floor(((Date.now() - new Date(order.timestamp).getTime()) % 60000) / 1000);
     const timer = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
+    const isPulsing = pulseId != null && Number(pulseId) === Number(order.id);
     return (
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+      <div
+        className={`bg-white rounded-2xl border shadow-sm p-4 transition-all ${
+          isPulsing
+            ? 'border-orange-300 ring-2 ring-orange-200 shadow-orange-100 shadow-lg animate-pulse'
+            : 'border-gray-100'
+        }`}
+      >
         <div className="flex items-center justify-between mb-3">
           <div className="min-w-0">
             <p className="text-sm font-extrabold text-gray-900">
@@ -370,9 +440,35 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
             Real-time order management and fulfillment KDS board
           </p>
         </div>
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-orange-50 text-orange-600 border border-orange-100">
-          <Flame className="w-4 h-4" />
-          <span className="text-sm font-semibold">{activeCount} ACTIVE ORDERS</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => {
+              const next = !soundOn;
+              setSoundOn(next);
+              setSoundEnabled(next);
+              if (next) {
+                primeAudio();
+                playNewOrderBell();
+              }
+            }}
+            title={
+              soundOn
+                ? 'Bell sound is ON — tap to mute'
+                : 'Bell sound is OFF — tap to enable'
+            }
+            className={`inline-flex items-center gap-2 px-3 py-2 rounded-full border text-sm font-semibold transition ${
+              soundOn
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+            }`}
+          >
+            {soundOn ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+            {soundOn ? 'Sound on' : 'Sound off'}
+          </button>
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-orange-50 text-orange-600 border border-orange-100">
+            <Flame className="w-4 h-4" />
+            <span className="text-sm font-semibold">{activeCount} ACTIVE ORDERS</span>
+          </div>
         </div>
       </div>
 
