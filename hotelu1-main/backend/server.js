@@ -1975,10 +1975,18 @@ app.post("/api/users", verifyToken, async (req, res) => {
         name,
       };
       mockUsers.push(newUser);
-      
+
+      const created = {
+        id: newUser.id,
+        username: newUser.username,
+        role: newUser.role,
+        name: newUser.name,
+        subfranchise_id: newUser.subfranchise_id || null,
+      };
+      io.emit("user_created", created);
       return res.status(201).json({
         message: "User created successfully",
-        user: { id: newUser.id, username: newUser.username, role: newUser.role, name: newUser.name },
+        user: created,
       });
     }
 
@@ -2007,15 +2015,17 @@ app.post("/api/users", verifyToken, async (req, res) => {
       );
     }
 
+    const created = {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      name: user.name,
+      subfranchise_id: user.subfranchise_id,
+    };
+    io.emit("user_created", created);
     res.status(201).json({
       message: "User created successfully",
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        name: user.name,
-        subfranchise_id: user.subfranchise_id,
-      },
+      user: created,
     });
   } catch (err) {
     res
@@ -2098,14 +2108,17 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
         user.password = password; // Store plain text for demo
       }
       
+      const updatedMock = {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        name: user.name,
+        subfranchise_id: user.subfranchise_id || null,
+      };
+      io.emit("user_updated", updatedMock);
       return res.json({
         message: "User updated successfully",
-        user: {
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          name: user.name,
-        },
+        user: updatedMock,
       });
     }
 
@@ -2154,15 +2167,17 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
       );
     }
 
+    const updated = {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      name: user.name,
+      subfranchise_id: user.subfranchise_id,
+    };
+    io.emit("user_updated", updated);
     res.json({
       message: "User updated successfully",
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        name: user.name,
-        subfranchise_id: user.subfranchise_id,
-      },
+      user: updated,
     });
   } catch (err) {
     res
@@ -2194,8 +2209,9 @@ app.delete("/api/users/:id", verifyToken, async (req, res) => {
         return res.status(400).json({ message: "Cannot delete your own account" });
       }
       
-      mockUsers.splice(userIndex, 1);
-      
+      const removed = mockUsers.splice(userIndex, 1)[0];
+      io.emit("user_deleted", { id: removed?.id });
+
       return res.json({ message: "User deleted successfully" });
     }
 
@@ -2211,7 +2227,9 @@ app.delete("/api/users/:id", verifyToken, async (req, res) => {
         .json({ message: "Cannot delete your own account" });
     }
 
+    const deletedId = user.id;
     await user.destroy();
+    io.emit("user_deleted", { id: deletedId });
 
     res.json({ message: "User deleted successfully" });
   } catch (err) {
@@ -2943,6 +2961,7 @@ app.post("/api/subfranchises", verifyToken, franchiseManageAuth, async (req, res
           subfranchise_id: row.id,
         });
       }
+      io.emit("subfranchise_created", row);
       return res.status(201).json(row);
     }
 
@@ -2952,14 +2971,22 @@ app.post("/api/subfranchises", verifyToken, franchiseManageAuth, async (req, res
       if (existing) {
         return res.status(409).json({ message: "Login username already exists" });
       }
-      await User.create({
+      const sfUser = await User.create({
         username: login_username,
         password: await bcrypt.hash(login_password, 10),
         role: "subfranchise",
         name: manager_name || name,
         subfranchise_id: created.id,
       });
+      io.emit("user_created", {
+        id: sfUser.id,
+        username: sfUser.username,
+        role: sfUser.role,
+        name: sfUser.name,
+        subfranchise_id: sfUser.subfranchise_id,
+      });
     }
+    io.emit("subfranchise_created", created);
     res.status(201).json(created);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -3009,6 +3036,7 @@ app.put("/api/subfranchises/:id", verifyToken, franchiseManageAuth, async (req, 
         await loginUser.update(patch);
       }
     }
+    io.emit("subfranchise_updated", row);
     res.json(row);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -3020,12 +3048,14 @@ app.delete("/api/subfranchises/:id", verifyToken, franchiseManageAuth, async (re
     const id = parseInt(req.params.id, 10);
     if (!dbConnected) {
       mockSubFranchises = mockSubFranchises.filter((s) => s.id !== id);
+      io.emit("subfranchise_deleted", { id });
       return res.json({ message: "Deleted" });
     }
     const row = await SubFranchise.findByPk(id);
     if (!row) return res.status(404).json({ message: "Not found" });
     await User.destroy({ where: { subfranchise_id: id } });
     await row.destroy();
+    io.emit("subfranchise_deleted", { id });
     res.json({ message: "Deleted" });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -3419,11 +3449,8 @@ app.post("/api/integrations/test", verifyToken, async (req, res) => {
 
 app.get("/api/staff", verifyToken, async (req, res) => {
   try {
-    if (
-      req.user.role !== "admin" &&
-      req.user.role !== "franchise" &&
-      req.user.role !== "subfranchise"
-    ) {
+    const allowedRoles = ["admin", "manager", "franchise", "subfranchise"];
+    if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ message: "Not allowed" });
     }
 

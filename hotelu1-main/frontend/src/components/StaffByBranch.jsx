@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Users,
   Search,
@@ -12,8 +12,11 @@ import {
   Building2,
   RefreshCcw,
   ChevronDown,
+  Wifi,
+  AlertTriangle,
 } from 'lucide-react';
-import { getAPI_URL } from '../utils/api';
+import { io } from 'socket.io-client';
+import { getAPI_URL, getSocketUrl } from '../utils/api';
 
 /* ------------------------------------------------------------------ */
 /*  Role pill metadata                                                 */
@@ -105,6 +108,22 @@ const initials = (name = '') => {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Defensively parse a fetch response as JSON. If the server returned
+ * HTML (e.g. a 404 page because the backend hasn't been restarted with
+ * the new /api/staff endpoint), throw a clean error instead of letting
+ * `res.json()` blow up with "Unexpected token '<'".
+ */
+const safeJson = async (res) => {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
 const StaffByBranch = ({ token }) => {
   const [staff, setStaff] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -114,27 +133,91 @@ const StaffByBranch = ({ token }) => {
   const [roleFilter, setRoleFilter] = useState('all');
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState(null);
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const socketRef = useRef(null);
 
   useEffect(() => {
     const t = setTimeout(() => setIsLoaded(true), 60);
     return () => clearTimeout(t);
   }, []);
 
+  /**
+   * Primary loader: tries the new `/api/staff` endpoint first
+   * (returns staff + branches in a single round-trip). If that fails
+   * — most commonly because the backend hasn't been restarted yet —
+   * falls back to the existing `/api/users` + `/api/subfranchises`
+   * endpoints so the page still renders meaningfully.
+   */
   const fetchStaff = async () => {
     setLoading(true);
     setError(null);
+    const headers = { Authorization: `Bearer ${token}` };
+    const apiUrl = getAPI_URL();
+
+    // Attempt 1 — the new combined endpoint.
     try {
-      const res = await fetch(`${getAPI_URL()}/api/staff`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        throw new Error((await res.json()).message || 'Failed to load staff');
+      const res = await fetch(`${apiUrl}/api/staff`, { headers });
+      if (res.ok) {
+        const data = await safeJson(res);
+        if (data && (Array.isArray(data.staff) || Array.isArray(data.branches))) {
+          setStaff(Array.isArray(data.staff) ? data.staff : []);
+          setBranches(Array.isArray(data.branches) ? data.branches : []);
+          setLastUpdatedAt(new Date());
+          setLoading(false);
+          return;
+        }
       }
-      const data = await res.json();
-      setStaff(Array.isArray(data.staff) ? data.staff : []);
-      setBranches(Array.isArray(data.branches) ? data.branches : []);
+    } catch {
+      /* fall through to legacy endpoints */
+    }
+
+    // Attempt 2 — legacy endpoints. Works against any backend version.
+    try {
+      const [usersRes, branchesRes] = await Promise.all([
+        fetch(`${apiUrl}/api/users`, { headers }),
+        fetch(`${apiUrl}/api/subfranchises`, { headers }),
+      ]);
+
+      let usersData = [];
+      let branchesData = [];
+
+      if (usersRes.ok) {
+        const u = await safeJson(usersRes);
+        if (Array.isArray(u)) usersData = u;
+      }
+      if (branchesRes.ok) {
+        const b = await safeJson(branchesRes);
+        if (Array.isArray(b)) branchesData = b;
+      }
+
+      if (!usersRes.ok && !branchesRes.ok) {
+        throw new Error(
+          'Could not reach the backend. Restart the server (so /api/staff is registered) or check the API URL.'
+        );
+      }
+
+      setStaff(
+        usersData.map((u) => ({
+          id: u.id,
+          username: u.username,
+          name: u.name,
+          role: u.role,
+          subfranchise_id: u.subfranchise_id ?? null,
+        }))
+      );
+      setBranches(
+        branchesData.map((b) => ({
+          id: b.id,
+          name: b.name,
+          code: b.code,
+          city: b.city,
+          phone: b.phone,
+        }))
+      );
+      setLastUpdatedAt(new Date());
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to load staff directory');
     } finally {
       setLoading(false);
     }
@@ -142,6 +225,47 @@ const StaffByBranch = ({ token }) => {
 
   useEffect(() => {
     fetchStaff();
+    // eslint-disable-next-line
+  }, [token]);
+
+  /**
+   * Real-time updates:
+   *   - socket events emitted by the backend when users / branches change
+   *   - polling fallback every 30 s so the directory still self-heals
+   *     even if the socket connection drops
+   */
+  useEffect(() => {
+    let pollTimer = null;
+    try {
+      const socket = io(getSocketUrl(), {
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+      });
+      socketRef.current = socket;
+      socket.on('connect', () => setLiveConnected(true));
+      socket.on('disconnect', () => setLiveConnected(false));
+      const refresh = () => fetchStaff();
+      socket.on('user_created', refresh);
+      socket.on('user_updated', refresh);
+      socket.on('user_deleted', refresh);
+      socket.on('subfranchise_created', refresh);
+      socket.on('subfranchise_updated', refresh);
+      socket.on('subfranchise_deleted', refresh);
+    } catch {
+      /* socket unavailable — polling will keep us fresh */
+    }
+
+    pollTimer = setInterval(() => fetchStaff(), 30000);
+    return () => {
+      if (pollTimer) clearInterval(pollTimer);
+      if (socketRef.current) {
+        try {
+          socketRef.current.disconnect();
+        } catch {
+          /* noop */
+        }
+      }
+    };
     // eslint-disable-next-line
   }, [token]);
 
@@ -240,12 +364,38 @@ const StaffByBranch = ({ token }) => {
       >
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
-              Staff Directory
-            </h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-gray-900">
+                Staff Directory
+              </h1>
+              <span
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  liveConnected
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}
+                title={
+                  liveConnected
+                    ? 'Real-time updates connected — changes appear instantly'
+                    : 'Polling every 30 seconds — socket disconnected'
+                }
+              >
+                <Wifi className="w-3 h-3" />
+                {liveConnected ? 'Live' : 'Auto'}
+              </span>
+            </div>
             <p className="mt-1 text-sm text-gray-500">
               Everyone who works across your branches — grouped by location,
               filtered by role.
+              {lastUpdatedAt && (
+                <span className="ml-2 text-[11px] text-gray-400">
+                  · updated{' '}
+                  {lastUpdatedAt.toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </span>
+              )}
             </p>
           </div>
           <button
@@ -347,10 +497,14 @@ const StaffByBranch = ({ token }) => {
         </div>
       </section>
 
-      {/* Error */}
+      {/* Error / hint */}
       {error && (
-        <div className="mb-4 p-4 rounded-xl bg-rose-50 border border-rose-100 text-rose-700 text-sm">
-          {error}
+        <div className="mb-4 p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-semibold">Couldn&apos;t load the latest staff list</p>
+            <p className="text-amber-700 mt-0.5 text-[12px]">{error}</p>
+          </div>
         </div>
       )}
 
