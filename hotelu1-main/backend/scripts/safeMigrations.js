@@ -54,6 +54,45 @@ async function runSafeMigrations(sequelize, models = {}) {
         });
         console.log("Migration: added orders.chef_name");
       }
+
+      // Aggregator integration columns (Zomato / Swiggy / UberEats /
+      // custom mobile apps). Added incrementally — existing rows stay
+      // intact, new orders fill them in.
+      if (!ordersDesc.source) {
+        await qi.addColumn("orders", "source", {
+          type: DataTypes.STRING,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.source");
+      }
+      if (!ordersDesc.external_order_id) {
+        await qi.addColumn("orders", "external_order_id", {
+          type: DataTypes.STRING,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.external_order_id");
+      }
+      if (!ordersDesc.customer_name) {
+        await qi.addColumn("orders", "customer_name", {
+          type: DataTypes.STRING,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.customer_name");
+      }
+      if (!ordersDesc.customer_phone) {
+        await qi.addColumn("orders", "customer_phone", {
+          type: DataTypes.STRING,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.customer_phone");
+      }
+      if (!ordersDesc.delivery_address) {
+        await qi.addColumn("orders", "delivery_address", {
+          type: DataTypes.TEXT,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.delivery_address");
+      }
     }
 
     if (tableNames.includes("users")) {

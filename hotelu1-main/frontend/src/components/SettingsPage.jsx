@@ -11,6 +11,11 @@ import {
   Tag,
   Check,
   QrCode as QrCodeIcon,
+  Truck,
+  Link as LinkIcon,
+  Copy,
+  Send,
+  AlertCircle,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Sun, Moon, Monitor } from 'lucide-react';
@@ -45,6 +50,12 @@ const TABS = [
     label: 'Appearance & Layout',
     sub: 'Active color systems & grid spacing.',
     Icon: Palette,
+  },
+  {
+    id: 'integrations',
+    label: 'Aggregator Integrations',
+    sub: 'Zomato, Swiggy & external food platforms.',
+    Icon: Truck,
   },
   {
     id: 'connected',
@@ -119,6 +130,20 @@ const SettingsPage = () => {
     whatsappWebhook: initialExt.whatsappWebhook || '',
     deliveryApi: initialExt.deliveryApi || '',
   });
+  const [integrations, setIntegrations] = useState({
+    zomatoApiKey: initialExt.zomatoApiKey || '',
+    zomatoRestaurantId: initialExt.zomatoRestaurantId || '',
+    zomatoEnabled: initialExt.zomatoEnabled ?? true,
+    swiggyApiKey: initialExt.swiggyApiKey || '',
+    swiggyRestaurantId: initialExt.swiggyRestaurantId || '',
+    swiggyEnabled: initialExt.swiggyEnabled ?? true,
+  });
+  const [aggregatorConfig, setAggregatorConfig] = useState({
+    webhookUrl: '',
+    secret: '',
+    secretHeader: 'x-webhook-secret',
+  });
+  const [testingSource, setTestingSource] = useState(null);
 
   // --- Billing (tax/discount) — preserves EXACT existing API behavior ---
   const [billing, setBilling] = useState({ taxPercent: 5, discountPercent: 0 });
@@ -164,9 +189,64 @@ const SettingsPage = () => {
     fetchSettings();
   }, []);
 
+  // Fetch the aggregator webhook URL + shared secret (admin only).
+  useEffect(() => {
+    const fetchAggregator = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const res = await fetch(`${getAPI_URL()}/api/integrations/config`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setAggregatorConfig({
+            webhookUrl: data.webhookUrl || '',
+            secret: data.secret || '',
+            secretHeader: data.secretHeader || 'x-webhook-secret',
+          });
+        }
+      } catch {
+        /* ignore — non-admin users won't have access */
+      }
+    };
+    fetchAggregator();
+  }, []);
+
   const showToast = (msg, kind = 'success') => {
     setToast({ msg, kind });
     setTimeout(() => setToast(null), 2200);
+  };
+
+  const handleSaveIntegrations = () => {
+    const next = { ...loadExtended(), ...integrations };
+    saveExtended(next);
+    showToast('Integration settings saved');
+  };
+
+  const handleTestAggregator = async (source) => {
+    try {
+      setTestingSource(source);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${getAPI_URL()}/api/integrations/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ source }),
+      });
+      if (res.ok) {
+        showToast(`Test order from ${source} created — check Orders / KDS`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.message || 'Test failed', 'error');
+      }
+    } catch (e) {
+      showToast(e.message || 'Test failed', 'error');
+    } finally {
+      setTestingSource(null);
+    }
   };
 
   // --- save handlers ---
@@ -325,6 +405,18 @@ const SettingsPage = () => {
               value={appearance}
               onChange={setAppearance}
               onSave={handleSaveAppearance}
+            />
+          )}
+
+          {activeTab === 'integrations' && (
+            <IntegrationsForm
+              value={integrations}
+              onChange={setIntegrations}
+              onSave={handleSaveIntegrations}
+              aggregatorConfig={aggregatorConfig}
+              onTest={handleTestAggregator}
+              testingSource={testingSource}
+              onCopied={() => showToast('Copied to clipboard')}
             />
           )}
 
@@ -820,6 +912,232 @@ const ConnectedForm = ({ value, onChange, onSave }) => {
           />
         </Field>
       </div>
+      <SaveBar onSave={onSave} />
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/*  Aggregator Integrations form (Zomato / Swiggy / external)          */
+/* ------------------------------------------------------------------ */
+
+const SOURCE_META = {
+  zomato: {
+    label: 'Zomato',
+    color: 'rose',
+    swatch: 'bg-rose-500',
+    soft: 'bg-rose-50 text-rose-600',
+    docsUrl: 'https://www.zomato.com/partners',
+  },
+  swiggy: {
+    label: 'Swiggy',
+    color: 'orange',
+    swatch: 'bg-orange-500',
+    soft: 'bg-orange-50 text-orange-600',
+    docsUrl: 'https://partner.swiggy.com',
+  },
+};
+
+const IntegrationsForm = ({
+  value,
+  onChange,
+  onSave,
+  aggregatorConfig,
+  onTest,
+  testingSource,
+  onCopied,
+}) => {
+  const set = (k, v) => onChange({ ...value, [k]: v });
+
+  const copy = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      onCopied?.();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div>
+      {/* How it works banner */}
+      <div className="mb-5 p-4 rounded-2xl bg-blue-50 border border-blue-100">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+          <div className="text-[12px] text-blue-700 leading-relaxed">
+            <p className="font-bold text-blue-800 mb-1">How aggregator orders work</p>
+            <p>
+              Zomato &amp; Swiggy push new orders to your restaurant via a
+              webhook. Once you&apos;re onboarded as a merchant partner on either
+              platform, paste the URL + secret below into their merchant
+              dashboard. Every order they send arrives in your{' '}
+              <span className="font-semibold">Orders / Takeaway / Kitchen Display</span>{' '}
+              in real-time, exactly like an in-house order.
+            </p>
+            <p className="mt-1">
+              Use the <span className="font-semibold">Test Order</span> buttons below
+              to simulate an aggregator order right now and watch it land in your
+              KDS.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Webhook URL */}
+      <Field label="Public webhook URL">
+        <div className="flex items-stretch gap-2">
+          <input
+            type="text"
+            readOnly
+            value={aggregatorConfig.webhookUrl || 'Loading…'}
+            className={inputCls + ' flex-1 font-mono text-[12px]'}
+          />
+          <button
+            type="button"
+            onClick={() => copy(aggregatorConfig.webhookUrl)}
+            disabled={!aggregatorConfig.webhookUrl}
+            className="px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 text-xs font-semibold flex items-center gap-1.5"
+            title="Copy URL"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            Copy
+          </button>
+        </div>
+        <p className="text-[11px] text-gray-500 mt-1.5">
+          Paste this into the Zomato / Swiggy partner dashboard as the
+          &quot;Order Webhook URL&quot;.
+        </p>
+      </Field>
+
+      <div className="mt-5">
+        <Field label="Webhook shared secret">
+          <div className="flex items-stretch gap-2">
+            <input
+              type="text"
+              readOnly
+              value={aggregatorConfig.secret || 'Loading…'}
+              className={inputCls + ' flex-1 font-mono text-[12px]'}
+            />
+            <button
+              type="button"
+              onClick={() => copy(aggregatorConfig.secret)}
+              disabled={!aggregatorConfig.secret}
+              className="px-3 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 text-xs font-semibold flex items-center gap-1.5"
+              title="Copy secret"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              Copy
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-1.5">
+            Sent as header{' '}
+            <span className="font-mono bg-gray-100 px-1 py-0.5 rounded text-[11px]">
+              {aggregatorConfig.secretHeader || 'x-webhook-secret'}
+            </span>{' '}
+            on every request — required for auth. Set
+            <span className="font-mono"> AGGREGATOR_WEBHOOK_SECRET </span>
+            env var on the backend to rotate it.
+          </p>
+        </Field>
+      </div>
+
+      {/* Per-platform configuration */}
+      {['zomato', 'swiggy'].map((src) => {
+        const meta = SOURCE_META[src];
+        const enabledKey = `${src}Enabled`;
+        const apiKeyKey = `${src}ApiKey`;
+        const restaurantIdKey = `${src}RestaurantId`;
+        return (
+          <div
+            key={src}
+            className="mt-6 p-5 rounded-2xl border border-gray-100 bg-white"
+          >
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <span
+                  className={`w-9 h-9 rounded-xl ${meta.soft} flex items-center justify-center`}
+                >
+                  <Truck className="w-4.5 h-4.5" />
+                </span>
+                <div>
+                  <h4 className="text-sm font-bold text-gray-900">{meta.label}</h4>
+                  <p className="text-[11px] text-gray-500">
+                    Accept orders from {meta.label} customers
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!value[enabledKey]}
+                    onChange={(e) => set(enabledKey, e.target.checked)}
+                    className="w-4 h-4 rounded accent-orange-500"
+                  />
+                  <span className="text-xs font-semibold text-gray-700">
+                    Enabled
+                  </span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => onTest(src)}
+                  disabled={testingSource === src}
+                  className="px-3 py-1.5 rounded-full bg-gradient-to-r from-orange-500 to-orange-600 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-60"
+                >
+                  {testingSource === src ? (
+                    <span>Sending…</span>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" /> Test Order
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <p className="text-[11px] font-bold tracking-wider text-gray-400 mb-1.5">
+                  Restaurant ID
+                </p>
+                <input
+                  type="text"
+                  value={value[restaurantIdKey]}
+                  onChange={(e) => set(restaurantIdKey, e.target.value)}
+                  placeholder={`Your ${meta.label} restaurant ID`}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <p className="text-[11px] font-bold tracking-wider text-gray-400 mb-1.5">
+                  API key
+                </p>
+                <input
+                  type="password"
+                  value={value[apiKeyKey]}
+                  onChange={(e) => set(apiKeyKey, e.target.value)}
+                  placeholder={`Issued by ${meta.label}`}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+
+            <p className="mt-3 text-[11px] text-gray-500 flex items-center gap-1.5">
+              <LinkIcon className="w-3 h-3" />
+              <a
+                href={meta.docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-orange-600 hover:underline font-semibold"
+              >
+                Apply for {meta.label} Partner access
+              </a>
+              &nbsp;·&nbsp; required before the API key can be issued.
+            </p>
+          </div>
+        );
+      })}
+
       <SaveBar onSave={onSave} />
     </div>
   );

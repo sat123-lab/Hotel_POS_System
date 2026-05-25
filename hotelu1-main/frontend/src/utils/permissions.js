@@ -40,6 +40,7 @@ export const DEFAULT_ROLE_MATRIX = {
     franchise: true,
     settings: true,
     customers: true,
+    staff_directory: true,
   },
   manager: {
     dashboard: true,
@@ -56,6 +57,7 @@ export const DEFAULT_ROLE_MATRIX = {
     franchise: true,
     settings: true,
     customers: true,
+    staff_directory: true,
   },
   waiter: {
     dashboard: true,
@@ -72,6 +74,7 @@ export const DEFAULT_ROLE_MATRIX = {
     franchise: false,
     settings: false,
     customers: false,
+    staff_directory: false,
   },
   chef: {
     dashboard: true,
@@ -88,6 +91,7 @@ export const DEFAULT_ROLE_MATRIX = {
     franchise: false,
     settings: false,
     customers: false,
+    staff_directory: false,
   },
   cashier: {
     dashboard: true,
@@ -104,6 +108,7 @@ export const DEFAULT_ROLE_MATRIX = {
     franchise: false,
     settings: false,
     customers: true,
+    staff_directory: false,
   },
 };
 

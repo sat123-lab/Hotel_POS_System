@@ -27,6 +27,7 @@ import RoleBasedRoute from './RoleBasedRoute';
 import PermissionBasedRoute from './PermissionBasedRoute';
 import NotificationsPage from './NotificationsPage';
 import SettingsPage from './SettingsPage';
+import StaffByBranch from './StaffByBranch';
 import { NotificationsProvider } from '../contexts/NotificationsContext';
 import { getLocationSettingsForCountry } from '../utils/currency';
 import { canRoleAccessModule } from '../utils/permissions';
@@ -244,6 +245,12 @@ const App = () => {
       case 'subfranchise-management':
         return (role === 'admin' || role === 'franchise') ? (
           <SubFranchiseManagement currentUser={currentUser} locationSettings={locationSettings} />
+        ) : (
+          <NoAccessMessage />
+        );
+      case 'staff-directory':
+        return allow('staff_directory', ['franchise', 'subfranchise']) ? (
+          <StaffByBranch token={localStorage.getItem('token')} />
         ) : (
           <NoAccessMessage />
         );
@@ -481,6 +488,16 @@ const App = () => {
               <MenuLayout>
                 <NotificationsPage />
               </MenuLayout>
+            </ProtectedRoute>
+          } />
+
+          <Route path="/staff" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredModule="staff_directory" requiredRoles={['admin', 'manager', 'franchise', 'subfranchise']}>
+                <MenuLayout>
+                  <StaffByBranch token={localStorage.getItem('token')} />
+                </MenuLayout>
+              </PermissionBasedRoute>
             </ProtectedRoute>
           } />
 

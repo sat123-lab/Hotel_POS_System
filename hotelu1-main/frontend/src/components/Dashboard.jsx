@@ -149,13 +149,13 @@ const KpiCard = ({
 
 const Section = ({ title, right, children, className = '' }) => (
   <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm p-5 ${className}`}>
-    <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4">
       <h3 className="text-base font-bold text-gray-900">{title}</h3>
       {right}
-    </div>
+            </div>
     {children}
-  </div>
-);
+        </div>
+    );
 
 const StatusPill = ({ status }) => {
   const s = (status || '').toLowerCase();
@@ -166,7 +166,7 @@ const StatusPill = ({ status }) => {
     completed: 'bg-blue-50 text-blue-600',
     delivered: 'bg-emerald-50 text-emerald-600',
   };
-  return (
+            return (
     <span
       className={`text-[11px] font-semibold px-2 py-1 rounded-full ${
         map[s] || 'bg-gray-100 text-gray-600'
@@ -216,7 +216,7 @@ const Dashboard = ({ locationSettings }) => {
   }, [selectedDate]);
 
   /* ---------------- auth + reload when date changes ---------------- */
-  useEffect(() => {
+    useEffect(() => {
     const u = localStorage.getItem('user');
     const t = localStorage.getItem('token');
     if (!u || !t) {
@@ -229,7 +229,7 @@ const Dashboard = ({ locationSettings }) => {
   }, [loadData, navigate]);
 
   /* ---------------- real-time wiring (today only) ---------------- */
-  useEffect(() => {
+    useEffect(() => {
     if (!isViewingToday) return undefined;
 
     const socket = io(getSocketUrl());
@@ -242,11 +242,11 @@ const Dashboard = ({ locationSettings }) => {
     const pollInterval = setInterval(loadData, 10000);
     const tickInterval = setInterval(() => setTick((v) => v + 1), 30000);
 
-    return () => {
+        return () => {
       socket.off('order_created', refresh);
       socket.off('order_status_updated', refresh);
       socket.off('order_deleted', refresh);
-      socket.disconnect();
+            socket.disconnect();
       clearInterval(pollInterval);
       clearInterval(tickInterval);
     };
@@ -466,11 +466,11 @@ const Dashboard = ({ locationSettings }) => {
   const monthLabel = viewDate.toLocaleDateString('en-US', { month: 'short' });
 
   /* ----------------- render ----------------- */
-  return (
+    return (
     <div className="px-4 sm:px-6 lg:px-8 py-6">
       {/* ===== Page header ===== */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
+                        <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-1">
             {isViewingToday
@@ -482,17 +482,17 @@ const Dashboard = ({ locationSettings }) => {
                   year: 'numeric',
                 })}.`}
           </p>
-        </div>
+                        </div>
         <div className="flex items-center gap-2">
           <DatePickerButton value={selectedDate} onChange={setSelectedDate} />
-          <button
+                            <button
             onClick={() => navigate('/dinein')}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-sm hover:shadow-md"
-          >
+                            >
             <Plus className="w-4 h-4" /> New Order
-          </button>
-        </div>
-      </div>
+                            </button>
+                        </div>
+                    </div>
 
       {/* ===== KPI row ===== */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
@@ -540,7 +540,7 @@ const Dashboard = ({ locationSettings }) => {
           sparkData={custSpark}
           gradientId="spark-customers"
         />
-      </div>
+                        </div>
 
       {/* ===== Row 2 ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
@@ -568,7 +568,7 @@ const Dashboard = ({ locationSettings }) => {
               {weekDelta.value}
             </span>
             <span className="text-xs text-gray-400">vs last week</span>
-          </div>
+                    </div>
           <p className="text-xs text-gray-400 mb-3">Total revenue</p>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
@@ -610,7 +610,7 @@ const Dashboard = ({ locationSettings }) => {
                 />
               </AreaChart>
             </ResponsiveContainer>
-          </div>
+                </div>
         </Section>
 
         <Section className="lg:col-span-3" title="Orders by Type">
@@ -649,9 +649,9 @@ const Dashboard = ({ locationSettings }) => {
                 <span className="w-2 h-2 rounded-full" style={{ background: t.color }} />
                 {t.name}{' '}
                 <span className="text-gray-400">({t.value})</span>
-              </div>
+                            </div>
             ))}
-          </div>
+                        </div>
         </Section>
 
         <Section
@@ -660,7 +660,7 @@ const Dashboard = ({ locationSettings }) => {
           right={
             <span className="text-[11px] font-semibold text-orange-600 bg-orange-50 px-2 py-1 rounded-full">
               {liveOrders.length} Active
-            </span>
+                        </span>
           }
         >
           <div className="space-y-3">
@@ -700,7 +700,7 @@ const Dashboard = ({ locationSettings }) => {
                     <p className="text-[11px] text-gray-400 mt-1 flex items-center justify-end gap-1">
                       <Clock className="w-3 h-3" /> {minutes} min
                     </p>
-                  </div>
+                    </div>
                 </div>
               );
             })}
@@ -715,9 +715,9 @@ const Dashboard = ({ locationSettings }) => {
             {isViewingToday && liveOrders.length === 0 && loading && (
               <p className="text-sm text-gray-400 text-center py-4">Loading…</p>
             )}
-          </div>
+            </div>
         </Section>
-      </div>
+                    </div>
 
       {/* ===== Row 3 ===== */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
@@ -740,7 +740,7 @@ const Dashboard = ({ locationSettings }) => {
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-gray-800 truncate">{it.name}</p>
                     <p className="text-sm font-bold text-gray-900">{fmt(it.revenue)}</p>
-                  </div>
+                            </div>
                   <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-orange-400 to-orange-500 rounded-full"
@@ -748,15 +748,15 @@ const Dashboard = ({ locationSettings }) => {
                         width: `${Math.max(8, (it.revenue / maxItemRevenue) * 100)}%`,
                       }}
                     />
-                  </div>
+                        </div>
                   <p className="text-[11px] text-gray-400 mt-1">{it.orders} sold</p>
                 </div>
-              </div>
+            </div>
             ))}
             {topItems.length === 0 && (
               <p className="text-sm text-gray-400 text-center py-4">No data yet</p>
-            )}
-          </div>
+                        )}
+                    </div>
         </Section>
 
         <Section
@@ -774,13 +774,13 @@ const Dashboard = ({ locationSettings }) => {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={peakHours} barCategoryGap={6}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis
+                                    <XAxis 
                   dataKey="period"
                   tick={{ fontSize: 10, fill: '#94a3b8' }}
                   axisLine={false}
                   tickLine={false}
-                />
-                <YAxis
+                                    />
+                                    <YAxis 
                   tick={{ fontSize: 10, fill: '#94a3b8' }}
                   axisLine={false}
                   tickLine={false}
@@ -800,7 +800,7 @@ const Dashboard = ({ locationSettings }) => {
                   ))}
                 </Bar>
               </BarChart>
-            </ResponsiveContainer>
+                            </ResponsiveContainer>
           </div>
         </Section>
 
@@ -823,23 +823,23 @@ const Dashboard = ({ locationSettings }) => {
                       <p className="text-[11px] text-gray-500 truncate">
                         {o.table_name || 'Counter'} • {mins} mins ago
                       </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
                     <p className="text-sm font-bold text-gray-900">{fmt(o.total)}</p>
                     <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" /> Paid
                     </span>
-                  </div>
-                </div>
+                                    </div>
+                                </div>
               );
             })}
             {recentTx.length === 0 && (
               <p className="text-sm text-gray-400 text-center py-4">No transactions yet</p>
             )}
-          </div>
+                        </div>
         </Section>
-      </div>
+                            </div>
 
       {/* ===== Bottom KPI strip ===== */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -875,17 +875,17 @@ const Dashboard = ({ locationSettings }) => {
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
               <Crown className="w-5 h-5 text-white" />
-            </div>
-            <div>
+                                        </div>
+                                        <div>
               <p className="text-[10px] uppercase font-bold tracking-wide opacity-90">
                 Total Revenue ({monthLabel})
               </p>
               <p className="text-xl font-extrabold mt-0.5">{fmt(thisMonthSales)}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+                                        </div>
+                                    </div>
+                                    </div>
+                                </div>
+                        </div>
   );
 };
 
@@ -894,15 +894,15 @@ const BottomKpi = ({ icon: Icon, iconBg, iconColor, label, value }) => (
     <div className="flex items-center gap-3">
       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${iconBg}`}>
         <Icon className={`w-5 h-5 ${iconColor}`} />
-      </div>
+                </div>
       <div>
         <p className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">
           {label}
         </p>
         <p className="text-lg font-bold text-gray-900 mt-0.5">{value}</p>
-      </div>
-    </div>
-  </div>
+                </div>
+            </div>
+        </div>
 );
 
-export default Dashboard;
+export default Dashboard; 

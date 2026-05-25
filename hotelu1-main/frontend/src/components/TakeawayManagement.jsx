@@ -5,6 +5,7 @@ import { enrichOrderWithTotals } from '../utils/orderTotals';
 import Notification from './Notification';
 import OrderEntryModal from './OrderEntryModal';
 import useCurrency from '../hooks/useCurrency';
+import SourceBadge from './SourceBadge';
 import {
   Plus,
   ShoppingBag,
@@ -605,9 +606,12 @@ const OrderCard = ({
     >
       {/* Card header */}
       <div className="px-4 py-3 flex items-center justify-between border-b border-gray-50">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-semibold text-gray-400">Order</p>
-          <p className="text-base font-bold text-gray-900">#{order.id}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-base font-bold text-gray-900">#{order.id}</p>
+            <SourceBadge source={order.source} />
+          </div>
         </div>
         <span
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold ${meta.pill}`}

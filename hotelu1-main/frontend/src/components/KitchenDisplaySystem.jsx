@@ -18,6 +18,7 @@ import {
   canRoleAccessModule,
   fetchPermissionsMatrixFromServer,
 } from '../utils/permissions';
+import SourceBadge from './SourceBadge';
 
 /* ===============================================================
    Kitchen Display — visual redesign only
@@ -237,13 +238,14 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
     return (
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
         <div className="flex items-center justify-between mb-3">
-          <div>
+          <div className="min-w-0">
             <p className="text-sm font-extrabold text-gray-900">
               #{order.id}{' '}
               <span className="ml-1 text-[11px] font-bold text-gray-400 uppercase">
                 {order.table_name || 'Counter'}
               </span>
             </p>
+            {order.source && <SourceBadge source={order.source} className="mt-1" />}
           </div>
           <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${urgency.cls}`}>
             {urgency.label}

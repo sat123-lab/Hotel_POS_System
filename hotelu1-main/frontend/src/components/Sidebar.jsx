@@ -19,6 +19,7 @@ import {
   Building,
   Settings,
   Bell,
+  UserCog,
   Menu as MenuIcon,
   X,
 } from 'lucide-react';
@@ -161,6 +162,10 @@ const Sidebar = ({
       kds: '/kitchen',
       'qr-management': '/qr-management',
       'takeaway-management': '/takeaway',
+      'user-management': '/user-management',
+      'franchise-dashboard': '/franchise-dashboard',
+      'subfranchise-management': '/manage-sub-franchises',
+      'staff-directory': '/staff',
       notifications: '/notifications',
       settings: '/settings',
     };
@@ -405,6 +410,17 @@ const Sidebar = ({
                   label="User Management"
                   active={activeTab === 'user-management'}
                   onClick={() => handleTabClick('user-management')}
+                />
+              </li>
+            )}
+
+            {canSee('staff_directory') && (
+              <li>
+                <NavItem
+                  icon={UserCog}
+                  label="Staff"
+                  active={activeTab === 'staff-directory'}
+                  onClick={() => handleTabClick('staff-directory')}
                 />
               </li>
             )}

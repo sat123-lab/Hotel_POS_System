@@ -36,6 +36,17 @@ const Order = sequelize.define(
     ready_at: { type: DataTypes.DATE, allowNull: true },
     chef_id: { type: DataTypes.INTEGER, allowNull: true },
     chef_name: { type: DataTypes.STRING, allowNull: true },
+
+    // Where the order originated from. For internal orders this stays
+    // null (we infer "in-house" from the `type` field). For aggregator
+    // webhooks (Zomato, Swiggy, UberEats, custom mobile apps) we stamp
+    // the source slug + the aggregator-side identifiers so we can
+    // ack/refund/refer to them later.
+    source: { type: DataTypes.STRING, allowNull: true },
+    external_order_id: { type: DataTypes.STRING, allowNull: true },
+    customer_name: { type: DataTypes.STRING, allowNull: true },
+    customer_phone: { type: DataTypes.STRING, allowNull: true },
+    delivery_address: { type: DataTypes.TEXT, allowNull: true },
   },
   {
     tableName: "orders",

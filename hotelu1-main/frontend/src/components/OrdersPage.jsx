@@ -23,6 +23,7 @@ import { io } from 'socket.io-client';
 import { authFetch, getSocketUrl } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
 import DatePickerButton, { getTodayLocalDate } from './DatePickerButton';
+import SourceBadge from './SourceBadge';
 import {
   loadRestaurantInfo,
   loadTaxDiscountSettings,
@@ -663,8 +664,11 @@ const OrderDetailPanel = ({ order, fmt, totals }) => {
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-base font-bold text-gray-900">{formatId(order.id)}</p>
-          <p className="text-xs text-gray-500">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-base font-bold text-gray-900">{formatId(order.id)}</p>
+            <SourceBadge source={order.source} />
+          </div>
+          <p className="text-xs text-gray-500 mt-0.5">
             {created.toLocaleDateString('en-US', {
               month: 'short',
               day: '2-digit',

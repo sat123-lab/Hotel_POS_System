@@ -48,6 +48,7 @@ const MODULES = [
   { id: 'franchise', label: 'Franchise' },
   { id: 'settings', label: 'Settings' },
   { id: 'customers', label: 'Customers (CRM)' },
+  { id: 'staff_directory', label: 'Staff Directory' },
 ];
 
 const ROLE_META = {

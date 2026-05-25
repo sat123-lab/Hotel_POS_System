@@ -26,6 +26,14 @@ const PORT = process.env.PORT || 3001;
 const JWT_SECRET =
   process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
+// Shared-secret token that external aggregators (Zomato, Swiggy,
+// custom mobile apps) must send in the `x-webhook-secret` header
+// when posting to /api/integrations/aggregator/order. Override in
+// production via env var.
+const AGGREGATOR_WEBHOOK_SECRET =
+  process.env.AGGREGATOR_WEBHOOK_SECRET ||
+  "change-this-aggregator-secret-in-production";
+
 const allowedOrigins = (process.env.CORS_ORIGIN || "*")
   .split(",")
   .map((o) => o.trim())
@@ -2034,7 +2042,7 @@ app.get("/api/users", verifyToken, async (req, res) => {
     }
 
     const users = await User.findAll({
-      attributes: ["id", "username", "role", "name"],
+      attributes: ["id", "username", "role", "name", "subfranchise_id"],
     });
     res.json(users);
   } catch (err) {
@@ -3095,6 +3103,395 @@ app.get("/api/franchise/overview", verifyToken, franchiseViewAuth, async (req, r
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+// ============================================================================
+// Aggregator (Zomato / Swiggy / external mobile apps) integrations
+// ============================================================================
+
+/**
+ * Validate + normalise an incoming aggregator webhook body. Returns the
+ * data we'll persist on the Order row, or throws if invalid.
+ *
+ * Both Zomato and Swiggy webhooks are POST requests with a JSON body
+ * containing items, customer info and totals. The exact field names
+ * differ, so we accept either flat or wrapped payloads and coerce to
+ * our internal shape.
+ */
+function normaliseAggregatorOrder(body, declaredSource) {
+  if (!body || typeof body !== "object") {
+    throw new Error("Empty webhook body");
+  }
+  const source = String(
+    body.source || declaredSource || "external"
+  ).toLowerCase();
+  const allowed = ["zomato", "swiggy", "ubereats", "external"];
+  if (!allowed.includes(source)) {
+    throw new Error(`Unsupported source: ${source}`);
+  }
+
+  const externalOrderId = String(
+    body.external_order_id ||
+      body.externalOrderId ||
+      body.order_id ||
+      body.orderId ||
+      body.id ||
+      ""
+  ).trim();
+
+  const customerName = String(
+    body.customer_name ||
+      body.customerName ||
+      body.customer?.name ||
+      body.user?.name ||
+      ""
+  ).trim();
+
+  const customerPhone = String(
+    body.customer_phone ||
+      body.customerPhone ||
+      body.customer?.phone ||
+      body.user?.phone ||
+      ""
+  ).trim();
+
+  const deliveryAddress = String(
+    body.delivery_address ||
+      body.deliveryAddress ||
+      body.address ||
+      body.customer?.address ||
+      ""
+  ).trim();
+
+  const rawItems = Array.isArray(body.items)
+    ? body.items
+    : Array.isArray(body.order_items)
+      ? body.order_items
+      : [];
+  if (rawItems.length === 0) {
+    throw new Error("Webhook contains no order items");
+  }
+
+  const items = rawItems
+    .map((it) => {
+      const name = String(it.name || it.item_name || it.title || "").trim();
+      const qty = Number(it.quantity || it.qty || it.count || 1);
+      const price = Number(it.price || it.unit_price || it.amount || 0);
+      return {
+        name,
+        quantity: Number.isFinite(qty) && qty > 0 ? qty : 1,
+        price: Number.isFinite(price) ? price : 0,
+      };
+    })
+    .filter((it) => it.name);
+  if (items.length === 0) {
+    throw new Error("Webhook items are missing names");
+  }
+
+  let total = Number(body.total || body.total_amount || body.grand_total);
+  if (!Number.isFinite(total) || total <= 0) {
+    total = items.reduce((s, it) => s + it.price * it.quantity, 0);
+  }
+
+  const subfranchiseId =
+    body.subfranchise_id ||
+    body.subfranchiseId ||
+    body.branch_id ||
+    body.branchId ||
+    null;
+
+  return {
+    source,
+    externalOrderId,
+    customerName,
+    customerPhone,
+    deliveryAddress,
+    items,
+    total,
+    subfranchiseId: subfranchiseId != null ? Number(subfranchiseId) : null,
+  };
+}
+
+/**
+ * Public webhook endpoint that Zomato / Swiggy / any external partner
+ * can POST to. Authenticated via a shared secret in the
+ * `x-webhook-secret` header (not a JWT — partners can't issue our
+ * JWTs). The order is created with `type=TAKEAWAY`, `status=pending`
+ * and emitted on the socket so the KDS picks it up immediately.
+ */
+app.post("/api/integrations/aggregator/order", async (req, res) => {
+  const headerSecret = req.headers["x-webhook-secret"];
+  if (!headerSecret || headerSecret !== AGGREGATOR_WEBHOOK_SECRET) {
+    return res.status(401).json({ message: "Invalid webhook secret" });
+  }
+
+  let normalised;
+  try {
+    normalised = normaliseAggregatorOrder(
+      req.body,
+      req.headers["x-source"] || req.query.source
+    );
+  } catch (err) {
+    return res.status(400).json({ message: err.message });
+  }
+
+  try {
+    if (!dbConnected) {
+      const newOrder = {
+        id: mockOrders.length + 1,
+        table_name:
+          normalised.source.charAt(0).toUpperCase() +
+          normalised.source.slice(1),
+        status: "pending",
+        total: normalised.total,
+        timestamp: new Date().toISOString(),
+        type: "TAKEAWAY",
+        token: String(Date.now()).slice(-6),
+        items: normalised.items,
+        source: normalised.source,
+        external_order_id: normalised.externalOrderId,
+        customer_name: normalised.customerName,
+        customer_phone: normalised.customerPhone,
+        delivery_address: normalised.deliveryAddress,
+        subfranchise_id: normalised.subfranchiseId,
+      };
+      mockOrders.push(newOrder);
+      io.emit("new_order", newOrder);
+      io.emit("order_created", newOrder);
+      return res.status(201).json({ message: "Order accepted", order: newOrder });
+    }
+
+    const order = await Order.create({
+      table_name:
+        normalised.source.charAt(0).toUpperCase() +
+        normalised.source.slice(1),
+      status: "pending",
+      total: normalised.total,
+      timestamp: new Date(),
+      type: "TAKEAWAY",
+      token: String(Date.now()).slice(-6),
+      source: normalised.source,
+      external_order_id: normalised.externalOrderId || null,
+      customer_name: normalised.customerName || null,
+      customer_phone: normalised.customerPhone || null,
+      delivery_address: normalised.deliveryAddress || null,
+      subfranchise_id: normalised.subfranchiseId || null,
+    });
+
+    for (const it of normalised.items) {
+      await OrderItem.create({
+        orderId: order.id,
+        menuItemId: null,
+        name: it.name,
+        quantity: it.quantity,
+        price: it.price,
+      });
+    }
+
+    const created = await Order.findByPk(order.id, {
+      include: [{ model: OrderItem, as: "items" }],
+    });
+
+    io.emit("new_order", created);
+    io.emit("order_created", created);
+
+    return res.status(201).json({ message: "Order accepted", order: created });
+  } catch (err) {
+    console.error("Aggregator webhook failed:", err);
+    return res
+      .status(500)
+      .json({ message: "Failed to create order", error: err.message });
+  }
+});
+
+/**
+ * Admin-only: return the public-facing webhook URL + the current
+ * shared secret. The frontend Settings → Integrations tab displays
+ * this so the user can paste it into the Zomato / Swiggy merchant
+ * dashboards.
+ */
+app.get("/api/integrations/config", verifyToken, (req, res) => {
+  if (req.user.role !== "admin") {
+    return res.status(403).json({ message: "Admin only" });
+  }
+  // Best-effort: build the absolute URL from the request host so it
+  // works on localhost and on Render. The user can always copy the
+  // suffix and prepend their own backend URL.
+  const protocol =
+    req.headers["x-forwarded-proto"] || req.protocol || "https";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  const baseUrl = host ? `${protocol}://${host}` : "";
+  return res.json({
+    webhookUrl: `${baseUrl}/api/integrations/aggregator/order`,
+    secret: AGGREGATOR_WEBHOOK_SECRET,
+    secretHeader: "x-webhook-secret",
+    supportedSources: ["zomato", "swiggy", "ubereats", "external"],
+  });
+});
+
+/**
+ * Admin-only: simulate an incoming aggregator order so the user can
+ * verify the integration end-to-end before they get partner access.
+ */
+app.post("/api/integrations/test", verifyToken, async (req, res) => {
+  if (req.user.role !== "admin") {
+    return res.status(403).json({ message: "Admin only" });
+  }
+  const source = String(req.body?.source || "zomato").toLowerCase();
+  const fakeBody = {
+    source,
+    external_order_id: `TEST-${Date.now()}`,
+    customer_name: req.body?.customer_name || "Test Customer",
+    customer_phone: req.body?.customer_phone || "+91 90000 00000",
+    delivery_address:
+      req.body?.delivery_address || "123 Test Street, Sample City",
+    items: req.body?.items || [
+      { name: "Butter Chicken", quantity: 1, price: 320 },
+      { name: "Garlic Naan", quantity: 2, price: 60 },
+    ],
+  };
+  // Forward to the real webhook handler via an internal call by
+  // re-running the same normalise + create logic without the secret
+  // check (we already verified the JWT above).
+  try {
+    const normalised = normaliseAggregatorOrder(fakeBody, source);
+    let created;
+    if (!dbConnected) {
+      created = {
+        id: mockOrders.length + 1,
+        table_name:
+          normalised.source.charAt(0).toUpperCase() +
+          normalised.source.slice(1),
+        status: "pending",
+        total: normalised.total,
+        timestamp: new Date().toISOString(),
+        type: "TAKEAWAY",
+        token: String(Date.now()).slice(-6),
+        items: normalised.items,
+        source: normalised.source,
+        external_order_id: normalised.externalOrderId,
+        customer_name: normalised.customerName,
+        customer_phone: normalised.customerPhone,
+        delivery_address: normalised.deliveryAddress,
+      };
+      mockOrders.push(created);
+    } else {
+      const order = await Order.create({
+        table_name:
+          normalised.source.charAt(0).toUpperCase() +
+          normalised.source.slice(1),
+        status: "pending",
+        total: normalised.total,
+        timestamp: new Date(),
+        type: "TAKEAWAY",
+        token: String(Date.now()).slice(-6),
+        source: normalised.source,
+        external_order_id: normalised.externalOrderId || null,
+        customer_name: normalised.customerName || null,
+        customer_phone: normalised.customerPhone || null,
+        delivery_address: normalised.deliveryAddress || null,
+      });
+      for (const it of normalised.items) {
+        await OrderItem.create({
+          orderId: order.id,
+          menuItemId: null,
+          name: it.name,
+          quantity: it.quantity,
+          price: it.price,
+        });
+      }
+      created = await Order.findByPk(order.id, {
+        include: [{ model: OrderItem, as: "items" }],
+      });
+    }
+    io.emit("new_order", created);
+    io.emit("order_created", created);
+    return res.status(201).json({ message: "Test order accepted", order: created });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ============================================================================
+// Staff directory — list users grouped/filterable by branch
+// ============================================================================
+
+app.get("/api/staff", verifyToken, async (req, res) => {
+  try {
+    if (
+      req.user.role !== "admin" &&
+      req.user.role !== "franchise" &&
+      req.user.role !== "subfranchise"
+    ) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    if (!dbConnected) {
+      const branches = mockSubFranchises.map((sf) => ({
+        id: sf.id,
+        name: sf.name,
+        code: sf.code,
+        city: sf.city,
+      }));
+      const staff = mockUsers.map((u) => ({
+        id: u.id,
+        username: u.username,
+        role: u.role,
+        name: u.name,
+        subfranchise_id: u.subfranchise_id || null,
+      }));
+      return res.json({ branches, staff });
+    }
+
+    const [users, branches] = await Promise.all([
+      User.findAll({
+        attributes: ["id", "username", "role", "name", "subfranchise_id"],
+        order: [["name", "ASC"]],
+      }),
+      SubFranchise.findAll({ order: [["name", "ASC"]] }),
+    ]);
+
+    let visibleBranchIds = null;
+    if (req.user.role === "subfranchise") {
+      visibleBranchIds = [Number(req.user.subfranchise_id)];
+    } else if (req.user.role === "franchise") {
+      const ids = await getFranchiseLocationIds(req.user);
+      visibleBranchIds = ids.map(Number);
+    }
+
+    const filteredBranches = visibleBranchIds
+      ? branches.filter((b) => visibleBranchIds.includes(Number(b.id)))
+      : branches;
+
+    const filteredStaff = visibleBranchIds
+      ? users.filter(
+          (u) =>
+            u.subfranchise_id != null &&
+            visibleBranchIds.includes(Number(u.subfranchise_id))
+        )
+      : users;
+
+    res.json({
+      branches: filteredBranches.map((b) => ({
+        id: b.id,
+        name: b.name,
+        code: b.code,
+        city: b.city,
+        phone: b.phone,
+      })),
+      staff: filteredStaff.map((u) => ({
+        id: u.id,
+        username: u.username,
+        role: u.role,
+        name: u.name,
+        subfranchise_id: u.subfranchise_id,
+      })),
+    });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Error fetching staff", error: err.message });
   }
 });
 
