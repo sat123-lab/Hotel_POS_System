@@ -1,20 +1,25 @@
 /* ------------------------------------------------------------------ */
-/*  Bell-sound utility for the Kitchen Display + Customer Order page.  */
+/*  Alarm-bell sound utility for the Kitchen Display and customer      */
+/*  mobile order tracker.                                              */
 /*                                                                     */
-/*  - Synthesises a pleasant 2-tone "bell" via the Web Audio API so we */
-/*    don't need to ship any audio assets and it works offline.        */
-/*  - Respects browser autoplay restrictions: a bell scheduled before  */
-/*    the user has interacted with the page is queued and fires on the */
-/*    first click/tap/keypress instead.                                */
-/*  - Persists a per-page on/off + volume preference in localStorage   */
-/*    so each kitchen station / mobile session can opt in or out.      */
+/*  - Synthesises a loud "service bell" via the Web Audio API by       */
+/*    stacking multiple oscillators at the fundamental + harmonics so  */
+/*    the resulting tone is rich and clearly audible (much louder      */
+/*    than a single sine wave).                                        */
+/*  - Plays the chime 3-4 times in a row so a busy chef / customer     */
+/*    actually notices.                                                */
+/*  - Respects browser autoplay rules: bells queued before any user    */
+/*    gesture are flushed on the first click / tap / keypress.         */
+/*  - Persists on/off preference in localStorage.                      */
 /* ------------------------------------------------------------------ */
 
 const SETTING_KEY = 'notificationSoundSettings_v1';
 
 const DEFAULTS = {
   enabled: true,
-  volume: 0.7, // 0..1
+  // Volume is intentionally high — a kitchen-display alarm is meant to
+  // cut through ambient noise. Users can mute via the toggle.
+  volume: 1.0,
 };
 
 const loadSettings = () => {
@@ -63,9 +68,13 @@ const getAudioCtx = () => {
   if (!audioCtx) {
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return null;
+      if (!Ctx) {
+        console.warn('[notificationSound] Web Audio API not available');
+        return null;
+      }
       audioCtx = new Ctx();
-    } catch {
+    } catch (e) {
+      console.warn('[notificationSound] Failed to create AudioContext', e);
       return null;
     }
   }
@@ -77,11 +86,9 @@ const unlockAudio = () => {
   unlocked = true;
   const ctx = getAudioCtx();
   if (!ctx) return;
-  // Some browsers start the context in "suspended" until a user gesture.
   if (ctx.state === 'suspended') {
     ctx.resume().catch(() => {});
   }
-  // Drain anything queued before unlock.
   const queued = pendingPlays.splice(0);
   queued.forEach((fn) => {
     try {
@@ -94,83 +101,158 @@ const unlockAudio = () => {
 
 if (typeof window !== 'undefined') {
   const handler = () => unlockAudio();
-  window.addEventListener('click', handler, { once: false, passive: true });
-  window.addEventListener('touchstart', handler, { once: false, passive: true });
-  window.addEventListener('keydown', handler, { once: false, passive: true });
+  window.addEventListener('click', handler, { passive: true });
+  window.addEventListener('touchstart', handler, { passive: true });
+  window.addEventListener('keydown', handler, { passive: true });
+  window.addEventListener('pointerdown', handler, { passive: true });
 }
 
 /* ------------------------------------------------------------------ */
-/*  Synthesised tones                                                  */
+/*  Synthesis primitives                                               */
 /* ------------------------------------------------------------------ */
 
 /**
- * Play a 2-note bell tone. Each tone is a quick sine wave that decays
- * exponentially — feels like a tap on a service bell.
+ * Play one "ding" — a rich bell-like tone made of a fundamental
+ * frequency plus three inharmonic partials. Stacking voices is what
+ * gives a real bell its body; a single sine wave just sounds like a
+ * faint beep.
  */
-const playTones = (notes, settings) => {
-  const ctx = getAudioCtx();
-  if (!ctx) return;
-  const masterGain = ctx.createGain();
-  masterGain.gain.value = settings.volume;
-  masterGain.connect(ctx.destination);
+const playBellTone = (ctx, masterGain, freq, startOffset, duration) => {
+  // Harmonic partials of a struck bell — not pure integer multiples
+  // (that's why bells sound metallic, not flute-like).
+  const partials = [
+    { mult: 1.0, gain: 1.0 },
+    { mult: 2.01, gain: 0.55 },
+    { mult: 3.02, gain: 0.35 },
+    { mult: 4.85, gain: 0.22 },
+  ];
 
-  const now = ctx.currentTime;
-  notes.forEach(({ freq, start, duration, peak = 1 }) => {
+  const t0 = ctx.currentTime + startOffset;
+
+  partials.forEach(({ mult, gain }) => {
     const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+    const g = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.value = freq;
-    osc.connect(gain);
-    gain.connect(masterGain);
-    const t0 = now + start;
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.frequency.value = freq * mult;
+    osc.connect(g);
+    g.connect(masterGain);
+
+    // Sharp attack, long exponential decay — characteristic bell envelope.
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+
     osc.start(t0);
     osc.stop(t0 + duration + 0.05);
   });
+
+  // A tiny square-wave "click" at the very start gives the strike its
+  // initial transient — makes the bell sound less synthetic.
+  const click = ctx.createOscillator();
+  const clickGain = ctx.createGain();
+  click.type = 'square';
+  click.frequency.value = freq * 6;
+  click.connect(clickGain);
+  clickGain.connect(masterGain);
+  clickGain.gain.setValueAtTime(0.0001, t0);
+  clickGain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.002);
+  clickGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
+  click.start(t0);
+  click.stop(t0 + 0.08);
 };
 
-const NEW_ORDER_NOTES = [
-  { freq: 880, start: 0.0, duration: 0.45, peak: 0.9 },
-  { freq: 1318.5, start: 0.18, duration: 0.55, peak: 0.85 },
-];
+/* ------------------------------------------------------------------ */
+/*  Public bell patterns                                               */
+/* ------------------------------------------------------------------ */
 
-const ORDER_READY_NOTES = [
-  { freq: 659.25, start: 0.0, duration: 0.35, peak: 0.8 },
-  { freq: 987.77, start: 0.16, duration: 0.4, peak: 0.85 },
-  { freq: 1318.5, start: 0.32, duration: 0.6, peak: 0.9 },
-];
+/**
+ * Service-bell pattern used for new orders on the KDS.
+ *   ding! ... ding! ... ding!
+ * Repeated 3 times at 320 ms intervals — alarm-loud, impossible to miss.
+ */
+const playNewOrderPattern = (settings) => {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const master = ctx.createGain();
+  master.gain.value = Math.max(0.05, settings.volume);
+  master.connect(ctx.destination);
+
+  const interval = 0.32;
+  const duration = 0.6;
+  const baseFreq = 1320;
+  for (let i = 0; i < 3; i++) {
+    playBellTone(ctx, master, baseFreq, i * interval, duration);
+  }
+};
+
+/**
+ * "Your order is ready" pattern used on the customer mobile tracker.
+ *   ding-dong-ding-dong (two alternating bells, 4 hits)
+ */
+const playOrderReadyPattern = (settings) => {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const master = ctx.createGain();
+  master.gain.value = Math.max(0.05, settings.volume);
+  master.connect(ctx.destination);
+
+  const high = 1568; // G6
+  const low = 1175; // D6
+  const interval = 0.28;
+  const duration = 0.55;
+  const sequence = [high, low, high, low];
+  sequence.forEach((freq, i) => {
+    playBellTone(ctx, master, freq, i * interval, duration);
+  });
+};
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
-const schedule = (fn) => {
+const schedule = (label, fn) => {
   if (!unlocked) {
+    console.warn(
+      `[notificationSound] "${label}" queued — waiting for first user interaction`
+    );
     pendingPlays.push(fn);
     return;
   }
-  fn();
+  try {
+    fn();
+  } catch (e) {
+    console.warn(`[notificationSound] Failed to play "${label}"`, e);
+  }
 };
 
-/** Ring the "new order arrived" bell (used by KDS). */
+/** Ring the "new order arrived" alarm bell (used by KDS). */
 export const playNewOrderBell = () => {
   const settings = loadSettings();
   if (!settings.enabled) return;
-  schedule(() => playTones(NEW_ORDER_NOTES, settings));
+  schedule('new order', () => playNewOrderPattern(settings));
 };
 
-/** Ring the "your order is ready" bell (used by customer order tracker). */
+/** Ring the "your order is ready" chime (used by customer tracker). */
 export const playOrderReadyBell = () => {
   const settings = loadSettings();
   if (!settings.enabled) return;
-  schedule(() => playTones(ORDER_READY_NOTES, settings));
+  schedule('order ready', () => playOrderReadyPattern(settings));
 };
 
 /**
- * Explicit "prime audio" call you can wire to a user-visible button
- * (e.g. after a customer taps "Place order") so subsequent
- * server-pushed bells fire without an autoplay block.
+ * Explicit unlock. Call this from any visible UI button so the very
+ * first audio play after page load isn't blocked by the browser's
+ * autoplay policy.
  */
 export const primeAudio = () => unlockAudio();
+
+/**
+ * Manual test — same sound as a new order but always plays, even if
+ * the user has muted via setSoundEnabled. Used by the "Test bell"
+ * button so chefs can verify their browser/speakers before service.
+ */
+export const playTestBell = () => {
+  unlockAudio();
+  const settings = { ...loadSettings(), enabled: true, volume: 1.0 };
+  schedule('test', () => playNewOrderPattern(settings));
+};

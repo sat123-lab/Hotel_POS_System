@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import {
   playNewOrderBell,
+  playTestBell,
   getSoundSettings,
   setSoundEnabled,
   primeAudio,
@@ -78,13 +79,21 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
     const newSocket = io(getSocketUrl());
     setSocket(newSocket);
 
-    // When the server pings us about a new order, trigger an
-    // immediate refetch instead of ringing here directly. The poll
-    // loop already detects unseen IDs and rings the bell once, so
-    // routing everything through one place avoids double-ringing
-    // when both `new_order` and `order_created` events fire for the
-    // same order.
-    const handleNewOrder = () => {
+    // Socket-driven path:
+    //   - If the server includes the order in the payload, ring + add
+    //     `id:N` to the known set so the upcoming poll won't re-ring.
+    //   - If the server didn't include a payload (the regular POS
+    //     /api/orders endpoint emits the event name only), just kick
+    //     off a refetch and let the polling diff ring the bell once.
+    //     This guarantees exactly one ring per new order, no matter
+    //     which code path created it.
+    const handleNewOrder = (order) => {
+      if (order && order.id != null) {
+        const key = `id:${order.id}`;
+        if (knownOrderIdsRef.current.has(key)) return;
+        knownOrderIdsRef.current.add(key);
+        announceNewOrder(order);
+      }
       fetchOrders();
     };
     newSocket.on('new_order', handleNewOrder);
@@ -129,21 +138,20 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
           o.items.length > 0
       );
 
-      // Bell-on-poll: if the very first load just finished, seed the
-      // "known IDs" set without ringing. After that, any order whose
-      // ID we haven't seen + that's still pending counts as a new
-      // arrival and rings the bell.
+      // Bell-on-poll: first load seeds the "known IDs" set without
+      // ringing. Subsequent polls ring once for any unseen ID — used
+      // as a fallback in case the socket missed the event.
       if (!initialLoadDoneRef.current) {
         kitchenOrders.forEach((o) =>
-          knownOrderIdsRef.current.add(Number(o.id))
+          knownOrderIdsRef.current.add(`id:${o.id}`)
         );
         initialLoadDoneRef.current = true;
       } else {
         kitchenOrders.forEach((o) => {
-          const id = Number(o.id);
-          if (!knownOrderIdsRef.current.has(id)) {
-            knownOrderIdsRef.current.add(id);
-            if (o.status === 'pending') announceNewOrder(o);
+          const key = `id:${o.id}`;
+          if (!knownOrderIdsRef.current.has(key)) {
+            knownOrderIdsRef.current.add(key);
+            announceNewOrder(o);
           }
         });
       }
@@ -441,6 +449,17 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => {
+              primeAudio();
+              playTestBell();
+            }}
+            title="Play a test alarm so you can verify your speakers/volume"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-full border bg-orange-500 hover:bg-orange-600 text-white border-orange-600 text-sm font-bold shadow-sm transition"
+          >
+            <Bell className="w-4 h-4" />
+            Test bell
+          </button>
           <button
             onClick={() => {
               const next = !soundOn;
