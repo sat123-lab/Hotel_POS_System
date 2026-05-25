@@ -198,3 +198,275 @@ button {
   line-height: 1.5;
   opacity: 0.9;
 }
+
+/* =========================================================================
+   Dark mode
+   -------------------------------------------------------------------------
+   The whole app is built with hardcoded Tailwind utility classes like
+   `bg-white`, `text-gray-700`, `border-gray-100`, etc. Rather than
+   touching every component, we override those utilities once when the
+   <html> element carries the `dark` class (toggled by ThemeContext).
+   Selector specificity of `html.dark .bg-white` (0,2,0) beats the bare
+   Tailwind utility `.bg-white` (0,1,0) — no `!important` needed except
+   for a couple of inline-style edge cases.
+   ========================================================================= */
+
+html.dark {
+  --text-primary: #E5E7EB;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+  --app-bg: #0B1220;
+  --card-bg: #161E2E;
+  --border: #2A3447;
+  --accent: #F97316;
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --ring: 0 0 0 3px rgba(249, 115, 22, 0.25);
+  color-scheme: dark;
+}
+
+html.dark body {
+  background-image: none;
+  background-color: #0B1220;
+  color: var(--text-primary);
+}
+
+html.dark body::before {
+  background: #0B1220;
+}
+
+/* --- Surfaces ----------------------------------------------------------- */
+
+html.dark .bg-white,
+html.dark .bg-\[\#fafafb\],
+html.dark .bg-\[\#FAFAFB\] {
+  background-color: #161E2E;
+}
+
+html.dark .bg-gray-50,
+html.dark .bg-slate-50,
+html.dark .bg-zinc-50,
+html.dark .bg-neutral-50,
+html.dark .bg-stone-50 {
+  background-color: #1F2937;
+}
+
+html.dark .bg-gray-100,
+html.dark .bg-slate-100,
+html.dark .bg-zinc-100,
+html.dark .bg-neutral-100 {
+  background-color: #1F2937;
+}
+
+html.dark .bg-gray-200,
+html.dark .bg-slate-200 {
+  background-color: #2A3447;
+}
+
+html.dark .bg-gray-800,
+html.dark .bg-gray-900,
+html.dark .bg-slate-900 {
+  background-color: #0B1220;
+}
+
+/* Translucent white surfaces */
+html.dark .bg-white\/80,
+html.dark .bg-white\/90,
+html.dark .bg-white\/95,
+html.dark .bg-white\/70,
+html.dark .bg-white\/60,
+html.dark .bg-white\/50 {
+  background-color: rgba(22, 30, 46, 0.85);
+}
+
+/* Soft tinted backgrounds — keep coloured highlights but dim them */
+html.dark .bg-orange-50,
+html.dark .bg-orange-50\/40,
+html.dark .bg-orange-50\/50 {
+  background-color: rgba(249, 115, 22, 0.12);
+}
+html.dark .bg-red-50  { background-color: rgba(239, 68, 68, 0.12); }
+html.dark .bg-green-50,
+html.dark .bg-emerald-50 { background-color: rgba(34, 197, 94, 0.12); }
+html.dark .bg-blue-50 { background-color: rgba(59, 130, 246, 0.12); }
+html.dark .bg-yellow-50,
+html.dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.12); }
+html.dark .bg-purple-50,
+html.dark .bg-violet-50,
+html.dark .bg-fuchsia-50 { background-color: rgba(168, 85, 247, 0.12); }
+html.dark .bg-pink-50,
+html.dark .bg-rose-50 { background-color: rgba(244, 114, 182, 0.12); }
+html.dark .bg-indigo-50 { background-color: rgba(99, 102, 241, 0.12); }
+html.dark .bg-cyan-50,
+html.dark .bg-sky-50,
+html.dark .bg-teal-50 { background-color: rgba(56, 189, 248, 0.12); }
+html.dark .bg-gradient-to-r,
+html.dark .bg-gradient-to-br,
+html.dark .bg-gradient-to-tr {
+  /* keep gradient utilities but slightly dim — Tailwind overrides via `from-*` etc. still apply */
+}
+
+/* --- Borders ------------------------------------------------------------ */
+
+html.dark .border-gray-100,
+html.dark .border-gray-200,
+html.dark .border-slate-100,
+html.dark .border-slate-200,
+html.dark .border-neutral-100,
+html.dark .border-neutral-200 {
+  border-color: #2A3447;
+}
+
+html.dark .border-gray-300,
+html.dark .border-slate-300 {
+  border-color: #374151;
+}
+
+html.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+html.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #2A3447;
+}
+
+/* --- Text colours ------------------------------------------------------- */
+
+html.dark .text-gray-900,
+html.dark .text-slate-900,
+html.dark .text-neutral-900,
+html.dark .text-black {
+  color: #F3F4F6;
+}
+
+html.dark .text-gray-800,
+html.dark .text-slate-800 {
+  color: #E5E7EB;
+}
+
+html.dark .text-gray-700,
+html.dark .text-slate-700 {
+  color: #D1D5DB;
+}
+
+html.dark .text-gray-600,
+html.dark .text-slate-600 {
+  color: #B6BCC8;
+}
+
+html.dark .text-gray-500,
+html.dark .text-slate-500 {
+  color: #9CA3AF;
+}
+
+html.dark .text-gray-400,
+html.dark .text-slate-400 {
+  color: #6B7280;
+}
+
+html.dark .text-gray-300 { color: #4B5563; }
+
+/* --- Inputs / selects / textareas -------------------------------------- */
+
+html.dark :where(
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="number"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="date"],
+  input[type="time"],
+  select,
+  textarea
+) {
+  background-color: #1F2937;
+  border-color: #374151;
+  color: #E5E7EB;
+}
+
+html.dark :where(input, select, textarea)::placeholder {
+  color: #6B7280;
+}
+
+html.dark input:-webkit-autofill,
+html.dark input:-webkit-autofill:hover,
+html.dark input:-webkit-autofill:focus,
+html.dark textarea:-webkit-autofill,
+html.dark select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px #1F2937 inset !important;
+  -webkit-text-fill-color: #E5E7EB !important;
+  caret-color: #E5E7EB;
+}
+
+/* --- Shadows / dividers / scrollbars ----------------------------------- */
+
+html.dark .shadow-sm,
+html.dark .shadow,
+html.dark .shadow-md,
+html.dark .shadow-lg,
+html.dark .shadow-xl,
+html.dark .shadow-2xl {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+html.dark .scrollbar-thin::-webkit-scrollbar-track {
+  background: #161E2E;
+}
+html.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #374151;
+}
+html.dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #4B5563;
+}
+
+/* --- Hover states that hardcode light surfaces ------------------------- */
+
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-gray-100:hover,
+html.dark .hover\:bg-slate-50:hover,
+html.dark .hover\:bg-slate-100:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+html.dark .hover\:bg-orange-50:hover,
+html.dark .hover\:bg-orange-50\/50:hover,
+html.dark .hover\:bg-orange-50\/40:hover {
+  background-color: rgba(249, 115, 22, 0.18);
+}
+
+/* --- Tables / rows ------------------------------------------------------ */
+
+html.dark table {
+  color: #E5E7EB;
+}
+html.dark thead {
+  background-color: #1F2937;
+  color: #D1D5DB;
+}
+html.dark tr {
+  border-color: #2A3447;
+}
+html.dark .odd\:bg-white:nth-child(odd),
+html.dark .even\:bg-gray-50:nth-child(even) {
+  background-color: #161E2E;
+}
+
+/* --- Misc helpers ------------------------------------------------------- */
+
+html.dark .ring-1,
+html.dark .ring-2 {
+  --tw-ring-color: rgba(255, 255, 255, 0.08);
+}
+
+html.dark .placeholder-gray-400::placeholder,
+html.dark .placeholder-gray-500::placeholder {
+  color: #6B7280;
+}
+
+/* Smooth transition when toggling. */
+html, body {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+

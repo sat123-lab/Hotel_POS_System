@@ -2,7 +2,12 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './components/App';
 import { BrowserRouter } from 'react-router-dom';
+import { ThemeProvider, applyThemeEarly } from './contexts/ThemeContext';
 import './index.css';
+
+// Apply saved theme to <html> synchronously, before React renders,
+// to avoid a flash of the wrong theme on cold loads.
+applyThemeEarly();
 
 // Enhanced service worker and cache clearing
 const clearCachesAndServiceWorkers = async () => {
@@ -62,7 +67,9 @@ const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
     <BrowserRouter>
-      <App />
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>
     </BrowserRouter>
   </React.StrictMode>
 );

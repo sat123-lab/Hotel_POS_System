@@ -13,7 +13,9 @@ import {
   QrCode as QrCodeIcon,
 } from 'lucide-react';
 import QRCode from 'qrcode';
+import { Sun, Moon, Monitor } from 'lucide-react';
 import { getAPI_URL } from '../utils/api';
+import { useTheme } from '../contexts/ThemeContext';
 
 /* ------------------------------------------------------------------ */
 /*  Tabs                                                               */
@@ -704,8 +706,43 @@ const COLOR_SWATCHES = [
 
 const AppearanceForm = ({ value, onChange, onSave }) => {
   const set = (k, v) => onChange({ ...value, [k]: v });
+  const { mode: themeMode, setMode: setThemeMode } = useTheme();
+
+  const THEME_OPTIONS = [
+    { id: 'light', label: 'Light', Icon: Sun },
+    { id: 'dark', label: 'Dark', Icon: Moon },
+    { id: 'system', label: 'System', Icon: Monitor },
+  ];
+
   return (
     <div>
+      <Field label="Theme">
+        <div className="flex flex-wrap items-center gap-3">
+          {THEME_OPTIONS.map(({ id, label, Icon }) => {
+            const active = themeMode === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setThemeMode(id)}
+                type="button"
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl border transition ${
+                  active
+                    ? 'border-orange-300 bg-orange-50 text-orange-700'
+                    : 'border-gray-200 hover:border-gray-300 text-gray-700'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span className="text-sm font-semibold">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[12px] text-gray-500">
+          Choose Light or Dark, or let the app follow your operating system theme.
+        </p>
+      </Field>
+
+      <div className="mt-6">
       <Field label="Theme Color">
         <div className="flex flex-wrap items-center gap-3">
           {COLOR_SWATCHES.map((c) => {
@@ -729,6 +766,7 @@ const AppearanceForm = ({ value, onChange, onSave }) => {
           })}
         </div>
       </Field>
+      </div>
 
       <div className="mt-6">
         <Field label="Layout Density">

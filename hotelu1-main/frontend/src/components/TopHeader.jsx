@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { authFetch } from '../utils/api';
 import { useNotifications } from '../contexts/NotificationsContext';
+import ThemeToggle from './ThemeToggle';
 
 /* ------------------------------------------------------------------ */
 /*  Defaults                                                           */
@@ -340,6 +341,9 @@ const TopHeader = ({ currentUser, handleLogout, setActiveTab }) => {
               </span>
             )}
           </button>
+
+          {/* Theme toggle — light / dark */}
+          <ThemeToggle />
 
           <button
             onClick={requestFullScreen}
