@@ -955,32 +955,50 @@ const ChartCard = ({ title, children }) => (
 /* ------------------------------------------------------------------ */
 
 /**
- * Given the raw orders for the selected date range, group by chef and
- * compute the metrics we want to surface on the report:
+ * Group orders by the chef who prepared them and compute the metrics
+ * surfaced on the Reports page:
  *   - ordersPrepared (those with both preparing_at and ready_at)
  *   - inProgress     (preparing_at but no ready_at yet)
  *   - avgPrepMin     (mean of ready_at - preparing_at)
  *   - fastestMin / slowestMin
  *   - totalRevenue handled
  *   - itemsCooked
+ *
  * The fields `chef_id`, `chef_name`, `preparing_at`, `ready_at` are
  * stamped server-side when the kitchen flips an order to "preparing"
- * (and then to "ready").
+ * (and then to "ready"). Legacy orders that pre-date this tracking
+ * are still surfaced under "Kitchen Staff" so they don't disappear
+ * from the report — they just won't have prep-time durations.
  */
 function buildChefStats(orders) {
   const list = Array.isArray(orders) ? orders : [];
   const byChef = new Map();
 
+  const cookedStatuses = new Set([
+    'preparing',
+    'ready',
+    'delivered',
+    'completed',
+  ]);
+
   list.forEach((o) => {
+    const status = String(o.status || '').toLowerCase();
+    const wentThroughKitchen = cookedStatuses.has(status) || o.preparing_at || o.ready_at;
+    if (!wentThroughKitchen) return;
+
     const chefId = o.chef_id || o.chefId || null;
-    const chefName = (o.chef_name || o.chefName || '').trim();
-    if (!chefName && !chefId) return; // unattributed — skip
+    const rawName = (o.chef_name || o.chefName || '').trim();
+    // Bucket orders that never got attributed (legacy data, or rare
+    // edge-cases where the JWT lacked an id/name) under a generic
+    // "Kitchen Staff" group so they remain visible in the report.
+    const chefName = rawName || (chefId ? `Chef #${chefId}` : 'Kitchen Staff');
 
     const key = chefId ? `id:${chefId}` : `name:${chefName.toLowerCase()}`;
     if (!byChef.has(key)) {
       byChef.set(key, {
         id: chefId,
-        name: chefName || `Chef #${chefId}`,
+        name: chefName,
+        attributed: Boolean(rawName || chefId),
         ordersPrepared: 0,
         inProgress: 0,
         totalRevenue: 0,
@@ -995,14 +1013,19 @@ function buildChefStats(orders) {
 
     if (prep && ready && ready.getTime() > prep.getTime()) {
       const mins = (ready.getTime() - prep.getTime()) / 60000;
-      // Sanity bounds: ignore anything > 12h (likely a forgotten order
-      // or a manual back-fill) so it doesn't skew the average.
+      // Drop anything > 12h as a data-entry mistake.
       if (mins >= 0 && mins < 720) {
         c.prepDurationsMin.push(mins);
-        c.ordersPrepared += 1;
       }
-    } else if (prep && !ready) {
+    } else if (prep && !ready && status === 'preparing') {
       c.inProgress += 1;
+    }
+
+    // Every kitchen-touched order counts toward `ordersPrepared` even
+    // if the duration is unknown — otherwise a legacy order with no
+    // timestamps disappears from the leaderboard entirely.
+    if (status !== 'preparing') {
+      c.ordersPrepared += 1;
     }
 
     c.totalRevenue += Number(o.total) || 0;
@@ -1019,7 +1042,9 @@ function buildChefStats(orders) {
     return {
       id: c.id,
       name: c.name,
+      attributed: c.attributed,
       ordersPrepared: c.ordersPrepared,
+      ordersTimed: durations.length,
       inProgress: c.inProgress,
       avgPrepMin: avg,
       fastestMin: durations.length > 0 ? Math.min(...durations) : null,
@@ -1037,20 +1062,23 @@ function buildChefStats(orders) {
     return a.avgPrepMin - b.avgPrepMin;
   });
 
-  const completed = chefs.filter((c) => c.ordersPrepared > 0);
-  const totalOrders = completed.reduce((s, c) => s + c.ordersPrepared, 0);
-  const totalDurations = completed.flatMap((c) =>
-    Array(c.ordersPrepared).fill(c.avgPrepMin)
-  );
-  const overallAvgMin =
-    totalDurations.length > 0
-      ? totalDurations.reduce((s, n) => s + n, 0) / totalDurations.length
-      : 0;
+  const totalOrders = chefs.reduce((s, c) => s + c.ordersPrepared, 0);
 
-  const fastestChef = completed
-    .slice()
-    .sort((a, b) => a.avgPrepMin - b.avgPrepMin)[0] || null;
-  const mostProductive = completed[0] || null;
+  // Overall avg is weighted by number of timed orders so it isn't
+  // skewed by chefs with zero recorded durations.
+  let totalTimedOrders = 0;
+  let totalTimedSum = 0;
+  chefs.forEach((c) => {
+    totalTimedOrders += c.ordersTimed;
+    totalTimedSum += c.avgPrepMin * c.ordersTimed;
+  });
+  const overallAvgMin =
+    totalTimedOrders > 0 ? totalTimedSum / totalTimedOrders : 0;
+
+  const timedChefs = chefs.filter((c) => c.ordersTimed > 0);
+  const fastestChef =
+    timedChefs.slice().sort((a, b) => a.avgPrepMin - b.avgPrepMin)[0] || null;
+  const mostProductive = chefs[0] || null;
 
   return {
     chefs,
@@ -1096,10 +1124,13 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
         <div className="h-32 flex flex-col items-center justify-center text-center text-sm text-gray-400">
           <Timer className="w-6 h-6 mb-2 text-gray-300" />
           No chef activity in this period yet.
-          <span className="text-[11px] text-gray-400 mt-1">
-            Stats appear as soon as kitchen staff start moving orders to
-            <span className="font-semibold"> preparing</span> and{' '}
-            <span className="font-semibold">ready</span>.
+          <span className="text-[11px] text-gray-400 mt-1 max-w-md">
+            Stats appear as soon as kitchen staff move orders to
+            <span className="font-semibold"> preparing</span> and then{' '}
+            <span className="font-semibold">ready</span> on the Kitchen
+            Display. Existing completed orders show up under{' '}
+            <span className="font-semibold">Kitchen Staff</span> without a
+            prep-time.
           </span>
         </div>
       </div>
@@ -1174,7 +1205,10 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
           {chefs.map((c, idx) => {
             const ordersPct = (c.ordersPrepared / maxOrders) * 100;
             const isFastest =
-              fastestChef && c.name === fastestChef.name && c.ordersPrepared > 0;
+              fastestChef &&
+              c.name === fastestChef.name &&
+              c.ordersTimed > 0;
+            const hasTiming = c.ordersTimed > 0;
             return (
               <div
                 key={c.name + idx}
@@ -1190,18 +1224,26 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                     {c.name.charAt(0).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline justify-between gap-2 mb-0.5">
-                      <p className="text-sm font-bold text-gray-900 truncate">
+                    <div className="flex items-baseline justify-between gap-2 mb-0.5 flex-wrap">
+                      <p className="text-sm font-bold text-gray-900 truncate flex items-center gap-1.5">
                         {c.name}
                         {isFastest && (
-                          <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold tracking-wider uppercase">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold tracking-wider uppercase">
                             <Zap className="w-2.5 h-2.5" />
                             Fastest
                           </span>
                         )}
+                        {!c.attributed && (
+                          <span
+                            className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[9px] font-bold tracking-wider uppercase"
+                            title="Legacy orders from before chef tracking was enabled"
+                          >
+                            Legacy
+                          </span>
+                        )}
                       </p>
                       <p className="text-xs font-bold text-gray-900 shrink-0">
-                        {formatPrepTime(c.avgPrepMin)}
+                        {hasTiming ? formatPrepTime(c.avgPrepMin) : '—'}
                       </p>
                     </div>
                     <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
@@ -1210,7 +1252,7 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                         style={{ width: `${Math.min(100, Math.max(6, ordersPct))}%` }}
                       />
                     </div>
-                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-gray-500">
+                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-gray-500 flex-wrap gap-1">
                       <span>
                         <span className="font-semibold text-gray-700">
                           {c.ordersPrepared}
@@ -1222,8 +1264,9 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                         items
                       </span>
                       <span>
-                        Fast {formatPrepTime(c.fastestMin)} · Slow{' '}
-                        {formatPrepTime(c.slowestMin)}
+                        {hasTiming
+                          ? `Fast ${formatPrepTime(c.fastestMin)} · Slow ${formatPrepTime(c.slowestMin)}`
+                          : 'No prep-time recorded'}
                       </span>
                     </div>
                   </div>
@@ -1244,54 +1287,73 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
           <p className="text-[11px] font-bold tracking-wider text-gray-400 uppercase mb-2">
             Average prep time by chef (lower is better)
           </p>
-          <ResponsiveContainer width="100%" height={Math.max(220, chefs.length * 44)}>
-            <BarChart
-              data={chefs.map((c) => ({
-                name: c.name,
-                avg: Number(c.avgPrepMin.toFixed(2)),
-                orders: c.ordersPrepared,
-                revenue: c.totalRevenue,
-              }))}
-              layout="vertical"
-              margin={{ top: 5, right: 16, left: 4, bottom: 5 }}
-            >
-              <CartesianGrid stroke="#F1F5F9" strokeDasharray="3 3" horizontal={false} />
-              <XAxis
-                type="number"
-                tick={{ fontSize: 11, fill: '#94A3B8' }}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={(v) => `${Number(v).toFixed(0)}m`}
-                domain={[0, Math.ceil(maxAvg * 1.15)]}
-              />
-              <YAxis
-                dataKey="name"
-                type="category"
-                tick={{ fontSize: 12, fill: '#475569', fontWeight: 600 }}
-                axisLine={false}
-                tickLine={false}
-                width={90}
-              />
-              <RechartsTooltip
-                cursor={{ fill: '#FFF7ED' }}
-                contentStyle={{
-                  borderRadius: 12,
-                  border: '1px solid #E5E7EB',
-                  fontSize: 12,
-                }}
-                formatter={(value, key, payload) => {
-                  if (key === 'avg') return [`${value} min`, 'Avg prep'];
-                  return [value, key];
-                }}
-                labelFormatter={(label, payload) => {
-                  const row = payload?.[0]?.payload;
-                  if (!row) return label;
-                  return `${label} · ${row.orders} orders · ${fmt(row.revenue)}`;
-                }}
-              />
-              <Bar dataKey="avg" fill="#F97316" radius={[0, 6, 6, 0]} barSize={14} />
-            </BarChart>
-          </ResponsiveContainer>
+          {(() => {
+            const timed = chefs.filter((c) => c.ordersTimed > 0);
+            if (timed.length === 0) {
+              return (
+                <div className="h-[220px] flex flex-col items-center justify-center text-center text-sm text-gray-400 px-4">
+                  <Timer className="w-6 h-6 mb-2 text-gray-300" />
+                  No prep-time data yet for this period.
+                  <span className="text-[11px] text-gray-400 mt-1">
+                    The chart fills in as kitchen staff move orders from{' '}
+                    <span className="font-semibold">preparing</span> →{' '}
+                    <span className="font-semibold">ready</span> on the
+                    Kitchen Display.
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <ResponsiveContainer width="100%" height={Math.max(220, timed.length * 44)}>
+                <BarChart
+                  data={timed.map((c) => ({
+                    name: c.name,
+                    avg: Number(c.avgPrepMin.toFixed(2)),
+                    orders: c.ordersPrepared,
+                    revenue: c.totalRevenue,
+                  }))}
+                  layout="vertical"
+                  margin={{ top: 5, right: 16, left: 4, bottom: 5 }}
+                >
+                  <CartesianGrid stroke="#F1F5F9" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis
+                    type="number"
+                    tick={{ fontSize: 11, fill: '#94A3B8' }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `${Number(v).toFixed(0)}m`}
+                    domain={[0, Math.ceil(maxAvg * 1.15)]}
+                  />
+                  <YAxis
+                    dataKey="name"
+                    type="category"
+                    tick={{ fontSize: 12, fill: '#475569', fontWeight: 600 }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={90}
+                  />
+                  <RechartsTooltip
+                    cursor={{ fill: '#FFF7ED' }}
+                    contentStyle={{
+                      borderRadius: 12,
+                      border: '1px solid #E5E7EB',
+                      fontSize: 12,
+                    }}
+                    formatter={(value, key) => {
+                      if (key === 'avg') return [`${value} min`, 'Avg prep'];
+                      return [value, key];
+                    }}
+                    labelFormatter={(label, payload) => {
+                      const row = payload?.[0]?.payload;
+                      if (!row) return label;
+                      return `${label} · ${row.orders} orders · ${fmt(row.revenue)}`;
+                    }}
+                  />
+                  <Bar dataKey="avg" fill="#F97316" radius={[0, 6, 6, 0]} barSize={14} />
+                </BarChart>
+              </ResponsiveContainer>
+            );
+          })()}
         </div>
       </div>
     </div>

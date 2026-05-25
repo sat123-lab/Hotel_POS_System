@@ -1201,17 +1201,35 @@ app.put("/api/orders/:id", verifyToken, async (req, res) => {
       const order = mockOrders.find((o) => o.id === parseInt(req.params.id));
       if (order) {
         const { status, items, total } = req.body;
-        if (status) order.status = status;
+        const prevStatus = order.status;
+        if (status) {
+          order.status = status;
+
+          // Chef analytics — mirror the DB path for the in-memory mock
+          // store so a backend running without a database still records
+          // who started/finished an order and when.
+          const lowered = String(status).toLowerCase();
+          const prevLower = String(prevStatus || "").toLowerCase();
+          if (lowered === "preparing" && prevLower !== "preparing") {
+            if (!order.preparing_at) order.preparing_at = new Date().toISOString();
+            if (!order.chef_id && req.user?.id) order.chef_id = req.user.id;
+            if (!order.chef_name && req.user?.name) order.chef_name = req.user.name;
+          }
+          if (lowered === "ready" && prevLower !== "ready") {
+            if (!order.ready_at) order.ready_at = new Date().toISOString();
+            if (!order.chef_id && req.user?.id) order.chef_id = req.user.id;
+            if (!order.chef_name && req.user?.name) order.chef_name = req.user.name;
+          }
+        }
         if (total !== undefined) order.total = total;
         if (items && Array.isArray(items)) {
           order.items = items;
         }
-        
-        // Only emit socket event if status is changing to a different status
-        if (status) {
+
+        if (status && prevStatus !== status) {
           io.emit('order_status_updated', { orderId: req.params.id, status: status });
         }
-        
+
         return res.json({ message: "Order updated", order });
       }
       return res.status(404).json({ message: "Order not found" });
