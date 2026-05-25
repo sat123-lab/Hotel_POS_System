@@ -14,6 +14,10 @@ import { authFetch, getSocketUrl } from '../utils/api';
 import { io } from 'socket.io-client';
 import { getLocationSettingsForCountry } from '../utils/currency';
 import useCurrency from '../hooks/useCurrency';
+import {
+  canRoleAccessModule,
+  fetchPermissionsMatrixFromServer,
+} from '../utils/permissions';
 
 /* ===============================================================
    Kitchen Display — visual redesign only
@@ -36,6 +40,10 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
   useEffect(() => {
     fetchPermissions();
     fetchOrders();
+
+    // Make sure we have the latest Module Permissions Matrix the admin
+    // configured. Falls back silently to cached localStorage if offline.
+    fetchPermissionsMatrixFromServer().catch(() => {});
 
     const newSocket = io(getSocketUrl());
     setSocket(newSocket);
@@ -89,8 +97,28 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
     }
   };
 
+  /**
+   * Decide whether the current user can perform a kitchen action.
+   *
+   * Priority:
+   *   1. `admin` always passes.
+   *   2. Staff roles (manager / waiter / chef / cashier) pass if the
+   *      admin gave their role access to the `kitchen_display` module
+   *      in the Module Permissions Matrix. This is the same source of
+   *      truth that gates the sidebar and the route guards, so the
+   *      buttons stay in sync with what the admin actually configured.
+   *   3. Otherwise fall back to the legacy server-issued permission
+   *      codes (`mark_order_preparing`, `mark_order_ready`,
+   *      `confirm_order_delivery`) for backward compatibility with
+   *      franchise / sub-franchise / custom roles.
+   */
   const hasPermission = (perm) => {
-    if (userRole === 'admin') return true;
+    const role = String(userRole || '').toLowerCase();
+    if (role === 'admin') return true;
+    const staffRoles = ['manager', 'waiter', 'chef', 'cashier'];
+    if (staffRoles.includes(role) && canRoleAccessModule(role, 'kitchen_display')) {
+      return true;
+    }
     return permissions.includes('*') || permissions.includes(perm);
   };
 

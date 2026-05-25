@@ -1004,6 +1004,8 @@ function buildChefStats(orders) {
         totalRevenue: 0,
         itemsCooked: 0,
         prepDurationsMin: [],
+        estimatedDurationsMin: [], // best-effort fallback when proper
+        // preparing_at / ready_at are missing
       });
     }
     const c = byChef.get(key);
@@ -1019,6 +1021,20 @@ function buildChefStats(orders) {
       }
     } else if (prep && !ready && status === 'preparing') {
       c.inProgress += 1;
+    } else {
+      // Fallback when accurate prep-time data is missing (legacy orders
+      // or orders that skipped the KDS preparing→ready flow): estimate
+      // using `delivered_at − timestamp`. This is the full order
+      // lifecycle, so it's an upper bound, but it's still useful as a
+      // signal until staff start using the KDS properly.
+      const created = o.timestamp ? new Date(o.timestamp) : null;
+      const delivered = o.delivered_at ? new Date(o.delivered_at) : null;
+      if (created && delivered && delivered.getTime() > created.getTime()) {
+        const mins = (delivered.getTime() - created.getTime()) / 60000;
+        if (mins >= 0 && mins < 720) {
+          c.estimatedDurationsMin.push(mins);
+        }
+      }
     }
 
     // Every kitchen-touched order counts toward `ordersPrepared` even
@@ -1036,7 +1052,12 @@ function buildChefStats(orders) {
   });
 
   const chefs = Array.from(byChef.values()).map((c) => {
-    const durations = c.prepDurationsMin;
+    // Prefer accurate preparing_at→ready_at durations; only fall back
+    // to delivered_at−timestamp estimates when none are available.
+    const accurate = c.prepDurationsMin;
+    const estimated = c.estimatedDurationsMin;
+    const durations = accurate.length > 0 ? accurate : estimated;
+    const isEstimated = accurate.length === 0 && estimated.length > 0;
     const sum = durations.reduce((s, n) => s + n, 0);
     const avg = durations.length > 0 ? sum / durations.length : 0;
     return {
@@ -1051,6 +1072,7 @@ function buildChefStats(orders) {
       slowestMin: durations.length > 0 ? Math.max(...durations) : null,
       totalRevenue: c.totalRevenue,
       itemsCooked: c.itemsCooked,
+      estimated: isEstimated,
     };
   });
 
@@ -1242,8 +1264,17 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                           </span>
                         )}
                       </p>
-                      <p className="text-xs font-bold text-gray-900 shrink-0">
-                        {hasTiming ? formatPrepTime(c.avgPrepMin) : '—'}
+                      <p
+                        className="text-xs font-bold text-gray-900 shrink-0"
+                        title={
+                          c.estimated
+                            ? 'Estimated from total order time (created → delivered) because this order didn\'t go through the Kitchen Display preparing → ready flow.'
+                            : ''
+                        }
+                      >
+                        {hasTiming
+                          ? (c.estimated ? '≈ ' : '') + formatPrepTime(c.avgPrepMin)
+                          : '—'}
                       </p>
                     </div>
                     <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
@@ -1265,10 +1296,17 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                       </span>
                       <span>
                         {hasTiming
-                          ? `Fast ${formatPrepTime(c.fastestMin)} · Slow ${formatPrepTime(c.slowestMin)}`
+                          ? `${c.estimated ? 'Est.' : 'Fast'} ${formatPrepTime(c.fastestMin)} · ${c.estimated ? 'Est.' : 'Slow'} ${formatPrepTime(c.slowestMin)}`
                           : 'No prep-time recorded'}
                       </span>
                     </div>
+                    {c.estimated && (
+                      <p className="mt-1 text-[10px] text-gray-400 italic">
+                        Estimated from full order time — for precise data,
+                        use the Kitchen Display to mark orders Preparing →
+                        Ready.
+                      </p>
+                    )}
                   </div>
                 </div>
                 {c.inProgress > 0 && (
