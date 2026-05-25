@@ -1222,9 +1222,36 @@ app.put("/api/orders/:id", verifyToken, async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
     if (!(await assertOrderInScope(req, order, res))) return;
 
+    // Capture the previous status BEFORE we mutate it, so we can detect
+    // transitions (e.g. "pending → preparing") for chef analytics.
+    const prevStatusForChef = order.status;
+
     // Update order status for all orders including Takeaway
     if (status) {
       order.status = status;
+
+      // ----- Chef performance tracking ---------------------------------
+      // When a kitchen user moves an order to "preparing" for the first
+      // time, stamp who started it and when. When the same/another
+      // kitchen user marks it "ready", stamp ready_at so we can compute
+      // prep time (= ready_at - preparing_at) on the Reports page.
+      const lowered = String(status).toLowerCase();
+      const prevLower = String(prevStatusForChef || "").toLowerCase();
+
+      if (lowered === "preparing" && prevLower !== "preparing") {
+        if (!order.preparing_at) order.preparing_at = new Date();
+        if (!order.chef_id && req.user?.id) order.chef_id = req.user.id;
+        if (!order.chef_name && req.user?.name) order.chef_name = req.user.name;
+      }
+
+      if (lowered === "ready" && prevLower !== "ready") {
+        if (!order.ready_at) order.ready_at = new Date();
+        // If a chef went straight from pending → ready (rare, but legal
+        // through the KDS) capture them here too, so the analytics page
+        // doesn't drop the order.
+        if (!order.chef_id && req.user?.id) order.chef_id = req.user.id;
+        if (!order.chef_name && req.user?.name) order.chef_name = req.user.name;
+      }
     }
     if (total !== undefined) order.total = total;
     await order.save();
@@ -1243,12 +1270,11 @@ app.put("/api/orders/:id", verifyToken, async (req, res) => {
       }
     }
     
-    // Emit socket event for all orders when status is changing
-    if (status) {
-      const previousStatus = order.status;
-      if (previousStatus !== status) {
-        io.emit('order_status_updated', { orderId: id, status: status });
-      }
+    // Emit socket event for all orders when status is changing.
+    // (Use prevStatusForChef captured above; reading order.status here
+    // would be wrong since we already mutated it.)
+    if (status && prevStatusForChef !== status) {
+      io.emit('order_status_updated', { orderId: id, status: status });
     }
     const updatedOrder = await Order.findByPk(id, {
       include: [{ model: OrderItem, as: "items" }],

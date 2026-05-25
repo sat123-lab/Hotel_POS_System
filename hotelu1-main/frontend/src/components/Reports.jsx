@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { authFetch } from '../utils/api';
+import { authFetch, getSocketUrl } from '../utils/api';
+import { io } from 'socket.io-client';
 import {
   PieChart,
   Pie,
@@ -25,6 +26,10 @@ import {
   Download,
   Calendar,
   Filter,
+  ChefHat,
+  Timer,
+  Zap,
+  Award,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import useCurrency from '../hooks/useCurrency';
@@ -262,6 +267,53 @@ const Reports = ({ locationSettings }) => {
     fetchAll();
   }, [fetchAll]);
 
+  /* --------------- real-time updates (live chef performance) --------------- */
+  // When the user is viewing a range that includes "today", wire a socket
+  // to refetch the data whenever an order moves through the kitchen flow,
+  // and back it up with a 15s polling interval. For purely historical
+  // ranges (end date < today) we skip this — historical data doesn't change.
+  const includesToday = useMemo(() => {
+    return endDate >= todayIso;
+  }, [endDate, todayIso]);
+
+  const [liveConnected, setLiveConnected] = useState(false);
+
+  useEffect(() => {
+    if (!includesToday) {
+      setLiveConnected(false);
+      return undefined;
+    }
+
+    let socket;
+    try {
+      socket = io(getSocketUrl(), { transports: ['websocket', 'polling'] });
+      socket.on('connect', () => setLiveConnected(true));
+      socket.on('disconnect', () => setLiveConnected(false));
+      const refresh = () => fetchAll();
+      socket.on('order_created', refresh);
+      socket.on('order_status_updated', refresh);
+      socket.on('order_deleted', refresh);
+    } catch (e) {
+      console.warn('Reports socket connection failed:', e?.message || e);
+    }
+
+    const pollId = setInterval(fetchAll, 15000);
+
+    return () => {
+      try {
+        if (socket) {
+          socket.off('order_created');
+          socket.off('order_status_updated');
+          socket.off('order_deleted');
+          socket.disconnect();
+        }
+      } catch {
+        /* ignore */
+      }
+      clearInterval(pollId);
+    };
+  }, [includesToday, fetchAll]);
+
   /* --------------------------- quick ranges --------------------------- */
 
   const setQuickDateRange = (range) => {
@@ -316,6 +368,10 @@ const Reports = ({ locationSettings }) => {
 
   const maxTopRevenue = topItems.length > 0 ? topItems[0].revenue : 1;
 
+  /* --------------------------- chef performance --------------------------- */
+
+  const chefStats = useMemo(() => buildChefStats(ordersData), [ordersData]);
+
   /* --------------------------- export --------------------------- */
 
   const handleExport = () => {
@@ -356,6 +412,23 @@ const Reports = ({ locationSettings }) => {
       XLSX.utils.json_to_sheet(topItems),
       'TopItems'
     );
+
+    if (chefStats.chefs.length > 0) {
+      const chefRows = chefStats.chefs.map((c) => ({
+        Chef: c.name,
+        OrdersPrepared: c.ordersPrepared,
+        AvgPrepTimeMinutes: Number(c.avgPrepMin.toFixed(2)),
+        FastestMinutes: c.fastestMin != null ? Number(c.fastestMin.toFixed(2)) : '',
+        SlowestMinutes: c.slowestMin != null ? Number(c.slowestMin.toFixed(2)) : '',
+        TotalRevenueHandled: Number(c.totalRevenue.toFixed(2)),
+        ItemsCooked: c.itemsCooked,
+      }));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(chefRows),
+        'ChefPerformance'
+      );
+    }
 
     XLSX.writeFile(workbook, `reports_${startDate}_to_${endDate}.xlsx`);
   };
@@ -410,9 +483,32 @@ const Reports = ({ locationSettings }) => {
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-            Reports &amp; Analytics
-          </h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+              Reports &amp; Analytics
+            </h1>
+            {includesToday && (
+              <span
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase ${
+                  liveConnected
+                    ? 'bg-emerald-50 text-emerald-600'
+                    : 'bg-amber-50 text-amber-600'
+                }`}
+                title={
+                  liveConnected
+                    ? 'Receiving live updates from kitchen'
+                    : 'Auto-refreshing every 15 seconds'
+                }
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    liveConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                  }`}
+                />
+                {liveConnected ? 'Live' : 'Auto'}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-500 mt-1">Comprehensive business intelligence</p>
         </div>
 
@@ -692,6 +788,16 @@ const Reports = ({ locationSettings }) => {
         </ChartCard>
       </div>
 
+      {/* Chef Performance */}
+      <div className="mt-4">
+        <ChefPerformanceSection
+          stats={chefStats}
+          fmt={fmt}
+          isLoaded={isLoaded}
+          live={liveConnected && includesToday}
+        />
+      </div>
+
       <style>{`
         @keyframes slideUpFade {
           from { opacity: 0; transform: translateY(8px); }
@@ -841,6 +947,364 @@ const ChartCard = ({ title, children }) => (
   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
     <h3 className="text-base font-bold text-gray-900 mb-3">{title}</h3>
     {children}
+  </div>
+);
+
+/* ------------------------------------------------------------------ */
+/*  Chef performance — aggregation                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Given the raw orders for the selected date range, group by chef and
+ * compute the metrics we want to surface on the report:
+ *   - ordersPrepared (those with both preparing_at and ready_at)
+ *   - inProgress     (preparing_at but no ready_at yet)
+ *   - avgPrepMin     (mean of ready_at - preparing_at)
+ *   - fastestMin / slowestMin
+ *   - totalRevenue handled
+ *   - itemsCooked
+ * The fields `chef_id`, `chef_name`, `preparing_at`, `ready_at` are
+ * stamped server-side when the kitchen flips an order to "preparing"
+ * (and then to "ready").
+ */
+function buildChefStats(orders) {
+  const list = Array.isArray(orders) ? orders : [];
+  const byChef = new Map();
+
+  list.forEach((o) => {
+    const chefId = o.chef_id || o.chefId || null;
+    const chefName = (o.chef_name || o.chefName || '').trim();
+    if (!chefName && !chefId) return; // unattributed — skip
+
+    const key = chefId ? `id:${chefId}` : `name:${chefName.toLowerCase()}`;
+    if (!byChef.has(key)) {
+      byChef.set(key, {
+        id: chefId,
+        name: chefName || `Chef #${chefId}`,
+        ordersPrepared: 0,
+        inProgress: 0,
+        totalRevenue: 0,
+        itemsCooked: 0,
+        prepDurationsMin: [],
+      });
+    }
+    const c = byChef.get(key);
+
+    const prep = o.preparing_at ? new Date(o.preparing_at) : null;
+    const ready = o.ready_at ? new Date(o.ready_at) : null;
+
+    if (prep && ready && ready.getTime() > prep.getTime()) {
+      const mins = (ready.getTime() - prep.getTime()) / 60000;
+      // Sanity bounds: ignore anything > 12h (likely a forgotten order
+      // or a manual back-fill) so it doesn't skew the average.
+      if (mins >= 0 && mins < 720) {
+        c.prepDurationsMin.push(mins);
+        c.ordersPrepared += 1;
+      }
+    } else if (prep && !ready) {
+      c.inProgress += 1;
+    }
+
+    c.totalRevenue += Number(o.total) || 0;
+    c.itemsCooked += getOrderItemsArray(o).reduce(
+      (s, it) => s + getItemQuantity(it),
+      0
+    );
+  });
+
+  const chefs = Array.from(byChef.values()).map((c) => {
+    const durations = c.prepDurationsMin;
+    const sum = durations.reduce((s, n) => s + n, 0);
+    const avg = durations.length > 0 ? sum / durations.length : 0;
+    return {
+      id: c.id,
+      name: c.name,
+      ordersPrepared: c.ordersPrepared,
+      inProgress: c.inProgress,
+      avgPrepMin: avg,
+      fastestMin: durations.length > 0 ? Math.min(...durations) : null,
+      slowestMin: durations.length > 0 ? Math.max(...durations) : null,
+      totalRevenue: c.totalRevenue,
+      itemsCooked: c.itemsCooked,
+    };
+  });
+
+  // Sort: most productive first (most orders → fastest avg).
+  chefs.sort((a, b) => {
+    if (b.ordersPrepared !== a.ordersPrepared) {
+      return b.ordersPrepared - a.ordersPrepared;
+    }
+    return a.avgPrepMin - b.avgPrepMin;
+  });
+
+  const completed = chefs.filter((c) => c.ordersPrepared > 0);
+  const totalOrders = completed.reduce((s, c) => s + c.ordersPrepared, 0);
+  const totalDurations = completed.flatMap((c) =>
+    Array(c.ordersPrepared).fill(c.avgPrepMin)
+  );
+  const overallAvgMin =
+    totalDurations.length > 0
+      ? totalDurations.reduce((s, n) => s + n, 0) / totalDurations.length
+      : 0;
+
+  const fastestChef = completed
+    .slice()
+    .sort((a, b) => a.avgPrepMin - b.avgPrepMin)[0] || null;
+  const mostProductive = completed[0] || null;
+
+  return {
+    chefs,
+    totalOrders,
+    overallAvgMin,
+    fastestChef,
+    mostProductive,
+  };
+}
+
+const formatPrepTime = (mins) => {
+  if (mins == null || !Number.isFinite(mins) || mins <= 0) return '—';
+  if (mins < 1) return `${Math.round(mins * 60)}s`;
+  if (mins < 60) return `${mins.toFixed(1)} min`;
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins - h * 60);
+  return `${h}h ${m}m`;
+};
+
+/* ------------------------------------------------------------------ */
+/*  Chef performance — UI                                              */
+/* ------------------------------------------------------------------ */
+
+const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
+  const { chefs, totalOrders, overallAvgMin, fastestChef, mostProductive } = stats;
+
+  if (chefs.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="w-9 h-9 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
+              <ChefHat className="w-5 h-5" />
+            </span>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">Chef Performance</h3>
+              <p className="text-xs text-gray-500">
+                Prep-time analytics per kitchen staff member
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="h-32 flex flex-col items-center justify-center text-center text-sm text-gray-400">
+          <Timer className="w-6 h-6 mb-2 text-gray-300" />
+          No chef activity in this period yet.
+          <span className="text-[11px] text-gray-400 mt-1">
+            Stats appear as soon as kitchen staff start moving orders to
+            <span className="font-semibold"> preparing</span> and{' '}
+            <span className="font-semibold">ready</span>.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const maxAvg = Math.max(...chefs.map((c) => c.avgPrepMin || 0), 1);
+  const maxOrders = Math.max(...chefs.map((c) => c.ordersPrepared || 0), 1);
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <span className="w-9 h-9 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
+            <ChefHat className="w-5 h-5" />
+          </span>
+          <div>
+            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              Chef Performance
+              {live && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold tracking-wider uppercase">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Live
+                </span>
+              )}
+            </h3>
+            <p className="text-xs text-gray-500">
+              How long each cook took per order — lower is better
+            </p>
+          </div>
+        </div>
+
+        {/* Roll-up KPIs */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <MiniStat
+            Icon={Timer}
+            label="Avg prep time"
+            value={formatPrepTime(overallAvgMin)}
+            tint="text-blue-500 bg-blue-50"
+          />
+          <MiniStat
+            Icon={ChefHat}
+            label="Orders cooked"
+            value={totalOrders.toString()}
+            tint="text-orange-500 bg-orange-50"
+          />
+          {fastestChef && (
+            <MiniStat
+              Icon={Zap}
+              label="Fastest chef"
+              value={`${fastestChef.name.split(' ')[0]} · ${formatPrepTime(
+                fastestChef.avgPrepMin
+              )}`}
+              tint="text-emerald-500 bg-emerald-50"
+            />
+          )}
+          {mostProductive && (
+            <MiniStat
+              Icon={Award}
+              label="Most productive"
+              value={`${mostProductive.name.split(' ')[0]} · ${mostProductive.ordersPrepared}`}
+              tint="text-amber-500 bg-amber-50"
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Leaderboard */}
+        <div className="space-y-3">
+          {chefs.map((c, idx) => {
+            const ordersPct = (c.ordersPrepared / maxOrders) * 100;
+            const isFastest =
+              fastestChef && c.name === fastestChef.name && c.ordersPrepared > 0;
+            return (
+              <div
+                key={c.name + idx}
+                className="border border-gray-100 rounded-xl p-3 hover:border-orange-200 transition"
+                style={{
+                  animation: isLoaded
+                    ? `slideUpFade .35s ease-out ${idx * 40}ms both`
+                    : 'none',
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-400 to-orange-500 text-white text-sm font-bold flex items-center justify-center shrink-0">
+                    {c.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between gap-2 mb-0.5">
+                      <p className="text-sm font-bold text-gray-900 truncate">
+                        {c.name}
+                        {isFastest && (
+                          <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold tracking-wider uppercase">
+                            <Zap className="w-2.5 h-2.5" />
+                            Fastest
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs font-bold text-gray-900 shrink-0">
+                        {formatPrepTime(c.avgPrepMin)}
+                      </p>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-orange-400 to-orange-500 transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(6, ordersPct))}%` }}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-gray-500">
+                      <span>
+                        <span className="font-semibold text-gray-700">
+                          {c.ordersPrepared}
+                        </span>{' '}
+                        orders ·{' '}
+                        <span className="font-semibold text-gray-700">
+                          {c.itemsCooked}
+                        </span>{' '}
+                        items
+                      </span>
+                      <span>
+                        Fast {formatPrepTime(c.fastestMin)} · Slow{' '}
+                        {formatPrepTime(c.slowestMin)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                {c.inProgress > 0 && (
+                  <p className="mt-2 text-[10px] font-semibold tracking-wider uppercase text-blue-600 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                    {c.inProgress} order{c.inProgress > 1 ? 's' : ''} in progress
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Avg prep-time chart */}
+        <div className="border border-gray-100 rounded-xl p-3">
+          <p className="text-[11px] font-bold tracking-wider text-gray-400 uppercase mb-2">
+            Average prep time by chef (lower is better)
+          </p>
+          <ResponsiveContainer width="100%" height={Math.max(220, chefs.length * 44)}>
+            <BarChart
+              data={chefs.map((c) => ({
+                name: c.name,
+                avg: Number(c.avgPrepMin.toFixed(2)),
+                orders: c.ordersPrepared,
+                revenue: c.totalRevenue,
+              }))}
+              layout="vertical"
+              margin={{ top: 5, right: 16, left: 4, bottom: 5 }}
+            >
+              <CartesianGrid stroke="#F1F5F9" strokeDasharray="3 3" horizontal={false} />
+              <XAxis
+                type="number"
+                tick={{ fontSize: 11, fill: '#94A3B8' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => `${Number(v).toFixed(0)}m`}
+                domain={[0, Math.ceil(maxAvg * 1.15)]}
+              />
+              <YAxis
+                dataKey="name"
+                type="category"
+                tick={{ fontSize: 12, fill: '#475569', fontWeight: 600 }}
+                axisLine={false}
+                tickLine={false}
+                width={90}
+              />
+              <RechartsTooltip
+                cursor={{ fill: '#FFF7ED' }}
+                contentStyle={{
+                  borderRadius: 12,
+                  border: '1px solid #E5E7EB',
+                  fontSize: 12,
+                }}
+                formatter={(value, key, payload) => {
+                  if (key === 'avg') return [`${value} min`, 'Avg prep'];
+                  return [value, key];
+                }}
+                labelFormatter={(label, payload) => {
+                  const row = payload?.[0]?.payload;
+                  if (!row) return label;
+                  return `${label} · ${row.orders} orders · ${fmt(row.revenue)}`;
+                }}
+              />
+              <Bar dataKey="avg" fill="#F97316" radius={[0, 6, 6, 0]} barSize={14} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MiniStat = ({ Icon, label, value, tint }) => (
+  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-50 border border-gray-100">
+    <span className={`w-6 h-6 rounded-md flex items-center justify-center ${tint}`}>
+      <Icon className="w-3.5 h-3.5" />
+    </span>
+    <span className="text-[11px] text-gray-500 font-semibold">{label}</span>
+    <span className="text-xs text-gray-900 font-bold">{value}</span>
   </div>
 );
 

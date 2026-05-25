@@ -23,6 +23,37 @@ async function runSafeMigrations(sequelize, models = {}) {
         });
         console.log("Migration: added orders.subfranchise_id");
       }
+
+      // Chef performance columns — added incrementally so existing
+      // databases pick them up on the next boot without losing data.
+      if (!ordersDesc.preparing_at) {
+        await qi.addColumn("orders", "preparing_at", {
+          type: DataTypes.DATE,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.preparing_at");
+      }
+      if (!ordersDesc.ready_at) {
+        await qi.addColumn("orders", "ready_at", {
+          type: DataTypes.DATE,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.ready_at");
+      }
+      if (!ordersDesc.chef_id) {
+        await qi.addColumn("orders", "chef_id", {
+          type: DataTypes.INTEGER,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.chef_id");
+      }
+      if (!ordersDesc.chef_name) {
+        await qi.addColumn("orders", "chef_name", {
+          type: DataTypes.STRING,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.chef_name");
+      }
     }
 
     if (tableNames.includes("users")) {

@@ -27,6 +27,15 @@ const Order = sequelize.define(
     bill_generated: { type: DataTypes.BOOLEAN, defaultValue: false },
     payment_method: { type: DataTypes.STRING, allowNull: true },
     subfranchise_id: { type: DataTypes.INTEGER, allowNull: true },
+
+    // Chef performance tracking — when a kitchen user moves an order
+    // to `preparing` we stamp `preparing_at` + `chef_id` + `chef_name`,
+    // and when they move it to `ready` we stamp `ready_at`. The Reports
+    // page uses these to compute per-chef prep-time analytics.
+    preparing_at: { type: DataTypes.DATE, allowNull: true },
+    ready_at: { type: DataTypes.DATE, allowNull: true },
+    chef_id: { type: DataTypes.INTEGER, allowNull: true },
+    chef_name: { type: DataTypes.STRING, allowNull: true },
   },
   {
     tableName: "orders",
