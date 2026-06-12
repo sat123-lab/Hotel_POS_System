@@ -238,7 +238,9 @@ const UserManagement = ({ token }) => {
     password: '',
     name: '',
     role: 'waiter',
+    subfranchise_id: '',
   });
+  const [branches, setBranches] = useState([]);
 
   const [matrix, setMatrix] = useState(DEFAULT_ROLE_MATRIX);
   const [dirty, setDirty] = useState(false);
@@ -246,8 +248,27 @@ const UserManagement = ({ token }) => {
   /* ------------------------------ data ------------------------------ */
   useEffect(() => {
     fetchUsers();
+    fetchBranches();
     // eslint-disable-next-line
   }, [token]);
+
+  const fetchBranches = async () => {
+    try {
+      const API_URL = getAPI_URL();
+      const response = await fetch(`${API_URL}/api/subfranchises`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setBranches(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      /* admin may not have franchise access in demo — ignore */
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => setIsLoaded(true), 60);
@@ -281,7 +302,13 @@ const UserManagement = ({ token }) => {
 
   const openCreateModal = () => {
     setEditingId(null);
-    setFormData({ username: '', password: '', name: '', role: 'waiter' });
+    setFormData({
+      username: '',
+      password: '',
+      name: '',
+      role: 'waiter',
+      subfranchise_id: '',
+    });
     setShowUserModal(true);
   };
 
@@ -291,6 +318,8 @@ const UserManagement = ({ token }) => {
       password: '',
       name: user.name,
       role: user.role,
+      subfranchise_id:
+        user.subfranchise_id != null ? String(user.subfranchise_id) : '',
     });
     setEditingId(user.id);
     setShowUserModal(true);
@@ -299,7 +328,27 @@ const UserManagement = ({ token }) => {
   const closeUserModal = () => {
     setShowUserModal(false);
     setEditingId(null);
-    setFormData({ username: '', password: '', name: '', role: 'waiter' });
+    setFormData({
+      username: '',
+      password: '',
+      name: '',
+      role: 'waiter',
+      subfranchise_id: '',
+    });
+  };
+
+  const buildUserPayload = () => {
+    const subfranchise_id =
+      formData.subfranchise_id !== '' && formData.subfranchise_id != null
+        ? Number(formData.subfranchise_id)
+        : null;
+    return {
+      username: formData.username,
+      name: formData.name,
+      role: formData.role,
+      subfranchise_id,
+      ...(formData.password ? { password: formData.password } : {}),
+    };
   };
 
   const handleSubmit = async (e) => {
@@ -331,14 +380,7 @@ const UserManagement = ({ token }) => {
         ? `${API_URL}/api/users/${editingId}`
         : `${API_URL}/api/users`;
       const method = editingId ? 'PUT' : 'POST';
-      const body = editingId
-        ? {
-            username: formData.username,
-            name: formData.name,
-            role: formData.role,
-            ...(formData.password && { password: formData.password }),
-          }
-        : formData;
+      const body = buildUserPayload();
       const response = await fetch(url, {
         method,
         headers: {
@@ -582,6 +624,7 @@ const UserManagement = ({ token }) => {
         <UserFormModal
           editingId={editingId}
           formData={formData}
+          branches={branches}
           onChange={handleInputChange}
           onSubmit={handleSubmit}
           onClose={closeUserModal}
@@ -901,7 +944,14 @@ const MatrixTab = ({ matrix, coverage, onToggle }) => (
 /*  User form modal                                                    */
 /* ------------------------------------------------------------------ */
 
-const UserFormModal = ({ editingId, formData, onChange, onSubmit, onClose }) => (
+const UserFormModal = ({
+  editingId,
+  formData,
+  branches,
+  onChange,
+  onSubmit,
+  onClose,
+}) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-modal-in">
       <div className="flex items-center justify-between mb-4">
@@ -958,6 +1008,32 @@ const UserFormModal = ({ editingId, formData, onChange, onSubmit, onClose }) => 
             ))}
           </select>
         </div>
+
+        {formData.role !== 'admin' && (
+          <div>
+            <label className="text-xs font-semibold text-gray-600 mb-1.5 block">
+              Restaurant / Branch
+            </label>
+            <select
+              name="subfranchise_id"
+              value={formData.subfranchise_id}
+              onChange={onChange}
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
+            >
+              <option value="">Main Branch / HQ (no branch)</option>
+              {branches.map((b) => (
+                <option key={b.id} value={String(b.id)}>
+                  {b.name}
+                  {b.code ? ` (${b.code})` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-gray-500 mt-1.5">
+              Assign a branch so this login only sees that restaurant&apos;s orders,
+              dashboard and kitchen display.
+            </p>
+          </div>
+        )}
 
         <div className="flex gap-3 pt-2">
           <button

@@ -539,6 +539,10 @@ async function getFranchiseLocationIds(user) {
 }
 
 async function resolveOrderSubFranchiseId(req, bodySubfranchiseId) {
+  // Branch-assigned staff always stamp orders to their restaurant.
+  if (isBranchAssignedStaff(req.user)) {
+    return Number(req.user.subfranchise_id);
+  }
   if (req.user?.role === "subfranchise" && req.user.subfranchise_id != null) {
     return Number(req.user.subfranchise_id);
   }
@@ -552,68 +556,156 @@ async function resolveOrderSubFranchiseId(req, bodySubfranchiseId) {
     return requested;
   }
   if (bodySubfranchiseId != null) return Number(bodySubfranchiseId);
+  // Main-branch HQ staff (no subfranchise_id) → HQ orders only.
+  if (req.user && isMainBranchStaff(req.user.role)) {
+    return null;
+  }
   if (req.user?.subfranchise_id != null) return Number(req.user.subfranchise_id);
   return null;
 }
 
+const BRANCH_STAFF_ROLES = ["manager", "waiter", "chef", "cashier"];
+
 function isMainBranchStaff(role) {
-  return role && ["admin", "manager", "waiter", "chef"].includes(role);
+  return role && ["admin", "manager", "waiter", "chef", "cashier"].includes(role);
 }
 
-/** Apply order list filters: main branch vs franchise locations stay separate. */
-async function applyOrderScopeToWhere(whereClause, req, query = {}) {
-  const user = req?.user;
+function isBranchAssignedStaff(user) {
+  return (
+    user &&
+    BRANCH_STAFF_ROLES.includes(String(user.role || "").toLowerCase()) &&
+    user.subfranchise_id != null
+  );
+}
+
+/**
+ * Resolve which restaurant/branch rows a login may see.
+ *   admin        → all rows (no filter)
+ *   franchise    → owned franchise locations
+ *   subfranchise → single linked location
+ *   staff w/ subfranchise_id → that location only
+ *   main-branch staff (no subfranchise_id) → HQ rows only (subfranchise_id IS NULL)
+ */
+async function getBranchScopeForUser(user, query = {}) {
   if (!user) {
-    whereClause.subfranchise_id = { [Op.is]: null };
-    return whereClause;
+    return { type: "main" };
+  }
+  if (user.role === "admin") {
+    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
+      return { type: "branch", id: Number(query.subfranchise_id) };
+    }
+    if (query.scope === "main") {
+      return { type: "main" };
+    }
+    return { type: "all" };
   }
   if (user.role === "subfranchise" && user.subfranchise_id != null) {
-    whereClause.subfranchise_id = user.subfranchise_id;
-    return whereClause;
+    return { type: "branch", id: Number(user.subfranchise_id) };
   }
   if (user.role === "franchise") {
     const locIds = await getFranchiseLocationIds(user);
-    whereClause.subfranchise_id =
-      locIds.length > 0 ? { [Op.in]: locIds } : -1;
-    return whereClause;
+    return { type: "branches", ids: locIds.map(Number) };
+  }
+  if (isBranchAssignedStaff(user)) {
+    return { type: "branch", id: Number(user.subfranchise_id) };
   }
   if (isMainBranchStaff(user.role)) {
-    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
-      whereClause.subfranchise_id = query.subfranchise_id;
-    } else if (query.scope !== "all") {
-      whereClause.subfranchise_id = { [Op.is]: null };
-    }
+    return { type: "main" };
+  }
+  return { type: "all" };
+}
+
+async function loadBranchMeta(subfranchiseId) {
+  if (subfranchiseId == null) {
+    return {
+      id: null,
+      name: "Main Branch / Headquarters",
+      code: "HQ",
+      city: null,
+    };
+  }
+  if (!dbConnected) {
+    const row = mockSubFranchises.find(
+      (s) => Number(s.id) === Number(subfranchiseId)
+    );
+    return row
+      ? {
+          id: row.id,
+          name: row.name,
+          code: row.code,
+          city: row.city,
+        }
+      : { id: subfranchiseId, name: `Branch #${subfranchiseId}`, code: null };
+  }
+  const row = await SubFranchise.findByPk(subfranchiseId);
+  if (!row) {
+    return { id: subfranchiseId, name: `Branch #${subfranchiseId}`, code: null };
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    code: row.code,
+    city: row.city,
+  };
+}
+
+/** Apply order list filters: each restaurant login sees only its own orders. */
+async function applyOrderScopeToWhere(whereClause, req, query = {}) {
+  const scope = await getBranchScopeForUser(req?.user, query);
+  if (scope.type === "all") {
+    return whereClause;
+  }
+  if (scope.type === "main") {
+    whereClause.subfranchise_id = { [Op.is]: null };
+    return whereClause;
+  }
+  if (scope.type === "branch") {
+    whereClause.subfranchise_id = scope.id;
+    return whereClause;
+  }
+  if (scope.type === "branches") {
+    whereClause.subfranchise_id =
+      scope.ids.length > 0 ? { [Op.in]: scope.ids } : -1;
+    return whereClause;
   }
   return whereClause;
 }
 
 async function assertOrderInScope(req, order, res) {
   if (!req.user) return true;
+  if (req.user.role === "admin") return true;
+
   const oid = order.subfranchise_id;
-  if (req.user.role === "subfranchise") {
-    if (Number(oid) !== Number(req.user.subfranchise_id)) {
-      res.status(403).json({ message: "Order not in your branch scope" });
-      return false;
-    }
-    return true;
-  }
-  if (req.user.role === "franchise") {
-    const locIds = await getFranchiseLocationIds(req.user);
-    if (!locIds.length || !locIds.includes(Number(oid))) {
-      res.status(403).json({ message: "Order not in your franchise scope" });
-      return false;
-    }
-    return true;
-  }
-  if (isMainBranchStaff(req.user.role)) {
+  const scope = await getBranchScopeForUser(req.user);
+
+  if (scope.type === "all") return true;
+
+  if (scope.type === "main") {
     if (oid != null) {
       res.status(403).json({
-        message: "This order belongs to a franchise location, not main branch",
+        message: "This order belongs to another restaurant branch",
       });
       return false;
     }
     return true;
   }
+
+  if (scope.type === "branch") {
+    if (Number(oid) !== Number(scope.id)) {
+      res.status(403).json({ message: "Order not in your restaurant scope" });
+      return false;
+    }
+    return true;
+  }
+
+  if (scope.type === "branches") {
+    if (!scope.ids.length || !scope.ids.includes(Number(oid))) {
+      res.status(403).json({ message: "Order not in your franchise scope" });
+      return false;
+    }
+    return true;
+  }
+
   return true;
 }
 
@@ -741,14 +833,26 @@ app.post("/api/login", async (req, res) => {
           }
           
           if (passwordMatch) {
+            const branch = await loadBranchMeta(user.subfranchise_id);
             const userData = {
               id: user.id,
               username: user.username,
               role: user.role,
               name: user.name,
               subfranchise_id: user.subfranchise_id || null,
+              branch,
             };
-            const token = jwt.sign(userData, JWT_SECRET, { expiresIn: "24h" });
+            const token = jwt.sign(
+              {
+                id: user.id,
+                username: user.username,
+                role: user.role,
+                name: user.name,
+                subfranchise_id: user.subfranchise_id || null,
+              },
+              JWT_SECRET,
+              { expiresIn: "24h" }
+            );
             console.log("Login successful with database user:", username);
             return res.json({
               success: true,
@@ -783,12 +887,26 @@ app.post("/api/login", async (req, res) => {
     // Only use mockUsers fallback when database is NOT connected
     const mockUser = mockUsers.find(u => u.username === username);
     if (mockUser && mockUser.password === password) {
+      const branch = await loadBranchMeta(mockUser.subfranchise_id || null);
       const userData = {
+        id: mockUser.id,
         username: mockUser.username,
         role: mockUser.role,
         name: mockUser.name,
+        subfranchise_id: mockUser.subfranchise_id || null,
+        branch,
       };
-      const token = jwt.sign(userData, JWT_SECRET, { expiresIn: "24h" });
+      const token = jwt.sign(
+        {
+          id: mockUser.id,
+          username: mockUser.username,
+          role: mockUser.role,
+          name: mockUser.name,
+          subfranchise_id: mockUser.subfranchise_id || null,
+        },
+        JWT_SECRET,
+        { expiresIn: "24h" }
+      );
       console.log("Login successful with mock user:", username);
       return res.json({
         success: true,
@@ -810,6 +928,46 @@ app.post("/api/login", async (req, res) => {
       message: "Login error", 
       error: err.message 
     });
+  }
+});
+
+/** Current login context — which restaurant/branch this session belongs to. */
+app.get("/api/me/context", verifyToken, async (req, res) => {
+  try {
+    const scope = await getBranchScopeForUser(req.user);
+    let branch = null;
+    if (scope.type === "branch") {
+      branch = await loadBranchMeta(scope.id);
+    } else if (scope.type === "main") {
+      branch = await loadBranchMeta(null);
+    } else if (scope.type === "all" && req.user.role === "admin") {
+      branch = {
+        id: null,
+        name: "All Restaurants",
+        code: "ALL",
+        city: null,
+      };
+    } else if (scope.type === "branches") {
+      branch = {
+        id: null,
+        name: "Franchise Locations",
+        code: "FR",
+        city: `${scope.ids.length} location(s)`,
+      };
+    }
+    res.json({
+      user: {
+        id: req.user.id,
+        username: req.user.username,
+        role: req.user.role,
+        name: req.user.name,
+        subfranchise_id: req.user.subfranchise_id || null,
+      },
+      scope: scope.type,
+      branch,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -941,7 +1099,23 @@ function scopeOrdersForUser(orders, user, query = {}) {
   if (!user) {
     return orders.filter((o) => o.subfranchise_id == null);
   }
+  if (user.role === "admin") {
+    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
+      return orders.filter(
+        (o) => Number(o.subfranchise_id) === Number(query.subfranchise_id)
+      );
+    }
+    if (query.scope === "main") {
+      return orders.filter((o) => o.subfranchise_id == null);
+    }
+    return orders;
+  }
   if (user?.role === "subfranchise" && user.subfranchise_id != null) {
+    return orders.filter(
+      (o) => Number(o.subfranchise_id) === Number(user.subfranchise_id)
+    );
+  }
+  if (isBranchAssignedStaff(user)) {
     return orders.filter(
       (o) => Number(o.subfranchise_id) === Number(user.subfranchise_id)
     );
@@ -955,12 +1129,6 @@ function scopeOrdersForUser(orders, user, query = {}) {
     return orders.filter((o) => locIds.has(Number(o.subfranchise_id)));
   }
   if (isMainBranchStaff(user.role)) {
-    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
-      return orders.filter(
-        (o) => Number(o.subfranchise_id) === Number(query.subfranchise_id)
-      );
-    }
-    if (query.scope === "all") return orders;
     return orders.filter((o) => o.subfranchise_id == null);
   }
   return orders;
@@ -1123,9 +1291,6 @@ app.post("/api/orders", optionalToken, async (req, res) => {
       req,
       subfranchise_id
     );
-    if (req.user && isMainBranchStaff(req.user.role)) {
-      linkedSubFranchiseId = null;
-    }
     if (req.user?.role === "franchise") {
       const locIds = await getFranchiseLocationIds(req.user);
       if (locIds.length === 0) {
@@ -1973,6 +2138,10 @@ app.post("/api/users", verifyToken, async (req, res) => {
         password: password, // Store plain text for demo
         role,
         name,
+        subfranchise_id:
+          req.body.subfranchise_id != null && req.body.subfranchise_id !== ""
+            ? Number(req.body.subfranchise_id)
+            : null,
       };
       mockUsers.push(newUser);
 
@@ -1997,15 +2166,19 @@ app.post("/api/users", verifyToken, async (req, res) => {
 
     const { subfranchise_id: linkLocationId } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
+    const branchId =
+      linkLocationId != null && linkLocationId !== ""
+        ? Number(linkLocationId)
+        : null;
     const user = await User.create({
       username,
       password: hashedPassword,
       role,
       name,
       subfranchise_id:
-        linkLocationId && (role === "franchise" || role === "subfranchise")
-          ? linkLocationId
-          : null,
+        role === "admin"
+          ? null
+          : branchId,
     });
 
     if (role === "franchise" && linkLocationId) {

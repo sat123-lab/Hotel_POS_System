@@ -31,6 +31,7 @@ import {
   fetchPermissionsMatrixFromServer,
   PERMISSIONS_UPDATED_EVENT,
 } from '../utils/permissions';
+import { getBranchLabel, getBranchSubLabel, isAdminUser } from '../utils/branchScope';
 
 const navIconClass = (active) =>
   `w-5 h-5 ${active ? 'text-orange-500' : 'text-gray-400 group-hover:text-orange-500'}`;
@@ -233,21 +234,26 @@ const Sidebar = ({
           </div>
         </div>
 
-        {/* Branch selector */}
+        {/* Branch selector — shows the restaurant this login belongs to */}
         <div className="px-4">
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border border-orange-100 bg-orange-50/40 hover:bg-orange-50 transition">
-            <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-500 flex items-center justify-center">
+          <div className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border border-orange-100 bg-orange-50/40">
+            <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-500 flex items-center justify-center shrink-0">
               <Store className="w-4 h-4" />
             </div>
             <div className="flex-1 text-left min-w-0">
-              <p className="text-sm font-semibold text-gray-900 leading-tight">Restaurant 1</p>
-              <p className="text-[11px] text-gray-500 leading-tight">Main Branch</p>
+              <p className="text-sm font-semibold text-gray-900 leading-tight truncate">
+                {getBranchLabel(currentUser)}
+              </p>
+              <p className="text-[11px] text-gray-500 leading-tight truncate">
+                {isAdminUser(currentUser)
+                  ? getBranchSubLabel(currentUser)
+                  : getBranchSubLabel(currentUser)}
+              </p>
               <p className="text-[11px] text-emerald-500 font-semibold flex items-center gap-1 mt-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Online
               </p>
             </div>
-            <ChevronDown className="w-4 h-4 text-gray-400" />
-          </button>
+          </div>
         </div>
 
         {/* Country selector (kept for non-franchise users) */}

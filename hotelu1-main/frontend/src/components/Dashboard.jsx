@@ -17,6 +17,7 @@ import {
   Utensils,
   ShoppingBag,
   QrCode,
+  Building2,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -35,6 +36,7 @@ import {
 import { io } from 'socket.io-client';
 import { authFetch, getSocketUrl } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
+import { getBranchLabel, isAdminUser } from '../utils/branchScope';
 import DatePickerButton, {
   getTodayLocalDate,
   addDaysToIso,
@@ -188,6 +190,13 @@ const TYPE_LABEL = { DINE_IN: 'Dine-In', TAKEAWAY: 'Takeaway', QR_CODE: 'QR Orde
 const Dashboard = ({ locationSettings }) => {
   const navigate = useNavigate();
   const { format: fmt } = useCurrency(locationSettings);
+  const currentUser = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null');
+    } catch {
+      return null;
+    }
+  }, []);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0); // re-renders "X min ago" labels
@@ -471,16 +480,33 @@ const Dashboard = ({ locationSettings }) => {
       {/* ===== Page header ===== */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Dashboard</h1>
+            {currentUser && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-100 text-[11px] font-bold">
+                <Building2 className="w-3.5 h-3.5" />
+                {getBranchLabel(currentUser)}
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-500 mt-1">
-            {isViewingToday
-              ? "Welcome back! Here's what's happening today."
-              : `Showing data for ${viewDate.toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}.`}
+            {isAdminUser(currentUser)
+              ? isViewingToday
+                ? "Full overview — all restaurants and branches."
+                : `All locations · ${viewDate.toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}`
+              : isViewingToday
+                ? `Monitoring ${getBranchLabel(currentUser)} only.`
+                : `${getBranchLabel(currentUser)} · ${viewDate.toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}`}
           </p>
                         </div>
         <div className="flex items-center gap-2">
