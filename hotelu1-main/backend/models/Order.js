@@ -27,6 +27,8 @@ const Order = sequelize.define(
     bill_generated: { type: DataTypes.BOOLEAN, defaultValue: false },
     payment_method: { type: DataTypes.STRING, allowNull: true },
     subfranchise_id: { type: DataTypes.INTEGER, allowNull: true },
+    // Display sequence per restaurant branch (1, 2, 3… resets per franchise).
+    branch_order_number: { type: DataTypes.INTEGER, allowNull: true },
 
     // Chef performance tracking — when a kitchen user moves an order
     // to `preparing` we stamp `preparing_at` + `chef_id` + `chef_name`,

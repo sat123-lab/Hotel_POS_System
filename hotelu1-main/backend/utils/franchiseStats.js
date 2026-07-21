@@ -69,6 +69,7 @@ function enrichSubFranchise(sf, orders, loginUser = null) {
     ...base,
     ...stats,
     loginUsername: loginUser?.username || null,
+    loginUserId: loginUser?.id || null,
   };
 }
 

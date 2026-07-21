@@ -93,6 +93,28 @@ async function runSafeMigrations(sequelize, models = {}) {
         });
         console.log("Migration: added orders.delivery_address");
       }
+      if (!ordersDesc.branch_order_number) {
+        await qi.addColumn("orders", "branch_order_number", {
+          type: DataTypes.INTEGER,
+          allowNull: true,
+        });
+        console.log("Migration: added orders.branch_order_number");
+        const [rows] = await sequelize.query(
+          "SELECT id, subfranchise_id FROM orders ORDER BY id ASC"
+        );
+        const counters = new Map();
+        for (const row of rows) {
+          const key =
+            row.subfranchise_id != null ? String(row.subfranchise_id) : "hq";
+          const next = (counters.get(key) || 0) + 1;
+          counters.set(key, next);
+          await sequelize.query(
+            "UPDATE orders SET branch_order_number = ? WHERE id = ?",
+            { replacements: [next, row.id] }
+          );
+        }
+        console.log("Migration: backfilled orders.branch_order_number");
+      }
     }
 
     if (tableNames.includes("users")) {

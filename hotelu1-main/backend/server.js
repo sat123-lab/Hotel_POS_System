@@ -454,7 +454,7 @@ async function startServer() {
     await runSafeMigrations(sequelize, { SubFranchise });
     await UserPermission.sync();
     console.log("Database synchronized successfully");
-
+    
     dbConnected = true;
     
     // Create or reset demo users to ensure default passwords work
@@ -539,6 +539,25 @@ async function getFranchiseLocationIds(user) {
 }
 
 async function resolveOrderSubFranchiseId(req, bodySubfranchiseId) {
+  const raw =
+    bodySubfranchiseId ??
+    req.body?.branchId ??
+    req.body?.branch_id ??
+    null;
+  const bodyId =
+    raw != null && raw !== "" && !Number.isNaN(Number(raw))
+      ? Number(raw)
+      : null;
+
+  async function isValidBranchId(id) {
+    if (id == null || Number.isNaN(id)) return false;
+    if (!dbConnected) {
+      return mockSubFranchises.some((s) => Number(s.id) === Number(id));
+    }
+    const row = await SubFranchise.findByPk(id);
+    return !!row;
+  }
+
   // Branch-assigned staff always stamp orders to their restaurant.
   if (isBranchAssignedStaff(req.user)) {
     return Number(req.user.subfranchise_id);
@@ -549,13 +568,13 @@ async function resolveOrderSubFranchiseId(req, bodySubfranchiseId) {
   if (req.user?.role === "franchise") {
     const locIds = await getFranchiseLocationIds(req.user);
     if (locIds.length === 0) return null;
-    const requested =
-      bodySubfranchiseId != null ? Number(bodySubfranchiseId) : null;
-    if (requested != null && locIds.includes(requested)) return requested;
+    if (bodyId != null && locIds.includes(bodyId)) return bodyId;
     if (locIds.length === 1) return locIds[0];
-    return requested;
+    return null;
   }
-  if (bodySubfranchiseId != null) return Number(bodySubfranchiseId);
+  if (bodyId != null && (await isValidBranchId(bodyId))) {
+    return bodyId;
+  }
   // Main-branch HQ staff (no subfranchise_id) → HQ orders only.
   if (req.user && isMainBranchStaff(req.user.role)) {
     return null;
@@ -565,6 +584,70 @@ async function resolveOrderSubFranchiseId(req, bodySubfranchiseId) {
 }
 
 const BRANCH_STAFF_ROLES = ["manager", "waiter", "chef", "cashier"];
+const FRANCHISE_STAFF_ROLES = ["manager", "waiter", "chef", "cashier"];
+const FRANCHISE_MANAGER_ROLES = ["admin", "franchise", "subfranchise"];
+
+function canManageFranchiseUsers(req) {
+  return FRANCHISE_MANAGER_ROLES.includes(req.user?.role);
+}
+
+async function getManageableBranchIds(req) {
+  if (!req.user || req.user.role === "admin") return null;
+  if (req.user.role === "subfranchise" && req.user.subfranchise_id != null) {
+    return [Number(req.user.subfranchise_id)];
+  }
+  if (req.user.role === "franchise") {
+    return (await getFranchiseLocationIds(req.user)).map(Number);
+  }
+  return [];
+}
+
+async function resolveManagedUserBranchId(req, body = {}) {
+  if (req.user.role === "admin") {
+    const raw = body.subfranchise_id;
+    return raw != null && raw !== "" ? Number(raw) : null;
+  }
+  if (req.user.role === "subfranchise") {
+    return Number(req.user.subfranchise_id);
+  }
+  if (req.user.role === "franchise") {
+    const ids = await getManageableBranchIds(req);
+    const requested =
+      body.subfranchise_id != null && body.subfranchise_id !== ""
+        ? Number(body.subfranchise_id)
+        : null;
+    if (requested != null && ids.includes(requested)) return requested;
+    if (ids.length === 1) return ids[0];
+    return requested;
+  }
+  return null;
+}
+
+function roleAllowedForCreator(creatorRole, targetRole) {
+  if (creatorRole === "admin") return true;
+  if (["franchise", "subfranchise"].includes(creatorRole)) {
+    return FRANCHISE_STAFF_ROLES.includes(targetRole);
+  }
+  return false;
+}
+
+async function userInManageScope(req, userRow) {
+  if (req.user.role === "admin") return true;
+  const ids = await getManageableBranchIds(req);
+  if (!ids || ids.length === 0) return false;
+  if (["admin", "franchise"].includes(userRow.role)) return false;
+  if (userRow.subfranchise_id == null) return false;
+  return ids.includes(Number(userRow.subfranchise_id));
+}
+
+async function filterUsersForManager(req, users) {
+  if (req.user.role === "admin") return users;
+  const filtered = [];
+  for (const u of users) {
+    if (await userInManageScope(req, u)) filtered.push(u);
+  }
+  return filtered;
+}
 
 function isMainBranchStaff(role) {
   return role && ["admin", "manager", "waiter", "chef", "cashier"].includes(role);
@@ -594,13 +677,17 @@ async function getBranchScopeForUser(user, query = {}) {
     if (query.subfranchise_id != null && query.subfranchise_id !== "") {
       return { type: "branch", id: Number(query.subfranchise_id) };
     }
-    if (query.scope === "main") {
-      return { type: "main" };
+    if (query.scope === "all") {
+      return { type: "all" };
     }
-    return { type: "all" };
+    // Default: HQ / main branch only — franchise orders stay separate.
+    return { type: "main" };
   }
-  if (user.role === "subfranchise" && user.subfranchise_id != null) {
-    return { type: "branch", id: Number(user.subfranchise_id) };
+  if (user.role === "subfranchise") {
+    if (user.subfranchise_id != null) {
+      return { type: "branch", id: Number(user.subfranchise_id) };
+    }
+    return { type: "branch", id: -1 };
   }
   if (user.role === "franchise") {
     const locIds = await getFranchiseLocationIds(user);
@@ -612,7 +699,7 @@ async function getBranchScopeForUser(user, query = {}) {
   if (isMainBranchStaff(user.role)) {
     return { type: "main" };
   }
-  return { type: "all" };
+  return { type: "main" };
 }
 
 async function loadBranchMeta(subfranchiseId) {
@@ -651,7 +738,16 @@ async function loadBranchMeta(subfranchiseId) {
 
 /** Apply order list filters: each restaurant login sees only its own orders. */
 async function applyOrderScopeToWhere(whereClause, req, query = {}) {
-  const scope = await getBranchScopeForUser(req?.user, query);
+  if (!req?.user) {
+    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
+      whereClause.subfranchise_id = Number(query.subfranchise_id);
+    } else {
+      whereClause.subfranchise_id = { [Op.is]: null };
+    }
+    return whereClause;
+  }
+
+  const scope = await getBranchScopeForUser(req.user, query);
   if (scope.type === "all") {
     return whereClause;
   }
@@ -802,6 +898,31 @@ const optionalToken = (req, res, next) => {
   // Allow request to continue regardless of token status
   next();
 };
+
+/** Reload subfranchise_id from DB so stale JWTs don't stamp orders to HQ. */
+async function refreshUserBranch(req, res, next) {
+  if (!req.user?.id) return next();
+  if (!dbConnected) {
+    const mockUser = mockUsers.find((u) => Number(u.id) === Number(req.user.id));
+    if (mockUser) {
+      req.user.role = mockUser.role;
+      req.user.subfranchise_id = mockUser.subfranchise_id ?? null;
+    }
+    return next();
+  }
+  try {
+    const row = await User.findByPk(req.user.id, {
+      attributes: ["id", "role", "subfranchise_id"],
+    });
+    if (row) {
+      req.user.role = row.role;
+      req.user.subfranchise_id = row.subfranchise_id ?? null;
+    }
+  } catch (err) {
+    console.warn("refreshUserBranch:", err.message);
+  }
+  next();
+}
 
 // Login Endpoint
 app.post("/api/login", async (req, res) => {
@@ -1097,6 +1218,11 @@ function orderMatchesTableId(order, tableId) {
 
 function scopeOrdersForUser(orders, user, query = {}) {
   if (!user) {
+    if (query.subfranchise_id != null && query.subfranchise_id !== "") {
+      return orders.filter(
+        (o) => Number(o.subfranchise_id) === Number(query.subfranchise_id)
+      );
+    }
     return orders.filter((o) => o.subfranchise_id == null);
   }
   if (user.role === "admin") {
@@ -1105,15 +1231,18 @@ function scopeOrdersForUser(orders, user, query = {}) {
         (o) => Number(o.subfranchise_id) === Number(query.subfranchise_id)
       );
     }
-    if (query.scope === "main") {
-      return orders.filter((o) => o.subfranchise_id == null);
+    if (query.scope === "all") {
+      return orders;
     }
-    return orders;
+    return orders.filter((o) => o.subfranchise_id == null);
   }
-  if (user?.role === "subfranchise" && user.subfranchise_id != null) {
-    return orders.filter(
-      (o) => Number(o.subfranchise_id) === Number(user.subfranchise_id)
-    );
+  if (user?.role === "subfranchise") {
+    if (user.subfranchise_id != null) {
+      return orders.filter(
+        (o) => Number(o.subfranchise_id) === Number(user.subfranchise_id)
+      );
+    }
+    return [];
   }
   if (isBranchAssignedStaff(user)) {
     return orders.filter(
@@ -1131,11 +1260,11 @@ function scopeOrdersForUser(orders, user, query = {}) {
   if (isMainBranchStaff(user.role)) {
     return orders.filter((o) => o.subfranchise_id == null);
   }
-  return orders;
+  return orders.filter((o) => o.subfranchise_id == null);
 }
 
 // Orders Endpoints
-app.get("/api/orders", optionalToken, async (req, res) => {
+app.get("/api/orders", optionalToken, refreshUserBranch, async (req, res) => {
   try {
     const { status, type, table_name, tableId, date, startDate, endDate } = req.query;
     if (!dbConnected) {
@@ -1169,6 +1298,12 @@ app.get("/api/orders", optionalToken, async (req, res) => {
           return orderDate >= start && orderDate <= end;
         });
       }
+
+      filteredOrders = filteredOrders.filter((o) => {
+        const items = o.items || [];
+        const totalNum = Number(o.total) || 0;
+        return items.length > 0 || totalNum > 0;
+      });
       
       res.json(filteredOrders);
       return;
@@ -1182,7 +1317,7 @@ app.get("/api/orders", optionalToken, async (req, res) => {
       whereClause.table_name = { [Op.in]: tableNameVariants(tableId) };
     }
     await applyOrderScopeToWhere(whereClause, req, req.query);
-
+    
     if (date) {
       const filterDate = new Date(date);
       const startOfDay = new Date(filterDate);
@@ -1206,7 +1341,21 @@ app.get("/api/orders", optionalToken, async (req, res) => {
       include: [{ model: OrderItem, as: "items" }],
       order: [["timestamp", "DESC"]],
     });
-    res.json(orders);
+
+    // Drop orphaned empty orders (0 items, ₹0) left behind when items were removed.
+    const visibleOrders = [];
+    for (const order of orders) {
+      const itemCount = Array.isArray(order.items) ? order.items.length : 0;
+      const totalNum = Number(order.total) || 0;
+      if (itemCount === 0 && totalNum === 0) {
+        await OrderItem.destroy({ where: { orderId: order.id } });
+        await order.destroy();
+        io.emit("order_deleted", { orderId: order.id });
+        continue;
+      }
+      visibleOrders.push(order);
+    }
+    res.json(visibleOrders);
   } catch (err) {
     console.error("Error in /api/orders:", err);
     res.status(500).json({
@@ -1278,7 +1427,45 @@ function attachTotalsToOrder(order, items, totals) {
   return { ...base, items: normalizedItems, ...totals };
 }
 
-app.post("/api/orders", optionalToken, async (req, res) => {
+/** Next display order number for a branch (1, 2, 3… per subfranchise_id). */
+async function getNextBranchOrderNumber(subfranchiseId) {
+  const branchKey =
+    subfranchiseId != null && subfranchiseId !== ""
+      ? Number(subfranchiseId)
+      : null;
+
+    if (!dbConnected) {
+    let max = 0;
+    for (const o of mockOrders) {
+      const oid =
+        o.subfranchise_id != null && o.subfranchise_id !== ""
+          ? Number(o.subfranchise_id)
+          : null;
+      if (oid === branchKey) {
+        max = Math.max(max, Number(o.branch_order_number) || 0);
+      }
+    }
+    return max + 1;
+  }
+
+  const where =
+    branchKey != null
+      ? { subfranchise_id: branchKey }
+      : { subfranchise_id: null };
+  const row = await Order.findOne({
+    where,
+    attributes: [
+      [
+        Order.sequelize.fn("MAX", Order.sequelize.col("branch_order_number")),
+        "maxNum",
+      ],
+    ],
+    raw: true,
+  });
+  return (Number(row?.maxNum) || 0) + 1;
+}
+
+app.post("/api/orders", optionalToken, refreshUserBranch, async (req, res) => {
   try {
     const {
       table_name,
@@ -1315,6 +1502,30 @@ app.post("/api/orders", optionalToken, async (req, res) => {
         : getItemsSubtotal(items || []);
     const totals = calculateOrderTotals(subtotal, settings);
 
+    if (
+      isBranchAssignedStaff(req.user) &&
+      (linkedSubFranchiseId == null || Number.isNaN(linkedSubFranchiseId))
+    ) {
+      return res.status(400).json({
+        message:
+          "This staff account is not linked to a restaurant branch. Ask admin to assign a branch and re-login.",
+      });
+    }
+
+    if (
+      req.user &&
+      req.user.role !== "admin" &&
+      ["franchise", "subfranchise"].includes(req.user.role) &&
+      (linkedSubFranchiseId == null || Number.isNaN(linkedSubFranchiseId))
+    ) {
+      return res.status(400).json({
+        message:
+          "Order must be assigned to your restaurant branch. Re-login after branch is assigned.",
+      });
+    }
+
+    const branchOrderNumber = await getNextBranchOrderNumber(linkedSubFranchiseId);
+
     if (!dbConnected) {
       const newOrder = {
         id: mockOrders.length + 1,
@@ -1324,6 +1535,7 @@ app.post("/api/orders", optionalToken, async (req, res) => {
         type: type || "DINE_IN",
         parentOrderId,
         subfranchise_id: linkedSubFranchiseId,
+        branch_order_number: branchOrderNumber,
         timestamp: new Date(),
         token: type === "TAKEAWAY" ? generateTakeawayToken() : null,
         ...totals,
@@ -1340,6 +1552,7 @@ app.post("/api/orders", optionalToken, async (req, res) => {
       type: type || "DINE_IN",
       parentOrderId,
       subfranchise_id: linkedSubFranchiseId,
+      branch_order_number: branchOrderNumber,
       timestamp: new Date(),
       token: type === "TAKEAWAY" ? generateTakeawayToken() : null,
     });
@@ -1368,7 +1581,7 @@ app.post("/api/orders", optionalToken, async (req, res) => {
   }
 });
 
-app.put("/api/orders/:id", verifyToken, async (req, res) => {
+app.put("/api/orders/:id", verifyToken, refreshUserBranch, async (req, res) => {
   try {
     if (!dbConnected) {
       const order = mockOrders.find((o) => o.id === parseInt(req.params.id));
@@ -1397,12 +1610,21 @@ app.put("/api/orders/:id", verifyToken, async (req, res) => {
         if (total !== undefined) order.total = total;
         if (items && Array.isArray(items)) {
           order.items = items;
+          if (items.length === 0) {
+            mockOrders.splice(mockOrders.indexOf(order), 1);
+            io.emit("order_deleted", { orderId: req.params.id });
+            return res.json({
+              message: "Order deleted (no items)",
+              deleted: true,
+              orderId: parseInt(req.params.id, 10),
+            });
+          }
         }
 
         if (status && prevStatus !== status) {
           io.emit('order_status_updated', { orderId: req.params.id, status: status });
         }
-
+        
         return res.json({ message: "Order updated", order });
       }
       return res.status(404).json({ message: "Order not found" });
@@ -1413,10 +1635,22 @@ app.put("/api/orders/:id", verifyToken, async (req, res) => {
     if (!order) return res.status(404).json({ message: "Order not found" });
     if (!(await assertOrderInScope(req, order, res))) return;
 
+    // Removing all line items deletes the order instead of leaving a ₹0 ghost.
+    if (items && Array.isArray(items) && items.length === 0) {
+      await OrderItem.destroy({ where: { orderId: id } });
+      await order.destroy();
+      io.emit("order_deleted", { orderId: id });
+      return res.json({
+        message: "Order deleted (no items)",
+        deleted: true,
+        orderId: parseInt(id, 10),
+      });
+    }
+
     // Capture the previous status BEFORE we mutate it, so we can detect
     // transitions (e.g. "pending → preparing") for chef analytics.
     const prevStatusForChef = order.status;
-
+    
     // Update order status for all orders including Takeaway
     if (status) {
       order.status = status;
@@ -1465,7 +1699,7 @@ app.put("/api/orders/:id", verifyToken, async (req, res) => {
     // (Use prevStatusForChef captured above; reading order.status here
     // would be wrong since we already mutated it.)
     if (status && prevStatusForChef !== status) {
-      io.emit('order_status_updated', { orderId: id, status: status });
+        io.emit('order_status_updated', { orderId: id, status: status });
     }
     const updatedOrder = await Order.findByPk(id, {
       include: [{ model: OrderItem, as: "items" }],
@@ -1496,7 +1730,7 @@ app.put("/api/orders/:id/not-available", verifyToken, async (req, res) => {
     const order = await Order.findByPk(id);
     if (!order) return res.status(404).json({ message: "Order not found" });
     if (!(await assertOrderInScope(req, order, res))) return;
-
+    
     order.status = "NOT_AVAILABLE";
     await order.save();
 
@@ -1515,7 +1749,7 @@ app.put("/api/orders/:id/not-available", verifyToken, async (req, res) => {
 });
 
 // Get Live Orders Count Endpoint
-app.get("/api/orders/live-count", optionalToken, async (req, res) => {
+app.get("/api/orders/live-count", optionalToken, refreshUserBranch, async (req, res) => {
   try {
     if (!dbConnected) {
       const liveOrders = scopeOrdersForUser(mockOrders, req.user, req.query).filter(
@@ -1526,20 +1760,20 @@ app.get("/api/orders/live-count", optionalToken, async (req, res) => {
       );
       return res.json({ count: liveOrders.length });
     }
-
+    
     const whereClause = {
-      status: {
-        [Op.in]: [
-          "PENDING",
-          "PREPARING",
-          "READY",
-          "DELIVERED",
-          "pending",
-          "preparing",
-          "ready",
-          "delivered",
-        ],
-      },
+        status: {
+          [Op.in]: [
+            "PENDING",
+            "PREPARING",
+            "READY",
+            "DELIVERED",
+            "pending",
+            "preparing",
+            "ready",
+            "delivered",
+          ],
+        },
     };
     await applyOrderScopeToWhere(whereClause, req, req.query);
 
@@ -1553,7 +1787,7 @@ app.get("/api/orders/live-count", optionalToken, async (req, res) => {
 });
 
 // Get Total Orders Count Endpoint (exclude NOT_AVAILABLE)
-app.get("/api/orders/total-count", optionalToken, async (req, res) => {
+app.get("/api/orders/total-count", optionalToken, refreshUserBranch, async (req, res) => {
   try {
     if (!dbConnected) {
       const totalOrders = scopeOrdersForUser(mockOrders, req.user, req.query).filter(
@@ -1577,7 +1811,7 @@ app.get("/api/orders/total-count", optionalToken, async (req, res) => {
 });
 
 // Delete Order Endpoint - Delete order and its associated items
-app.delete("/api/orders/:id", optionalToken, async (req, res) => {
+app.delete("/api/orders/:id", optionalToken, refreshUserBranch, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -1689,7 +1923,7 @@ app.put("/api/orders/:id/reset", verifyToken, async (req, res) => {
       });
     }
     if (!(await assertOrderInScope(req, order, res))) return;
-
+    
     if (!isNotAvailableStatus(order.status)) {
       return res.status(400).json({ 
         success: false, 
@@ -1815,7 +2049,7 @@ app.get("/api/orders/:id/bill", async (req, res) => {
 });
 
 // Get all delivered orders (for billing page)
-app.get("/api/orders/status/delivered", verifyToken, async (req, res) => {
+app.get("/api/orders/status/delivered", verifyToken, refreshUserBranch, async (req, res) => {
   try {
     if (!dbConnected) {
       const orders = scopeOrdersForUser(mockOrders, req.user, req.query).filter(
@@ -2099,14 +2333,29 @@ app.post("/register", async (req, res) => {
 app.post("/api/users", verifyToken, async (req, res) => {
   const { username, password, role, name } = req.body;
   try {
-    // Check if user is admin
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Only admins can create users" });
+    if (!canManageFranchiseUsers(req)) {
+      return res.status(403).json({ message: "Not allowed to create users" });
     }
 
     // Validate inputs
     if (!username || !password || !role || !name) {
       return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (!roleAllowedForCreator(req.user.role, role)) {
+      return res.status(403).json({
+        message: "You can only create manager, waiter, chef or cashier for your franchise",
+      });
+    }
+
+    const managedBranchId = await resolveManagedUserBranchId(req, req.body);
+    if (
+      req.user.role !== "admin" &&
+      (managedBranchId == null || Number.isNaN(managedBranchId))
+    ) {
+      return res.status(400).json({
+        message: "Select a valid restaurant branch for this user",
+      });
     }
 
     // Validate role
@@ -2117,6 +2366,7 @@ app.post("/api/users", verifyToken, async (req, res) => {
       "manager",
       "waiter",
       "chef",
+      "cashier",
     ];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: "Invalid role" });
@@ -2139,12 +2389,12 @@ app.post("/api/users", verifyToken, async (req, res) => {
         role,
         name,
         subfranchise_id:
-          req.body.subfranchise_id != null && req.body.subfranchise_id !== ""
-            ? Number(req.body.subfranchise_id)
-            : null,
+          req.user.role === "admin"
+            ? managedBranchId
+            : managedBranchId,
       };
       mockUsers.push(newUser);
-
+      
       const created = {
         id: newUser.id,
         username: newUser.username,
@@ -2167,21 +2417,18 @@ app.post("/api/users", verifyToken, async (req, res) => {
     const { subfranchise_id: linkLocationId } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     const branchId =
-      linkLocationId != null && linkLocationId !== ""
-        ? Number(linkLocationId)
-        : null;
+      req.user.role === "admin"
+        ? managedBranchId
+        : managedBranchId;
     const user = await User.create({
       username,
       password: hashedPassword,
       role,
       name,
-      subfranchise_id:
-        role === "admin"
-          ? null
-          : branchId,
+      subfranchise_id: role === "admin" ? null : branchId,
     });
 
-    if (role === "franchise" && linkLocationId) {
+    if (role === "franchise" && linkLocationId && req.user.role === "admin") {
       await SubFranchise.update(
         { owner_user_id: user.id },
         { where: { id: linkLocationId } }
@@ -2207,27 +2454,32 @@ app.post("/api/users", verifyToken, async (req, res) => {
   }
 });
 
-// Get all users (admin only)
+// Get users — admin sees all; franchise/subfranchise see their branch staff only
 app.get("/api/users", verifyToken, async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Only admins can view users" });
+    if (!canManageFranchiseUsers(req)) {
+      return res.status(403).json({ message: "Not allowed to view users" });
     }
 
     if (!dbConnected) {
-      // Return mock users in demo mode
-      return res.json(mockUsers.map(user => ({
+      const list = await filterUsersForManager(
+        req,
+        mockUsers.map((user) => ({
         id: user.id,
         username: user.username,
         role: user.role,
         name: user.name,
-      })));
+          subfranchise_id: user.subfranchise_id || null,
+        }))
+      );
+      return res.json(list);
     }
 
     const users = await User.findAll({
       attributes: ["id", "username", "role", "name", "subfranchise_id"],
     });
-    res.json(users);
+    const list = await filterUsersForManager(req, users);
+    res.json(list);
   } catch (err) {
     res
       .status(500)
@@ -2235,11 +2487,11 @@ app.get("/api/users", verifyToken, async (req, res) => {
   }
 });
 
-// Update user (admin only)
+// Update user — admin or franchise owner for their branch staff
 app.put("/api/users/:id", verifyToken, async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Only admins can update users" });
+    if (!canManageFranchiseUsers(req)) {
+      return res.status(403).json({ message: "Not allowed to update users" });
     }
 
     const { id } = req.params;
@@ -2253,6 +2505,9 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
       }
       
       const user = mockUsers[userIndex];
+      if (!(await userInManageScope(req, user))) {
+        return res.status(403).json({ message: "User not in your franchise scope" });
+      }
       
       // Validate role
       const validRoles = [
@@ -2262,9 +2517,13 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
         "manager",
         "waiter",
         "chef",
+        "cashier",
       ];
       if (role && !validRoles.includes(role)) {
         return res.status(400).json({ message: "Invalid role" });
+      }
+      if (role && !roleAllowedForCreator(req.user.role, role)) {
+        return res.status(403).json({ message: "Cannot assign this role" });
       }
       
       if (username && username !== user.username) {
@@ -2282,10 +2541,10 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
       }
       
       const updatedMock = {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        name: user.name,
+          id: user.id,
+          username: user.username,
+          role: user.role,
+          name: user.name,
         subfranchise_id: user.subfranchise_id || null,
       };
       io.emit("user_updated", updatedMock);
@@ -2299,6 +2558,9 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
+    if (!(await userInManageScope(req, user))) {
+      return res.status(403).json({ message: "User not in your franchise scope" });
+    }
 
     // Validate role
     const validRoles = [
@@ -2308,9 +2570,13 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
       "manager",
       "waiter",
       "chef",
+      "cashier",
     ];
     if (role && !validRoles.includes(role)) {
       return res.status(400).json({ message: "Invalid role" });
+    }
+    if (role && !roleAllowedForCreator(req.user.role, role)) {
+      return res.status(403).json({ message: "Cannot assign this role" });
     }
 
     if (username && username !== user.username) {
@@ -2328,12 +2594,17 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
     }
     const { subfranchise_id: linkLocationId } = req.body;
     if (linkLocationId !== undefined) {
-      user.subfranchise_id = linkLocationId || null;
+      if (req.user.role === "admin") {
+        user.subfranchise_id = linkLocationId || null;
+      } else {
+        const managed = await resolveManagedUserBranchId(req, req.body);
+        if (managed != null) user.subfranchise_id = managed;
+      }
     }
 
     await user.save();
 
-    if (user.role === "franchise" && linkLocationId) {
+    if (user.role === "franchise" && linkLocationId && req.user.role === "admin") {
       await SubFranchise.update(
         { owner_user_id: user.id },
         { where: { id: linkLocationId } }
@@ -2341,10 +2612,10 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
     }
 
     const updated = {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      name: user.name,
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        name: user.name,
       subfranchise_id: user.subfranchise_id,
     };
     io.emit("user_updated", updated);
@@ -2359,11 +2630,11 @@ app.put("/api/users/:id", verifyToken, async (req, res) => {
   }
 });
 
-// Delete user (admin only)
+// Delete user — admin or franchise owner for their branch staff
 app.delete("/api/users/:id", verifyToken, async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Only admins can delete users" });
+    if (!canManageFranchiseUsers(req)) {
+      return res.status(403).json({ message: "Not allowed to delete users" });
     }
 
     const { id } = req.params;
@@ -2376,6 +2647,9 @@ app.delete("/api/users/:id", verifyToken, async (req, res) => {
       }
       
       const user = mockUsers[userIndex];
+      if (!(await userInManageScope(req, user))) {
+        return res.status(403).json({ message: "User not in your franchise scope" });
+      }
       
       // Prevent deleting yourself
       if (user.username === req.user.username) {
@@ -2384,7 +2658,7 @@ app.delete("/api/users/:id", verifyToken, async (req, res) => {
       
       const removed = mockUsers.splice(userIndex, 1)[0];
       io.emit("user_deleted", { id: removed?.id });
-
+      
       return res.json({ message: "User deleted successfully" });
     }
 
@@ -2392,6 +2666,9 @@ app.delete("/api/users/:id", verifyToken, async (req, res) => {
     const user = await User.findByPk(id);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
+    }
+    if (!(await userInManageScope(req, user))) {
+      return res.status(403).json({ message: "User not in your franchise scope" });
     }
 
     if (user.username === req.user.username) {
@@ -2743,7 +3020,7 @@ app.get("/api/users-with-permissions", verifyToken, async (req, res) => {
     }
 
     const users = await User.findAll();
-
+    
     const usersWithPermissions = await Promise.all(
       users.map(async (user) => ({
         id: user.id,
@@ -2785,11 +3062,11 @@ app.put("/api/users/:id/permissions", verifyToken, async (req, res) => {
     }
 
     if (targetUser.role === "franchise" || targetUser.role === "subfranchise") {
-      if (!dbConnected) {
+    if (!dbConnected) {
         mockUserPermissions[targetUser.id] = permissions || [];
-        return res.json({
+      return res.json({ 
           message: "Permissions updated successfully",
-          userId: id,
+        userId: id,
           permissions: permissions || [],
         });
       }
@@ -2840,7 +3117,7 @@ app.put("/api/users/:id/permissions", verifyToken, async (req, res) => {
       }
     }
 
-    res.json({
+    res.json({ 
       message: "Permissions updated successfully",
       userId: id,
       role: targetUser.role,
@@ -2896,12 +3173,20 @@ app.get("/api/settings", async (req, res) => {
 // Update or create a setting (admin only)
 app.put("/api/settings", verifyToken, async (req, res) => {
   try {
-    // Check if user is admin - req.user is set by verifyToken middleware
-    if (!req.user || req.user.role !== 'admin') {
+    const { key, value, description } = req.body;
+
+    // Admin can update any setting. Franchise / sub-franchise owners may
+    // update the permissions matrix so they can configure their staff.
+    if (!req.user) {
+      return res.status(403).json({ message: "Authentication required" });
+    }
+    const isMatrix = key === "rolePermissionsMatrix";
+    if (
+      req.user.role !== "admin" &&
+      !(isMatrix && ["franchise", "subfranchise"].includes(req.user.role))
+    ) {
       return res.status(403).json({ message: "Only admin can update settings" });
     }
-    
-    const { key, value, description } = req.body;
     
     if (!key || value === undefined) {
       return res.status(400).json({ message: "Key and value are required" });
@@ -3005,6 +3290,143 @@ async function loadFranchiseData() {
   return { orders, menuCount, subfranchises, users };
 }
 
+const SUBFRANCHISE_UPDATE_FIELDS = [
+  "name",
+  "code",
+  "address",
+  "city",
+  "phone",
+  "email",
+  "manager_name",
+  "status",
+  "notes",
+  "owner_user_id",
+];
+
+function pickSubFranchiseUpdates(raw = {}) {
+  const out = {};
+  for (const key of SUBFRANCHISE_UPDATE_FIELDS) {
+    if (raw[key] !== undefined) out[key] = raw[key];
+  }
+  return out;
+}
+
+function resolveBranchLoginUserFromList(subfranchiseId, users, opts = {}) {
+  const { loginUserId } = opts;
+  if (loginUserId) {
+    const explicit = users.find((u) => Number(u.id) === Number(loginUserId));
+    if (explicit && explicit.role === "subfranchise") return explicit;
+  }
+  return (
+    users.find(
+      (u) =>
+        Number(u.subfranchise_id) === Number(subfranchiseId) &&
+        u.role === "subfranchise"
+    ) || null
+  );
+}
+
+async function resolveBranchLoginUser(subfranchiseId, opts = {}) {
+  const { loginUserId } = opts;
+  if (loginUserId) {
+    const explicit = await User.findByPk(loginUserId);
+    if (
+      explicit &&
+      explicit.role === "subfranchise" &&
+      (explicit.subfranchise_id == null ||
+        Number(explicit.subfranchise_id) === Number(subfranchiseId))
+    ) {
+      return explicit;
+    }
+  }
+  return User.findOne({
+    where: { subfranchise_id: subfranchiseId, role: "subfranchise" },
+  });
+}
+
+async function syncBranchLoginCredentials(subfranchiseId, opts = {}) {
+  const {
+    login_username,
+    login_password,
+    manager_name,
+    login_user_id,
+    branchName,
+  } = opts;
+
+  const username = String(login_username || "").trim();
+  if (!username) return null;
+
+  const passwordRaw =
+    login_password != null ? String(login_password).trim() : "";
+
+  let loginUser = await resolveBranchLoginUser(subfranchiseId, {
+    loginUserId: login_user_id,
+  });
+
+  if (loginUser) {
+    const duplicate = await User.findOne({ where: { username } });
+    if (duplicate && Number(duplicate.id) !== Number(loginUser.id)) {
+      const err = new Error("Login username already exists");
+      err.status = 409;
+      throw err;
+    }
+
+    const patch = {
+      username,
+      subfranchise_id: subfranchiseId,
+      role: "subfranchise",
+    };
+    if (manager_name) patch.name = manager_name;
+    if (passwordRaw) {
+      patch.password = await bcrypt.hash(passwordRaw, 10);
+    } else if (!loginUser.password) {
+      const err = new Error("Login password is required");
+      err.status = 400;
+      throw err;
+    }
+    await loginUser.update(patch);
+
+    io.emit("user_updated", {
+      id: loginUser.id,
+      username: loginUser.username,
+      role: loginUser.role,
+      name: loginUser.name,
+      subfranchise_id: loginUser.subfranchise_id,
+    });
+    return loginUser;
+  }
+
+  if (!passwordRaw) {
+    const err = new Error("Login password is required when creating branch login");
+    err.status = 400;
+    throw err;
+  }
+
+  const duplicate = await User.findOne({ where: { username } });
+  if (duplicate) {
+    const err = new Error("Login username already exists");
+    err.status = 409;
+    throw err;
+  }
+
+  loginUser = await User.create({
+    username,
+    password: await bcrypt.hash(passwordRaw, 10),
+    role: "subfranchise",
+    name: manager_name || branchName || username,
+    subfranchise_id: subfranchiseId,
+  });
+
+  io.emit("user_created", {
+    id: loginUser.id,
+    username: loginUser.username,
+    role: loginUser.role,
+    name: loginUser.name,
+    subfranchise_id: loginUser.subfranchise_id,
+  });
+  return loginUser;
+}
+
 function canAccessLocation(req, locationId) {
   if (req.user.role === "subfranchise") {
     return Number(req.user.subfranchise_id) === Number(locationId);
@@ -3025,9 +3447,7 @@ app.get("/api/subfranchises", verifyToken, franchiseViewAuth, async (req, res) =
       list = list.filter((s) => locIds.includes(Number(s.id)));
     }
     const enriched = list.map((sf) => {
-      const loginUser = users.find(
-        (u) => Number(u.subfranchise_id) === Number(sf.id)
-      );
+      const loginUser = resolveBranchLoginUserFromList(sf.id, users, {});
       return enrichSubFranchise(sf, orders, loginUser);
     });
     res.json(enriched);
@@ -3055,7 +3475,7 @@ app.get(
       const sf = subfranchises.find((s) => Number(s.id) === id);
       if (!sf) return res.status(404).json({ message: "Location not found" });
 
-      const loginUser = users.find((u) => Number(u.subfranchise_id) === id);
+      const loginUser = resolveBranchLoginUserFromList(id, users, {});
       const locOrders = orders.filter((o) => Number(o.subfranchise_id) === id);
       const stats = computeLocationStats(orders, id);
 
@@ -3076,6 +3496,7 @@ app.get(
         stats,
         recentOrders,
         loginUsername: loginUser?.username || null,
+        loginUserId: loginUser?.id || null,
       });
     } catch (err) {
       res.status(500).json({ message: err.message });
@@ -3139,25 +3560,20 @@ app.post("/api/subfranchises", verifyToken, franchiseManageAuth, async (req, res
     }
 
     const created = await SubFranchise.create(sfData);
-    if (login_username && login_password) {
-      const existing = await User.findOne({ where: { username: login_username } });
-      if (existing) {
-        return res.status(409).json({ message: "Login username already exists" });
+    if (login_username) {
+      try {
+        await syncBranchLoginCredentials(created.id, {
+          login_username,
+          login_password,
+          manager_name: manager_name || name,
+          branchName: name,
+        });
+      } catch (credErr) {
+        await created.destroy();
+        return res
+          .status(credErr.status || 500)
+          .json({ message: credErr.message || "Failed to create branch login" });
       }
-      const sfUser = await User.create({
-        username: login_username,
-        password: await bcrypt.hash(login_password, 10),
-        role: "subfranchise",
-        name: manager_name || name,
-        subfranchise_id: created.id,
-      });
-      io.emit("user_created", {
-        id: sfUser.id,
-        username: sfUser.username,
-        role: sfUser.role,
-        name: sfUser.name,
-        subfranchise_id: sfUser.subfranchise_id,
-      });
     }
     io.emit("subfranchise_created", created);
     res.status(201).json(created);
@@ -3169,13 +3585,61 @@ app.post("/api/subfranchises", verifyToken, franchiseManageAuth, async (req, res
 app.put("/api/subfranchises/:id", verifyToken, franchiseManageAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { login_username, login_password, ...updates } = req.body;
+    const {
+      login_username,
+      login_password,
+      login_user_id,
+      gstin,
+      tier,
+      license_validity,
+      ...rawUpdates
+    } = req.body;
+    const updates = pickSubFranchiseUpdates(rawUpdates);
+
     if (!dbConnected) {
       const idx = mockSubFranchises.findIndex((s) => s.id === id);
       if (idx === -1) return res.status(404).json({ message: "Not found" });
       mockSubFranchises[idx] = { ...mockSubFranchises[idx], ...updates, id };
+
+      if (login_username) {
+        let loginUser = resolveBranchLoginUserFromList(id, mockUsers, {
+          loginUserId: login_user_id,
+        });
+        const username = String(login_username).trim();
+        const passwordRaw =
+          login_password != null ? String(login_password).trim() : "";
+
+        if (loginUser) {
+          const duplicate = mockUsers.find((u) => u.username === username);
+          if (duplicate && Number(duplicate.id) !== Number(loginUser.id)) {
+            return res.status(409).json({ message: "Login username already exists" });
+          }
+          loginUser.username = username;
+          loginUser.subfranchise_id = id;
+          loginUser.role = "subfranchise";
+          if (passwordRaw) loginUser.password = passwordRaw;
+          if (updates.manager_name) loginUser.name = updates.manager_name;
+        } else if (passwordRaw) {
+          if (mockUsers.some((u) => u.username === username)) {
+            return res.status(409).json({ message: "Login username already exists" });
+          }
+          mockUsers.push({
+            id: mockUsers.length + 1,
+            username,
+            password: passwordRaw,
+            role: "subfranchise",
+            name: updates.manager_name || mockSubFranchises[idx].name,
+            subfranchise_id: id,
+          });
+        } else {
+          return res.status(400).json({ message: "Login password is required" });
+        }
+      }
+
+      io.emit("subfranchise_updated", mockSubFranchises[idx]);
       return res.json(mockSubFranchises[idx]);
     }
+
     const row = await SubFranchise.findByPk(id);
     if (!row) return res.status(404).json({ message: "Not found" });
     if (
@@ -3184,33 +3648,37 @@ app.put("/api/subfranchises/:id", verifyToken, franchiseManageAuth, async (req, 
     ) {
       return res.status(403).json({ message: "You can only edit your own locations" });
     }
+
     await row.update(updates);
+    await row.reload();
 
-    if (updates.owner_user_id && req.user.role === "admin") {
-      const owner = await User.findByPk(updates.owner_user_id);
-      if (owner?.role === "franchise") {
-        await owner.update({ subfranchise_id: id });
-      }
-    }
-
+    let branchLoginUser = null;
     if (login_username) {
-      let loginUser = await User.findOne({ where: { subfranchise_id: id } });
-      if (!loginUser) {
-        loginUser = await User.create({
-          username: login_username,
-          password: await bcrypt.hash(login_password || "pass", 10),
-          role: "subfranchise",
-          name: updates.manager_name || row.name,
-          subfranchise_id: id,
+      try {
+        branchLoginUser = await syncBranchLoginCredentials(id, {
+          login_username,
+          login_password,
+          login_user_id,
+          manager_name: updates.manager_name || row.manager_name,
+          branchName: row.name,
         });
-      } else {
-        const patch = { username: login_username };
-        if (login_password) patch.password = await bcrypt.hash(login_password, 10);
-        await loginUser.update(patch);
+      } catch (credErr) {
+        return res
+          .status(credErr.status || 500)
+          .json({ message: credErr.message || "Failed to update branch login" });
       }
+    } else {
+      branchLoginUser = await resolveBranchLoginUser(id, {
+        loginUserId: login_user_id,
+      });
     }
+
     io.emit("subfranchise_updated", row);
-    res.json(row);
+    res.json({
+      ...row.toJSON(),
+      loginUsername: branchLoginUser?.username || null,
+      loginUserId: branchLoginUser?.id || null,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -3250,9 +3718,7 @@ app.get("/api/franchise/overview", verifyToken, franchiseViewAuth, async (req, r
     }
 
     const locationStats = list.map((sf) => {
-      const loginUser = users.find(
-        (u) => Number(u.subfranchise_id) === Number(sf.id)
-      );
+      const loginUser = resolveBranchLoginUserFromList(sf.id, users, {});
       return enrichSubFranchise(sf, orders, loginUser);
     });
 
@@ -3440,6 +3906,10 @@ app.post("/api/integrations/aggregator/order", async (req, res) => {
   }
 
   try {
+    const branchOrderNumber = await getNextBranchOrderNumber(
+      normalised.subfranchiseId
+    );
+
     if (!dbConnected) {
       const newOrder = {
         id: mockOrders.length + 1,
@@ -3458,6 +3928,7 @@ app.post("/api/integrations/aggregator/order", async (req, res) => {
         customer_phone: normalised.customerPhone,
         delivery_address: normalised.deliveryAddress,
         subfranchise_id: normalised.subfranchiseId,
+        branch_order_number: branchOrderNumber,
       };
       mockOrders.push(newOrder);
       io.emit("new_order", newOrder);
@@ -3480,6 +3951,7 @@ app.post("/api/integrations/aggregator/order", async (req, res) => {
       customer_phone: normalised.customerPhone || null,
       delivery_address: normalised.deliveryAddress || null,
       subfranchise_id: normalised.subfranchiseId || null,
+      branch_order_number: branchOrderNumber,
     });
 
     for (const it of normalised.items) {
@@ -3559,6 +4031,9 @@ app.post("/api/integrations/test", verifyToken, async (req, res) => {
   // check (we already verified the JWT above).
   try {
     const normalised = normaliseAggregatorOrder(fakeBody, source);
+    const branchOrderNumber = await getNextBranchOrderNumber(
+      normalised.subfranchiseId
+    );
     let created;
     if (!dbConnected) {
       created = {
@@ -3577,6 +4052,8 @@ app.post("/api/integrations/test", verifyToken, async (req, res) => {
         customer_name: normalised.customerName,
         customer_phone: normalised.customerPhone,
         delivery_address: normalised.deliveryAddress,
+        subfranchise_id: normalised.subfranchiseId,
+        branch_order_number: branchOrderNumber,
       };
       mockOrders.push(created);
     } else {
@@ -3594,6 +4071,8 @@ app.post("/api/integrations/test", verifyToken, async (req, res) => {
         customer_name: normalised.customerName || null,
         customer_phone: normalised.customerPhone || null,
         delivery_address: normalised.deliveryAddress || null,
+        subfranchise_id: normalised.subfranchiseId || null,
+        branch_order_number: branchOrderNumber,
       });
       for (const it of normalised.items) {
         await OrderItem.create({
