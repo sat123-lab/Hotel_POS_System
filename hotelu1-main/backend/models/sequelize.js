@@ -23,8 +23,7 @@ console.log('===========================');
  * Aiven / Clever MySQL / local -> use DB_* vars or DATABASE_URL
  */
 
-const isProd = process.env.NODE_ENV === 'production';
-const useSSL = process.env.DB_SSL === 'true' || isProd;
+const useSSL = process.env.DB_SSL === 'true';
 
 const sslOptions = useSSL
   ? { require: true, rejectUnauthorized: false }
