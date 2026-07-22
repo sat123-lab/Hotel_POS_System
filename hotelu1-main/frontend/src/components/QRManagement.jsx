@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { getAPI_URL, authFetch } from '../utils/api';
 import {
   formatTableName,
@@ -29,6 +29,9 @@ import {
 } from 'lucide-react';
 import Notification from './Notification';
 import useCurrency from '../hooks/useCurrency';
+import { loadBranchJson, saveBranchJson, getCurrentUser } from '../utils/branchStorage';
+import { getOrderBranchIdForUser, getBranchLabel } from '../utils/branchScope';
+import { loadRestaurantInfo } from '../utils/receiptPrint';
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -47,6 +50,101 @@ const FLOORS = [
 
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+function resolveHotelName() {
+  const info = loadRestaurantInfo();
+  const user = getCurrentUser();
+  const base = (info.name || 'Restaurant POS').trim();
+  if (user?.branch?.name) return String(user.branch.name).trim();
+  const branchLabel = getBranchLabel(user);
+  if (
+    user?.subfranchise_id != null &&
+    branchLabel &&
+    !String(branchLabel).includes('HQ')
+  ) {
+    return `${base} · ${branchLabel}`;
+  }
+  return base;
+}
+
+function wrapQrNameLines(name, maxChars = 14) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return ['Restaurant'];
+  const lines = [];
+  let line = '';
+  words.forEach((word) => {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length <= maxChars) {
+      line = next;
+    } else {
+      if (line) lines.push(line);
+      line = word.length > maxChars ? `${word.slice(0, maxChars - 1)}…` : word;
+    }
+  });
+  if (line) lines.push(line);
+  return lines.slice(0, 2);
+}
+
+function drawRoundRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function composeBrandedQr(qrSrc, hotelName, brandColor, size = 220) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas unavailable'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, size, size);
+
+      const lines = wrapQrNameLines(hotelName, size >= 400 ? 18 : 12);
+      const fontSize = size >= 400 ? 17 : 11;
+      const lineHeight = fontSize + 5;
+      const boxW = size * 0.48;
+      const boxH = Math.max(size * 0.18, lines.length * lineHeight + 14);
+      const boxX = (size - boxW) / 2;
+      const boxY = (size - boxH) / 2;
+
+      drawRoundRect(ctx, boxX, boxY, boxW, boxH, size >= 400 ? 14 : 8);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = brandColor || '#F97316';
+      ctx.lineWidth = size >= 400 ? 3 : 2;
+      ctx.stroke();
+
+      ctx.fillStyle = brandColor || '#F97316';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold ${fontSize}px system-ui, -apple-system, Segoe UI, sans-serif`;
+      const startY = size / 2 - ((lines.length - 1) * lineHeight) / 2;
+      lines.forEach((line, i) => {
+        ctx.fillText(line, size / 2, startY + i * lineHeight);
+      });
+
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('Failed to compose QR'));
+    img.src = qrSrc;
+  });
+}
+
+function floorLabelFromId(floorId) {
+  return (FLOORS.find((f) => f.id === floorId) || FLOORS[0]).label;
+}
+
 const QRManagement = ({ locationSettings }) => {
   const { format: fmt } = useCurrency(locationSettings);
 
@@ -64,8 +162,10 @@ const QRManagement = ({ locationSettings }) => {
   const [tableCodes, setTableCodes] = useState([]);
   const [allOrders, setAllOrders] = useState([]);
   const [menu, setMenu] = useState([]);
+  const [brandedQrUrl, setBrandedQrUrl] = useState('');
 
   const qrCodeContainerRef = useRef(null);
+  const hotelName = useMemo(() => resolveHotelName(), []);
 
   const [serverIP] = useState(() => {
     const savedIP = localStorage.getItem('qrServerIP');
@@ -80,6 +180,15 @@ const QRManagement = ({ locationSettings }) => {
   });
 
   const BASE_QR_ORDER_URL = serverIP || window.location.origin;
+
+  const buildQrOrderUrl = useCallback((targetTable) => {
+    const branchId = getOrderBranchIdForUser(getCurrentUser());
+    let url = `${BASE_QR_ORDER_URL}/qr-ordering?tableId=${encodeURIComponent(targetTable)}`;
+    if (branchId != null && !Number.isNaN(branchId)) {
+      url += `&branchId=${encodeURIComponent(branchId)}`;
+    }
+    return url;
+  }, [BASE_QR_ORDER_URL]);
 
   /* ------------------------------ fetches ------------------------------ */
 
@@ -144,17 +253,8 @@ const QRManagement = ({ locationSettings }) => {
     return () => clearInterval(interval);
   }, []);
 
-  // Load persisted table codes (or seed)
+  // Load persisted table codes per restaurant branch (or seed)
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('qrTableCodes') || '[]');
-      if (Array.isArray(saved) && saved.length > 0) {
-        setTableCodes(saved);
-        return;
-      }
-    } catch (_) {
-      /* ignore */
-    }
     const seed = Array.from({ length: 3 }, (_, i) => ({
       id: i + 1,
       tableNumber: String(i + 1),
@@ -163,8 +263,13 @@ const QRManagement = ({ locationSettings }) => {
       embedLogo: true,
       createdAt: Date.now() - (i + 1) * 86400000,
     }));
+    const saved = loadBranchJson('qrTableCodes_v1', null);
+    if (Array.isArray(saved) && saved.length > 0) {
+      setTableCodes(saved);
+      return;
+    }
     setTableCodes(seed);
-    localStorage.setItem('qrTableCodes', JSON.stringify(seed));
+    saveBranchJson('qrTableCodes_v1', seed);
   }, []);
 
   // QR script
@@ -184,32 +289,74 @@ const QRManagement = ({ locationSettings }) => {
     return () => clearTimeout(t);
   }, []);
 
-  // (Re)generate QR whenever inputs change
+  // (Re)generate QR whenever inputs change — hotel name embedded in QR center
   useEffect(() => {
     if (!isQrCodeScriptLoaded || !qrCodeContainerRef.current) return;
+
+    let cancelled = false;
     setIsQrCodeGenerated(false);
-    const url = `${BASE_QR_ORDER_URL}/qr-ordering?tableId=${encodeURIComponent(
-      tableNumber
-    )}`;
+    setBrandedQrUrl('');
+    const url = buildQrOrderUrl(tableNumber);
     setQrCodeValue(url);
 
-    qrCodeContainerRef.current.innerHTML = '';
+    const container = qrCodeContainerRef.current;
+    container.innerHTML = '';
+    const styleObj = STYLES.find((s) => s.id === style) || STYLES[0];
+
     try {
-      const styleObj = STYLES.find((s) => s.id === style) || STYLES[0];
       // eslint-disable-next-line no-new
-      new window.QRCode(qrCodeContainerRef.current, {
+      new window.QRCode(container, {
         text: url,
-        width: 220,
-        height: 220,
+        width: 512,
+        height: 512,
         colorDark: styleObj.color,
         colorLight: '#ffffff',
         correctLevel: window.QRCode.CorrectLevel.H,
       });
-      setIsQrCodeGenerated(true);
-    } catch (error) {
+    } catch (_) {
       setIsQrCodeGenerated(false);
+      return undefined;
     }
-  }, [tableNumber, isQrCodeScriptLoaded, style, BASE_QR_ORDER_URL]);
+
+    const timer = setTimeout(async () => {
+      if (cancelled) return;
+      const node = container.querySelector('img') || container.querySelector('canvas');
+      const rawSrc = node
+        ? node.src || (typeof node.toDataURL === 'function' ? node.toDataURL('image/png') : '')
+        : '';
+      if (!rawSrc) {
+        setIsQrCodeGenerated(false);
+        return;
+      }
+      try {
+        const finalSrc = embedLogo
+          ? await composeBrandedQr(rawSrc, hotelName, styleObj.color, 512)
+          : rawSrc;
+        if (!cancelled) {
+          setBrandedQrUrl(finalSrc);
+          setIsQrCodeGenerated(true);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setBrandedQrUrl(rawSrc);
+          setIsQrCodeGenerated(true);
+        }
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    tableNumber,
+    isQrCodeScriptLoaded,
+    style,
+    embedLogo,
+    hotelName,
+    BASE_QR_ORDER_URL,
+    buildQrOrderUrl,
+  ]);
 
   /* ------------------------------ handlers ------------------------------ */
 
@@ -247,7 +394,7 @@ const QRManagement = ({ locationSettings }) => {
       },
     ];
     setTableCodes(next);
-    localStorage.setItem('qrTableCodes', JSON.stringify(next));
+    saveBranchJson('qrTableCodes_v1', next);
     setNotification({
       message: `Sticker generated for Table #${tableNumber}`,
       type: 'success',
@@ -255,8 +402,10 @@ const QRManagement = ({ locationSettings }) => {
     setTimeout(() => setNotification(null), 2500);
   };
 
-  const handleDownloadQR = (overrideTable) => {
+  const handleDownloadQR = (overrideTable, overrideFloor) => {
     const targetTable = overrideTable || tableNumber;
+    const targetFloor = overrideFloor || floor;
+    const styleObj = STYLES.find((s) => s.id === style) || STYLES[0];
     const renderToDataUrl = () =>
       new Promise((resolve) => {
         const temp = document.createElement('div');
@@ -264,7 +413,7 @@ const QRManagement = ({ locationSettings }) => {
         temp.style.left = '-10000px';
         document.body.appendChild(temp);
         const styleObj = STYLES.find((s) => s.id === style) || STYLES[0];
-        const url = `${BASE_QR_ORDER_URL}/qr-ordering?tableId=${encodeURIComponent(targetTable)}`;
+        const url = buildQrOrderUrl(targetTable);
         // eslint-disable-next-line no-new
         new window.QRCode(temp, {
           text: url,
@@ -284,14 +433,21 @@ const QRManagement = ({ locationSettings }) => {
 
     (async () => {
       let src = null;
-      if (qrCodeContainerRef.current && isQrCodeGenerated && String(targetTable) === String(tableNumber)) {
-        const img =
-          qrCodeContainerRef.current.querySelector('img') ||
-          qrCodeContainerRef.current.querySelector('canvas');
-        if (img) src = img.src || img.toDataURL('image/png');
+      const sameAsPreview =
+        String(targetTable) === String(tableNumber) &&
+        String(targetFloor) === String(floor);
+      if (sameAsPreview && brandedQrUrl) {
+        src = brandedQrUrl;
       }
-      if (!src && window.QRCode) {
+      if (!src) {
         src = await renderToDataUrl();
+        if (src && embedLogo) {
+          try {
+            src = await composeBrandedQr(src, hotelName, styleObj.color, 512);
+          } catch (_) {
+            /* keep raw */
+          }
+        }
       }
       if (!src) {
         setNotification({
@@ -301,18 +457,32 @@ const QRManagement = ({ locationSettings }) => {
         setTimeout(() => setNotification(null), 3000);
         return;
       }
-      const a = document.createElement('a');
-      a.href = src;
-      a.download = `table-${targetTable}-qrcode.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      try {
+        const stickerSrc = await buildStickerImage(src, {
+          tableLabel: targetTable,
+          floorId: targetFloor,
+          color: styleObj.color,
+        });
+        const a = document.createElement('a');
+        a.href = stickerSrc;
+        a.download = `${hotelName.replace(/[^\w\s-]/g, '').trim() || 'restaurant'}-table-${targetTable}-qr.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (_) {
+        const a = document.createElement('a');
+        a.href = src;
+        a.download = `table-${targetTable}-qrcode.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
     })();
   };
 
   const handleTestQR = (overrideTable) => {
     const targetTable = overrideTable || tableNumber;
-    const url = `${BASE_QR_ORDER_URL}/qr-ordering?tableId=${encodeURIComponent(targetTable)}`;
+    const url = buildQrOrderUrl(targetTable);
     window.open(url, '_blank');
   };
 
@@ -320,7 +490,7 @@ const QRManagement = ({ locationSettings }) => {
     if (!window.confirm('Remove this QR code from active list?')) return;
     const next = tableCodes.filter((t) => t.id !== id);
     setTableCodes(next);
-    localStorage.setItem('qrTableCodes', JSON.stringify(next));
+    saveBranchJson('qrTableCodes_v1', next);
   };
 
   /* ------------------------------ derived ------------------------------ */
@@ -376,6 +546,50 @@ const QRManagement = ({ locationSettings }) => {
 
   const currentStyleColor =
     (STYLES.find((s) => s.id === style) || STYLES[0]).color;
+
+  const buildStickerImage = (qrSrc, { tableLabel, floorId, color }) =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const padX = 48;
+        const padY = 36;
+        const qrSize = 512;
+        const footerH = 96;
+        const w = qrSize + padX * 2;
+        const h = padY + qrSize + footerH + padY;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Canvas unavailable'));
+          return;
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.drawImage(img, padX, padY, qrSize, qrSize);
+
+        ctx.font = 'bold 26px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = color || '#F97316';
+        ctx.fillText(`TABLE #${tableLabel}`, w / 2, padY + qrSize + 36);
+
+        ctx.font = '20px system-ui, sans-serif';
+        ctx.fillStyle = '#6B7280';
+        ctx.fillText(floorLabelFromId(floorId), w / 2, padY + qrSize + 68);
+
+        ctx.font = '16px system-ui, sans-serif';
+        ctx.fillStyle = '#9CA3AF';
+        ctx.fillText('Scan to order', w / 2, padY + qrSize + 94);
+
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('Failed to load QR image'));
+      img.src = qrSrc;
+    });
 
   /* ------------------------------ render ------------------------------ */
 
@@ -501,7 +715,7 @@ const QRManagement = ({ locationSettings }) => {
                   onChange={(e) => setEmbedLogo(e.target.checked)}
                   className="accent-orange-500"
                 />
-                Embed Logo
+                Embed hotel name in QR
               </label>
             </div>
           </div>
@@ -609,19 +823,17 @@ const QRManagement = ({ locationSettings }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col items-center">
           <div
-            className="rounded-2xl border border-gray-100 bg-gray-50/50 px-4 py-4 flex items-center justify-center"
+            className="rounded-2xl border border-gray-100 bg-white px-4 py-4 flex items-center justify-center shadow-inner"
             style={{ minHeight: 240 }}
           >
-            {isQrCodeScriptLoaded ? (
-              <div
-                ref={qrCodeContainerRef}
-                style={{
-                  width: 220,
-                  height: 220,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
+            <div className="sr-only" ref={qrCodeContainerRef} aria-hidden="true" />
+            {isQrCodeScriptLoaded && brandedQrUrl ? (
+              <img
+                src={brandedQrUrl}
+                alt={`QR code for ${hotelName}`}
+                width={220}
+                height={220}
+                className="rounded-xl"
               />
             ) : (
               <div className="w-[220px] h-[220px] flex items-center justify-center text-gray-300">
@@ -629,11 +841,12 @@ const QRManagement = ({ locationSettings }) => {
               </div>
             )}
           </div>
-          <p className="mt-3 text-xs font-bold tracking-wider text-gray-700 uppercase">
+          <p className="mt-3 text-xs font-bold tracking-wider text-gray-700 uppercase text-center">
+            {hotelName}
+          </p>
+          <p className="mt-1 text-xs font-bold tracking-wider text-gray-500 uppercase text-center">
             Table #{tableNumber} ·{' '}
-            <span style={{ color: currentStyleColor }}>
-              {(FLOORS.find((f) => f.id === floor) || FLOORS[0]).label}
-            </span>
+            <span style={{ color: currentStyleColor }}>{floorLabelFromId(floor)}</span>
           </p>
           <div className="flex items-center gap-2 mt-3">
             <button
@@ -745,7 +958,7 @@ const QRManagement = ({ locationSettings }) => {
                   )}
                 </div>
                 <div className="flex items-center justify-end gap-1.5">
-                  <IconBtn title="Download QR" onClick={() => handleDownloadQR(tc.tableNumber)}>
+                  <IconBtn title="Download QR" onClick={() => handleDownloadQR(tc.tableNumber, tc.floor)}>
                     <Download className="w-3.5 h-3.5" />
                   </IconBtn>
                   <IconBtn title="Test in browser" onClick={() => handleTestQR(tc.tableNumber)}>

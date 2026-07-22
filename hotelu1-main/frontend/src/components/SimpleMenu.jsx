@@ -12,7 +12,7 @@ import {
 } from '../utils/tableOrderUtils';
 import useCurrency from '../hooks/useCurrency';
 
-const SimpleMenu = ({ tableId, onOrderPlaced, locationSettings }) => {
+const SimpleMenu = ({ tableId, branchId, onOrderPlaced, locationSettings }) => {
   const { format: fmt } = useCurrency(locationSettings);
   const [menuItems, setMenuItems] = useState([]);
   const [cart, setCart] = useState([]);
@@ -30,7 +30,7 @@ const SimpleMenu = ({ tableId, onOrderPlaced, locationSettings }) => {
     fetchActiveOrders();
     const orderInterval = setInterval(fetchActiveOrders, 3000);
     return () => clearInterval(orderInterval);
-  }, [tableId]);
+  }, [tableId, branchId]);
 
   const fetchMenu = async () => {
     try {
@@ -58,9 +58,11 @@ const SimpleMenu = ({ tableId, onOrderPlaced, locationSettings }) => {
     try {
       const API_URL = getAPI_URL();
       const t = tableId || '1';
-      const response = await fetch(
-        `${API_URL}/api/orders?type=DINE_IN&tableId=${encodeURIComponent(formatTableName(t))}`
-      );
+      let url = `${API_URL}/api/orders?type=DINE_IN&tableId=${encodeURIComponent(formatTableName(t))}`;
+      if (branchId != null && branchId !== '') {
+        url += `&subfranchise_id=${encodeURIComponent(branchId)}`;
+      }
+      const response = await fetch(url);
       const data = await response.json();
       if (Array.isArray(data)) {
         const tableOrders = data.filter(
@@ -127,7 +129,10 @@ const SimpleMenu = ({ tableId, onOrderPlaced, locationSettings }) => {
       taxPercent: totals.taxPercent,
       taxAmount: totals.taxAmount,
       total: totals.total,
-      type: 'DINE_IN'
+      type: 'DINE_IN',
+      ...(branchId != null && branchId !== ''
+        ? { subfranchise_id: Number(branchId) }
+        : {}),
     };
 
     try {

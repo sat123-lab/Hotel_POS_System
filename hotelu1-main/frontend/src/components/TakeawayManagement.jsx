@@ -6,6 +6,7 @@ import Notification from './Notification';
 import OrderEntryModal from './OrderEntryModal';
 import useCurrency from '../hooks/useCurrency';
 import SourceBadge from './SourceBadge';
+import { getOrderDisplayNumber, formatOrderLabel } from '../utils/orderDisplay';
 import {
   Plus,
   ShoppingBag,
@@ -185,25 +186,9 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
           const errorData = await deleteResponse.json().catch(() => ({}));
           throw new Error(errorData.message || 'Failed to delete old order');
         }
-        const newOrderPayload = {
-          table_name: order.table_name,
-          type: 'TAKEAWAY',
-          status: 'PENDING',
-          total: 0,
-          items: [],
-        };
-        const createResponse = await authFetch('/api/orders', {
-          method: 'POST',
-          body: JSON.stringify(newOrderPayload),
-        });
-        if (!createResponse.ok) {
-          const errorData = await createResponse.json().catch(() => ({}));
-          throw new Error(errorData.message || 'Failed to create new order');
-        }
-        const newOrder = await createResponse.json();
         setActiveOrders((prev) => prev.filter((o) => o.id !== order.id));
-        setNotification({ message: `Order #${order.id} reset successfully`, type: 'success' });
-        setEditingOrder(newOrder);
+        setNotification({ message: `${formatOrderLabel(order)} reset — add items to place a new order`, type: 'success' });
+        setEditingOrder(null);
         setShowOrderModal(true);
       } catch (error) {
         console.error('Error resetting order:', error);
@@ -230,15 +215,13 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
         });
         if (!updateResponse.ok) {
           const errorData = await updateResponse.json().catch(() => ({}));
-          throw new Error(errorData.message || 'Failed to update order before deletion');
+          throw new Error(errorData.message || 'Failed to remove order');
         }
-        const deleteResponse = await authFetch(`/api/orders/${order.id}`, { method: 'DELETE' });
-        if (!deleteResponse.ok) {
-          const errorData = await deleteResponse.json().catch(() => ({}));
-          throw new Error(errorData.message || 'Failed to delete empty order');
+        const data = await updateResponse.json();
+        if (data.deleted) {
+          setActiveOrders((prev) => prev.filter((o) => o.id !== order.id));
+          setNotification({ message: 'Order removed as all items were deleted!', type: 'success' });
         }
-        setActiveOrders((prev) => prev.filter((o) => o.id !== order.id));
-        setNotification({ message: 'Order removed as all items were deleted!', type: 'success' });
       } else {
         const response = await authFetch(`/api/orders/${order.id}`, {
           method: 'PUT',
@@ -271,7 +254,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
         throw new Error(errorData.message || 'Failed to delete empty order');
       }
       setActiveOrders((prev) => prev.filter((o) => o.id !== order.id));
-      setNotification({ message: `Order #${order.id} deleted successfully!`, type: 'success' });
+      setNotification({ message: `${formatOrderLabel(order)} deleted successfully!`, type: 'success' });
       setTimeout(() => setNotification(null), 3000);
     } catch (error) {
       console.error('Error deleting empty order:', error);
@@ -282,13 +265,14 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
 
   const handleMarkCompleted = async (orderId) => {
     try {
+      const completed = activeOrders.find((o) => o.id === orderId);
       await authFetch(`/api/orders/${orderId}`, {
         method: 'PUT',
         body: JSON.stringify({ status: 'completed' }),
       });
       setActiveOrders((prev) => prev.filter((order) => order.id !== orderId));
       setNotification({
-        message: `Takeaway Order #${orderId} marked as completed!`,
+        message: `${formatOrderLabel(completed || { id: orderId })} marked as completed!`,
         type: 'success',
       });
     } catch (error) {
@@ -477,7 +461,7 @@ const TakeawayManagement = ({ locationSettings, nextOrderId, setNextOrderId }) =
                     )
                   );
                   setNotification({
-                    message: `Takeaway order #${editingOrder.id} updated!`,
+                    message: `${formatOrderLabel(editingOrder)} updated!`,
                     type: 'success',
                   });
                   setEditingOrder(null);
@@ -609,7 +593,7 @@ const OrderCard = ({
         <div className="min-w-0">
           <p className="text-xs font-semibold text-gray-400">Order</p>
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-base font-bold text-gray-900">#{order.id}</p>
+            <p className="text-base font-bold text-gray-900">#{getOrderDisplayNumber(order)}</p>
             <SourceBadge source={order.source} />
           </div>
         </div>
@@ -789,7 +773,7 @@ const ReceiptModal = ({ order, fmt, onClose }) => {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div className="bg-gray-50 rounded-xl p-3">
               <p className="text-gray-400 font-semibold">Order ID</p>
-              <p className="text-sm font-bold text-gray-900 mt-0.5">#{order.id}</p>
+              <p className="text-sm font-bold text-gray-900 mt-0.5">#{getOrderDisplayNumber(order)}</p>
             </div>
             <div className="bg-gray-50 rounded-xl p-3">
               <p className="text-gray-400 font-semibold">Status</p>
@@ -896,7 +880,7 @@ const ReceiptModal = ({ order, fmt, onClose }) => {
               const receiptContent = `
                 <html>
                 <head>
-                  <title>Takeaway Receipt #${order.id}</title>
+                  <title>Takeaway Receipt #${getOrderDisplayNumber(order)}</title>
                   <style>
                     @page { size: 80mm auto; margin: 0; }
                     body { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; padding: 10px; width: 80mm; margin: 0 auto; }
@@ -913,7 +897,7 @@ const ReceiptModal = ({ order, fmt, onClose }) => {
                   <div class="center bold">RESTAURANT POS</div>
                   <div class="center">Takeaway Order Receipt</div>
                   <div class="line"></div>
-                  <div>Order ID: #${order.id}</div>
+                  <div>Order ID: #${getOrderDisplayNumber(order)}</div>
                   <div>Date: ${new Date(order.timestamp).toLocaleDateString()}</div>
                   <div>Time: ${new Date(order.timestamp).toLocaleTimeString()}</div>
                   <div class="line"></div>

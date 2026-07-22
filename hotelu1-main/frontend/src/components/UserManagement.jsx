@@ -3,6 +3,11 @@ import Notification from './Notification';
 import { getAPI_URL } from '../utils/api';
 import { savePermissionsMatrix } from '../utils/permissions';
 import {
+  isAdminUser,
+  isFranchiseManager,
+  getBranchLabel,
+} from '../utils/branchScope';
+import {
   Users,
   Shield,
   LayoutGrid,
@@ -223,7 +228,22 @@ const buildEmail = (user) => {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-const UserManagement = ({ token }) => {
+const UserManagement = ({ token, currentUser: currentUserProp }) => {
+  const currentUser = useMemo(() => {
+    if (currentUserProp) return currentUserProp;
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null');
+    } catch {
+      return null;
+    }
+  }, [currentUserProp]);
+
+  const isAdmin = isAdminUser(currentUser);
+  const isFranchiseMgr = isFranchiseManager(currentUser);
+  const assignableRoles = isAdmin
+    ? ROLES
+    : ['manager', 'waiter', 'chef', 'cashier'];
+
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -302,12 +322,18 @@ const UserManagement = ({ token }) => {
 
   const openCreateModal = () => {
     setEditingId(null);
+    const defaultBranch =
+      currentUser?.role === 'subfranchise' && currentUser?.subfranchise_id != null
+        ? String(currentUser.subfranchise_id)
+        : branches.length === 1
+          ? String(branches[0].id)
+          : '';
     setFormData({
       username: '',
       password: '',
       name: '',
       role: 'waiter',
-      subfranchise_id: '',
+      subfranchise_id: defaultBranch,
     });
     setShowUserModal(true);
   };
@@ -363,6 +389,18 @@ const UserManagement = ({ token }) => {
     if (!editingId && !formData.password) {
       setNotification({
         message: 'Password is required for new users',
+        type: 'error',
+      });
+      return;
+    }
+    if (
+      isFranchiseMgr &&
+      !isAdmin &&
+      formData.role !== 'admin' &&
+      (!formData.subfranchise_id || formData.subfranchise_id === '')
+    ) {
+      setNotification({
+        message: 'Select your restaurant branch — staff can only login for that location',
         type: 'error',
       });
       return;
@@ -556,8 +594,9 @@ const UserManagement = ({ token }) => {
             User &amp; Permissions
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Consolidated administration of security credentials, access levels, and module
-            authorizations
+            {isAdmin
+              ? 'Consolidated administration of security credentials, access levels, and module authorizations'
+              : `Manage staff logins for ${getBranchLabel(currentUser)} only — they will see this restaurant's dashboard, tables, takeaway and QR.`}
           </p>
         </div>
         {renderHeaderAction()}
@@ -625,6 +664,12 @@ const UserManagement = ({ token }) => {
           editingId={editingId}
           formData={formData}
           branches={branches}
+          assignableRoles={assignableRoles}
+          lockBranch={
+            currentUser?.role === 'subfranchise' &&
+            currentUser?.subfranchise_id != null
+          }
+          hideHqBranch={isFranchiseMgr && !isAdmin}
           onChange={handleInputChange}
           onSubmit={handleSubmit}
           onClose={closeUserModal}
@@ -948,6 +993,9 @@ const UserFormModal = ({
   editingId,
   formData,
   branches,
+  assignableRoles = ROLES,
+  lockBranch = false,
+  hideHqBranch = false,
   onChange,
   onSubmit,
   onClose,
@@ -1001,7 +1049,7 @@ const UserFormModal = ({
             onChange={onChange}
             className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
           >
-            {ROLES.map((r) => (
+            {assignableRoles.map((r) => (
               <option key={r} value={r}>
                 {r.charAt(0).toUpperCase() + r.slice(1)}
               </option>
@@ -1018,9 +1066,22 @@ const UserFormModal = ({
               name="subfranchise_id"
               value={formData.subfranchise_id}
               onChange={onChange}
-              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white"
+              disabled={lockBranch}
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm bg-white disabled:bg-gray-50 disabled:text-gray-500"
             >
-              <option value="">Main Branch / HQ (no branch)</option>
+              {!hideHqBranch && (
+                <option value="">Main Branch / HQ (no branch)</option>
+              )}
+              {!hideHqBranch && branches.length === 0 && (
+                <option value="" disabled>
+                  No branches available
+                </option>
+              )}
+              {hideHqBranch && branches.length === 0 && (
+                <option value="" disabled>
+                  No franchise branches found
+                </option>
+              )}
               {branches.map((b) => (
                 <option key={b.id} value={String(b.id)}>
                   {b.name}
@@ -1029,8 +1090,9 @@ const UserFormModal = ({
               ))}
             </select>
             <p className="text-[11px] text-gray-500 mt-1.5">
-              Assign a branch so this login only sees that restaurant&apos;s orders,
-              dashboard and kitchen display.
+              {lockBranch
+                ? 'Users are automatically assigned to your restaurant branch.'
+                : 'Assign a branch so this login only sees that restaurant\'s orders, dashboard and kitchen display.'}
             </p>
           </div>
         )}

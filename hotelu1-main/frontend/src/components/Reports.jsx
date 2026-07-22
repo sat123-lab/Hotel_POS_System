@@ -93,38 +93,38 @@ const computePrevRange = (start, end) => {
   const prevStart = new Date(prevEnd);
   prevStart.setDate(prevEnd.getDate() - (diffDays - 1));
   return [formatYMD(prevStart), formatYMD(prevEnd)];
-};
+    };
 
-const getOrderItemsArray = (order) => {
-  if (!order) return [];
-  const items = order.items;
-  if (Array.isArray(items)) return items;
-  if (items && Array.isArray(items.dataValues)) return items.dataValues;
-  return [];
-};
+    const getOrderItemsArray = (order) => {
+        if (!order) return [];
+        const items = order.items;
+        if (Array.isArray(items)) return items;
+        if (items && Array.isArray(items.dataValues)) return items.dataValues;
+        return [];
+    };
 
-const getItemField = (item, field) => {
-  if (!item) return undefined;
-  if (item[field] !== undefined) return item[field];
+    const getItemField = (item, field) => {
+        if (!item) return undefined;
+        if (item[field] !== undefined) return item[field];
   if (item.dataValues && item.dataValues[field] !== undefined)
     return item.dataValues[field];
-  return undefined;
-};
+        return undefined;
+    };
 
 const getItemName = (item) =>
   getItemField(item, 'name') ?? getItemField(item, 'itemName') ?? getItemField(item, 'title');
 
-const getItemQuantity = (item) => {
-  const q = getItemField(item, 'quantity') ?? getItemField(item, 'qty');
-  const n = Number(q);
-  return Number.isFinite(n) && n > 0 ? n : 1;
-};
+    const getItemQuantity = (item) => {
+        const q = getItemField(item, 'quantity') ?? getItemField(item, 'qty');
+        const n = Number(q);
+        return Number.isFinite(n) && n > 0 ? n : 1;
+    };
 
-const getItemPrice = (item) => {
-  const p = getItemField(item, 'price') ?? getItemField(item, 'unitPrice');
-  const n = Number(p);
-  return Number.isFinite(n) ? n : undefined;
-};
+    const getItemPrice = (item) => {
+        const p = getItemField(item, 'price') ?? getItemField(item, 'unitPrice');
+        const n = Number(p);
+        return Number.isFinite(n) ? n : undefined;
+    };
 
 const reportableFilter = (o) =>
   o && (o.status === 'completed' || o.status === 'delivered' || o.bill_status === 'paid');
@@ -206,30 +206,30 @@ const Reports = ({ locationSettings }) => {
   /* --------------------------- validation --------------------------- */
 
   const validateDateRange = useCallback((start, end) => {
-    if (!start || !end) {
-      setDateError('Please select both start and end dates');
-      return false;
-    }
-    const startDateObj = new Date(start + 'T00:00:00');
-    const endDateObj = new Date(end + 'T23:59:59');
-    const todayStart = new Date();
+        if (!start || !end) {
+            setDateError('Please select both start and end dates');
+            return false;
+        }
+        const startDateObj = new Date(start + 'T00:00:00');
+        const endDateObj = new Date(end + 'T23:59:59');
+        const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
+        const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
-    if (startDateObj > todayStart) {
+        if (startDateObj > todayStart) {
       setDateError("Start date cannot be greater than today's date");
-      return false;
-    }
-    if (endDateObj > todayEnd) {
+            return false;
+        }
+        if (endDateObj > todayEnd) {
       setDateError("End date cannot be greater than today's date");
-      return false;
-    }
-    if (startDateObj > endDateObj) {
-      setDateError('End date cannot be earlier than start date');
-      return false;
-    }
-    setDateError('');
-    return true;
+            return false;
+        }
+        if (startDateObj > endDateObj) {
+            setDateError('End date cannot be earlier than start date');
+            return false;
+        }
+        setDateError('');
+        return true;
   }, []);
 
   /* --------------------------- fetch --------------------------- */
@@ -246,7 +246,7 @@ const Reports = ({ locationSettings }) => {
     setIsLoading(true);
     try {
       const orders = await fetchOrdersForRange(startDate, endDate);
-      setOrdersData(orders);
+            setOrdersData(orders);
       const [pStart, pEnd] = computePrevRange(startDate, endDate);
       if (pStart && pEnd) {
         const prev = await fetchOrdersForRange(pStart, pEnd);
@@ -256,10 +256,10 @@ const Reports = ({ locationSettings }) => {
       }
     } catch (err) {
       console.error('Failed to fetch report data:', err);
-      setOrdersData([]);
+                setOrdersData([]);
       setPrevOrdersData([]);
     } finally {
-      setIsLoading(false);
+                setIsLoading(false);
     }
   }, [startDate, endDate, fetchOrdersForRange, validateDateRange]);
 
@@ -474,7 +474,7 @@ const Reports = ({ locationSettings }) => {
 
   /* --------------------------- render --------------------------- */
 
-  return (
+    return (
     <div
       className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
         isLoaded ? 'opacity-100' : 'opacity-0'
@@ -482,7 +482,7 @@ const Reports = ({ locationSettings }) => {
     >
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
-        <div>
+                        <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
               Reports &amp; Analytics
@@ -508,16 +508,16 @@ const Reports = ({ locationSettings }) => {
                 {liveConnected ? 'Live' : 'Auto'}
               </span>
             )}
-          </div>
+                        </div>
           <p className="text-sm text-gray-500 mt-1">Comprehensive business intelligence</p>
-        </div>
+                        </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <div className="bg-white border border-gray-200 shadow-sm rounded-full p-1 flex items-center gap-1">
             {QUICK_RANGES.map((q) => {
               const active = activeRange === q.id;
               return (
-                <button
+                                <button
                   key={q.id}
                   onClick={() => setQuickDateRange(q.id)}
                   className={`px-4 py-1.5 text-xs sm:text-sm font-semibold rounded-full transition-all ${
@@ -527,11 +527,11 @@ const Reports = ({ locationSettings }) => {
                   }`}
                 >
                   {q.label}
-                </button>
+                                </button>
               );
             })}
           </div>
-          <button
+                                <button
             onClick={() => setShowFilters((v) => !v)}
             className={`w-10 h-10 rounded-full border flex items-center justify-center transition ${
               showFilters
@@ -541,16 +541,16 @@ const Reports = ({ locationSettings }) => {
             title="Show filters"
           >
             <Filter className="w-4 h-4" />
-          </button>
-          <button
+                                </button>
+                                <button
             onClick={handleExport}
             className="w-10 h-10 rounded-full bg-white border border-gray-200 text-gray-500 hover:text-gray-800 hover:border-gray-300 flex items-center justify-center transition shadow-sm"
             title="Download report"
           >
             <Download className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+                                </button>
+                        </div>
+                    </div>
 
       {/* Report Filters panel — styled per image 3 */}
       {showFilters && (
@@ -579,11 +579,11 @@ const Reports = ({ locationSettings }) => {
               max={todayIso}
             />
           </div>
-          {dateError && (
+                    {dateError && (
             <p className="mt-3 text-xs font-semibold text-rose-500">{dateError}</p>
           )}
-        </div>
-      )}
+                        </div>
+                    )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
@@ -599,7 +599,7 @@ const Reports = ({ locationSettings }) => {
             isLoaded={isLoaded}
           />
         ))}
-      </div>
+            </div>
 
       {/* Revenue Trend + Peak Sales Hours */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
@@ -688,7 +688,7 @@ const Reports = ({ locationSettings }) => {
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
-      </div>
+            </div>
 
       {/* Order Distribution + Top Selling Items */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -697,8 +697,8 @@ const Reports = ({ locationSettings }) => {
             <div className="h-[260px] flex items-center justify-center text-sm text-gray-400">
               No order data available
             </div>
-          ) : (
-            <>
+                    ) : (
+                        <>
               <div className="h-[200px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
@@ -723,7 +723,7 @@ const Reports = ({ locationSettings }) => {
                     />
                   </PieChart>
                 </ResponsiveContainer>
-              </div>
+                                        </div>
               <div className="mt-2 flex items-center justify-center flex-wrap gap-4 text-xs">
                 {orderDistribution.map((d) => (
                   <div key={d.name} className="flex items-center gap-1.5">
@@ -734,9 +734,9 @@ const Reports = ({ locationSettings }) => {
                     <span className="text-gray-600 font-medium">
                       {d.name}: <span className="text-gray-900 font-bold">{d.value}</span>
                     </span>
-                  </div>
+                                    </div>
                 ))}
-              </div>
+                                </div>
             </>
           )}
         </ChartCard>
@@ -745,7 +745,7 @@ const Reports = ({ locationSettings }) => {
           {topItems.length === 0 ? (
             <div className="h-[260px] flex items-center justify-center text-sm text-gray-400">
               No sales data for selected period
-            </div>
+                                        </div>
           ) : (
             <div className="space-y-4">
               {topItems.map((it, idx) => {
@@ -762,7 +762,7 @@ const Reports = ({ locationSettings }) => {
                   >
                     <div className="w-7 h-7 rounded-full bg-orange-50 text-orange-500 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
                       {idx + 1}
-                    </div>
+                                    </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline justify-between gap-3">
                         <p className="text-sm font-bold text-gray-900 truncate">
@@ -771,22 +771,22 @@ const Reports = ({ locationSettings }) => {
                         <p className="text-sm font-bold text-gray-900 shrink-0">
                           {fmt(it.revenue)}
                         </p>
-                      </div>
+                                </div>
                       <div className="mt-1.5 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                         <div
                           className="h-full bg-gradient-to-r from-orange-400 to-orange-500 transition-all duration-500"
                           style={{ width: `${Math.min(100, Math.max(8, pct))}%` }}
                         />
-                      </div>
+                            </div>
                       <p className="text-[11px] text-gray-400 mt-1">{it.orders} orders</p>
-                    </div>
-                  </div>
+                                        </div>
+                                    </div>
                 );
               })}
-            </div>
+                                </div>
           )}
         </ChartCard>
-      </div>
+                            </div>
 
       {/* Chef Performance */}
       <div className="mt-4">
@@ -796,7 +796,7 @@ const Reports = ({ locationSettings }) => {
           isLoaded={isLoaded}
           live={liveConnected && includesToday}
         />
-      </div>
+                                        </div>
 
       <style>{`
         @keyframes slideUpFade {
@@ -809,7 +809,7 @@ const Reports = ({ locationSettings }) => {
         }
         .animate-fade-in { animation: fadeIn .25s ease-out both; }
       `}</style>
-    </div>
+                                    </div>
   );
 };
 
@@ -922,9 +922,9 @@ const KpiCard = ({ label, value, delta, color, Icon, delay, isLoaded }) => {
         {Icon && (
           <div className={`w-7 h-7 rounded-lg bg-gray-50 ${color} flex items-center justify-center`}>
             <Icon className="w-3.5 h-3.5" />
-          </div>
+                                </div>
         )}
-      </div>
+                            </div>
       <p className={`text-2xl sm:text-3xl font-bold ${color} leading-none`}>{value}</p>
       <div
         className={`mt-2 inline-flex items-center gap-1 text-xs font-semibold ${
@@ -938,8 +938,8 @@ const KpiCard = ({ label, value, delta, color, Icon, delay, isLoaded }) => {
         )}
         {positive ? '+' : ''}
         {(delta || 0).toFixed(1)}%
-      </div>
-    </div>
+                </div>
+            </div>
   );
 };
 
@@ -947,7 +947,7 @@ const ChartCard = ({ title, children }) => (
   <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
     <h3 className="text-base font-bold text-gray-900 mb-3">{title}</h3>
     {children}
-  </div>
+                                </div>
 );
 
 /* ------------------------------------------------------------------ */
@@ -1140,9 +1140,9 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
               <p className="text-xs text-gray-500">
                 Prep-time analytics per kitchen staff member
               </p>
-            </div>
-          </div>
-        </div>
+                            </div>
+                        </div>
+                    </div>
         <div className="h-32 flex flex-col items-center justify-center text-center text-sm text-gray-400">
           <Timer className="w-6 h-6 mb-2 text-gray-300" />
           No chef activity in this period yet.
@@ -1154,8 +1154,8 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
             <span className="font-semibold">Kitchen Staff</span> without a
             prep-time.
           </span>
-        </div>
-      </div>
+                                </div>
+                            </div>
     );
   }
 
@@ -1183,7 +1183,7 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
             <p className="text-xs text-gray-500">
               How long each cook took per order — lower is better
             </p>
-          </div>
+                        </div>
         </div>
 
         {/* Roll-up KPIs */}
@@ -1218,12 +1218,12 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
               tint="text-amber-500 bg-amber-50"
             />
           )}
-        </div>
-      </div>
+                </div>
+            </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Leaderboard */}
-        <div className="space-y-3">
+                        <div className="space-y-3">
           {chefs.map((c, idx) => {
             const ordersPct = (c.ordersPrepared / maxOrders) * 100;
             const isFastest =
@@ -1244,7 +1244,7 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-400 to-orange-500 text-white text-sm font-bold flex items-center justify-center shrink-0">
                     {c.name.charAt(0).toUpperCase()}
-                  </div>
+                                        </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline justify-between gap-2 mb-0.5 flex-wrap">
                       <p className="text-sm font-bold text-gray-900 truncate flex items-center gap-1.5">
@@ -1276,13 +1276,13 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                           ? (c.estimated ? '≈ ' : '') + formatPrepTime(c.avgPrepMin)
                           : '—'}
                       </p>
-                    </div>
+                                    </div>
                     <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
                       <div
                         className="h-full bg-gradient-to-r from-orange-400 to-orange-500 transition-all duration-500"
                         style={{ width: `${Math.min(100, Math.max(6, ordersPct))}%` }}
                       />
-                    </div>
+                                    </div>
                     <div className="mt-1.5 flex items-center justify-between text-[11px] text-gray-500 flex-wrap gap-1">
                       <span>
                         <span className="font-semibold text-gray-700">
@@ -1299,7 +1299,7 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                           ? `${c.estimated ? 'Est.' : 'Fast'} ${formatPrepTime(c.fastestMin)} · ${c.estimated ? 'Est.' : 'Slow'} ${formatPrepTime(c.slowestMin)}`
                           : 'No prep-time recorded'}
                       </span>
-                    </div>
+                                </div>
                     {c.estimated && (
                       <p className="mt-1 text-[10px] text-gray-400 italic">
                         Estimated from full order time — for precise data,
@@ -1307,18 +1307,18 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
                         Ready.
                       </p>
                     )}
-                  </div>
-                </div>
+                        </div>
+                            </div>
                 {c.inProgress > 0 && (
                   <p className="mt-2 text-[10px] font-semibold tracking-wider uppercase text-blue-600 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
                     {c.inProgress} order{c.inProgress > 1 ? 's' : ''} in progress
                   </p>
-                )}
-              </div>
+                    )}
+                </div>
             );
           })}
-        </div>
+            </div>
 
         {/* Avg prep-time chart */}
         <div className="border border-gray-100 rounded-xl p-3">
@@ -1392,10 +1392,10 @@ const ChefPerformanceSection = ({ stats, fmt, isLoaded, live }) => {
               </ResponsiveContainer>
             );
           })()}
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 };
 
 const MiniStat = ({ Icon, label, value, tint }) => (

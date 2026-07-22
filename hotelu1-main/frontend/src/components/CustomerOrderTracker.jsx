@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { getAPI_URL, getSocketUrl } from '../utils/api';
 import { getLocationSettingsForCountry } from '../utils/currency';
 import useCurrency from '../hooks/useCurrency';
+import { getOrderDisplayNumber } from '../utils/orderDisplay';
 import { io } from 'socket.io-client';
 import {
   playOrderReadyBell,
@@ -179,7 +180,7 @@ const CustomerOrderTracker = ({ orderId, tableId, locationSettings: locationSett
         <div className="text-center">
           <div className="text-5xl mb-2">{currentStatus.icon}</div>
           <h3 className="text-2xl font-bold mb-1">{currentStatus.label}</h3>
-          <p className="text-sm opacity-90">Order #{order.id} • Table {order.table_name}</p>
+          <p className="text-sm opacity-90">Order #{getOrderDisplayNumber(order)} • Table {order.table_name}</p>
         </div>
       </div>
 

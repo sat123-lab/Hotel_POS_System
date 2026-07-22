@@ -15,6 +15,7 @@ import {
   CornerDownLeft,
 } from 'lucide-react';
 import { authFetch } from '../utils/api';
+import { formatOrderLabel } from '../utils/orderDisplay';
 import { useNotifications } from '../contexts/NotificationsContext';
 import ThemeToggle from './ThemeToggle';
 
@@ -154,7 +155,7 @@ const TopHeader = ({ currentUser, handleLogout, setActiveTab }) => {
       .map((o) => ({
         type: 'order',
         id: `order-${o.id}`,
-        name: `Order #${o.id}`,
+        name: formatOrderLabel(o),
         sub: `${o.table_name || (String(o.type).toUpperCase() === 'TAKEAWAY' ? 'Takeaway' : 'Order')} · ${o.status} · ₹${Number(o.total || 0).toFixed(2)}`,
         route: '/orders',
       }));

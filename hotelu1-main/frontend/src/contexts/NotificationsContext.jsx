@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import { io } from 'socket.io-client';
 import { authFetch, getSocketUrl } from '../utils/api';
+import { getOrderDisplayNumber, formatOrderLabel } from '../utils/orderDisplay';
 
 const NotificationsContext = createContext(null);
 
@@ -78,7 +79,7 @@ const buildOrderNotifications = (orders) => {
           String(o.type).toUpperCase() === 'TAKEAWAY'
             ? 'New Takeaway Order'
             : 'New Table Order Placed',
-        message: `Order #${o.id} has been placed for ${tableLabel}. Total: ₹${total.toFixed(2)}.`,
+        message: `${formatOrderLabel(o)} has been placed for ${tableLabel}. Total: ₹${total.toFixed(2)}.`,
         timestamp: ts,
       });
     }
@@ -94,7 +95,7 @@ const buildOrderNotifications = (orders) => {
             type: 'kitchen-delay',
             severity: 'warning',
             title: 'Kitchen Delay Warning',
-            message: `${tableLabel} order (#${o.id}) has been in 'Preparing' state for over ${delayMin} minutes.`,
+            message: `${tableLabel} order (#${getOrderDisplayNumber(o)}) has been in 'Preparing' state for over ${delayMin} minutes.`,
             timestamp: ts,
           });
         }
@@ -108,7 +109,7 @@ const buildOrderNotifications = (orders) => {
         type: 'order-ready',
         severity: 'info',
         title: 'Order Ready for Pickup',
-        message: `Order #${o.id} for ${tableLabel} is ready to be served.`,
+        message: `${formatOrderLabel(o)} for ${tableLabel} is ready to be served.`,
         timestamp: ts,
       });
     }

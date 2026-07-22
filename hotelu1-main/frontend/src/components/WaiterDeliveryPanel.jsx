@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Notification from './Notification';
 import { getAPI_URL } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
+import { formatOrderLabel, getOrderDisplayNumber } from '../utils/orderDisplay';
 
 const WaiterDeliveryPanel = ({ locationSettings }) => {
   const { format: fmt } = useCurrency(locationSettings);
@@ -38,6 +39,7 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
 
   const handleConfirmDelivery = async (orderId) => {
     const token = localStorage.getItem('token');
+    const delivered = readyOrders.find((o) => o.id === orderId);
     try {
       const response = await fetch(`${getAPI_URL()}/api/orders/${orderId}/confirm-delivery`, {
         method: 'PUT',
@@ -58,7 +60,7 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
       setReadyOrders(prev => prev.filter(o => o.id !== orderId));
       setSelectedOrder(null);
       setNotification({ 
-        message: `Order #${orderId} delivered. Bill generated automatically.`, 
+        message: `${formatOrderLabel(delivered || { id: orderId })} delivered. Bill generated automatically.`, 
         type: 'success' 
       });
     } catch (error) {
@@ -78,7 +80,7 @@ const WaiterDeliveryPanel = ({ locationSettings }) => {
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-4 hover:shadow-md transition-shadow duration-200">
         <div className="flex justify-between items-start mb-3">
           <div>
-            <p className="text-xs font-semibold text-slate-500">Order #{order.id}</p>
+            <p className="text-xs font-semibold text-slate-500">{formatOrderLabel(order)}</p>
             <p className="text-lg font-semibold text-slate-900">Table {order.table_name}</p>
           </div>
           <div className="px-3 py-2 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">

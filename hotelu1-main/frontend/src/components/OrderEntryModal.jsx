@@ -13,6 +13,18 @@ import {
   loadTaxDiscountSettings,
   openReceiptForPrint,
 } from '../utils/receiptPrint';
+import { getOrderDisplayNumber, formatOrderLabel } from '../utils/orderDisplay';
+import { appendBranchToOrderPayload } from '../utils/branchScope';
+import {
+  Search,
+  X,
+  UtensilsCrossed,
+  Plus,
+  Minus,
+  ShoppingCart,
+  Trash2,
+  Check,
+} from 'lucide-react';
 
 const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, nextOrderId, setNextOrderId, orderType, initialOrder }) => {
     const { format: fmt } = useCurrency(locationSettings);
@@ -213,7 +225,7 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
             });
             openReceiptForPrint(
                 `${kitchenHtml}${customerHtml}`,
-                `Takeaway Bill #${order.id}`
+                `Takeaway Bill #${getOrderDisplayNumber(order)}`
             );
         } catch (e) {
             console.error('Print failed:', e);
@@ -314,7 +326,8 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
         const finalTotal = afterDiscount + taxAmount;
         
         // For existing orders, identify new items vs existing items
-        let newOrder = {
+        let newOrder = appendBranchToOrderPayload(
+          {
             table_name: table && table.id ? table.id : (orderType === 'TAKEAWAY' ? 'Takeaway' : 'Unknown'),
             items: orderItems,
             subtotal: subtotal,
@@ -324,8 +337,16 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
             taxAmount: taxAmount,
             total: finalTotal,
             type: orderType,
-            timestamp: new Date().toISOString()
-        };
+            timestamp: new Date().toISOString(),
+          },
+          (() => {
+            try {
+              return JSON.parse(localStorage.getItem('user') || 'null');
+            } catch {
+              return null;
+            }
+          })()
+        );
 
         // If editing existing order, handle differently for Takeaway vs Dine-in
         if (initialOrder && initialOrder.id) {
@@ -366,7 +387,7 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
                     const updatedOrder = await updateResponse.json();
                     setCart({});
                     onOrderPlaced(updatedOrder);
-                    setNotification({ message: `Takeaway Order #${updatedOrder.id} updated successfully!`, type: 'success' });
+                    setNotification({ message: `${formatOrderLabel(updatedOrder)} updated successfully!`, type: 'success' });
                     setTimeout(() => {
                         setNotification(null);
                         onClose();
@@ -466,20 +487,21 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
         return matchesCategory && matchesSearch;
     });
 
-    // Get category icon
-    const getCategoryIcon = (category) => {
-        const icons = {
-            'Starters': '🍲',
-            'Biryani': '🍛',
-            'Fast Food': '🍔',
-            'Beverages': '🥤',
-            'Desserts': '🍰',
-            'Chinese': '🥡',
-            'Veg': '🥬',
-            'Other': '🍽️'
-        };
-        return icons[category] || '🍽️';
+    // Category label helper
+    const getDisplayCategory = (item) => {
+        let displayCategory = item.category || 'Other';
+        if (item.name && item.name.toLowerCase().includes('veg')) {
+            displayCategory = 'Veg';
+        } else if (item.description && item.description.toLowerCase().includes('veg')) {
+            displayCategory = 'Veg';
+        } else if (displayCategory && displayCategory.toLowerCase() === 'veg') {
+            displayCategory = 'Veg';
+        }
+        return displayCategory;
     };
+
+    const cartCount = Object.keys(cart).length;
+    const cartItemQty = (itemId) => cart[itemId]?.qty || 0;
 
     // Highlight search term in text
     const highlightText = (text, searchTerm) => {
@@ -501,276 +523,298 @@ const OrderEntryModal = ({ table, onClose, onOrderPlaced, locationSettings, next
 
     return (
         <>
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 sm:p-4 z-50">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col">
-                {/* Modal Header - Orange Theme */}
-                <div className="flex justify-between items-center p-4 sm:p-6 border-b border-orange-100 bg-gradient-to-r from-orange-500 to-orange-600 flex-shrink-0">
-                    <h3 className="text-lg sm:text-2xl font-bold text-white">
-                        New {orderType === 'TAKEAWAY' ? 'Takeaway' : 'Dine-In'} Order for {table && table.id === 'Takeaway' ? 'Takeaway' : table && table.id ? `Table ${table.id}` : ''}
-                    </h3>
-                    <button 
-                        onClick={onClose} 
-                        className="text-white/80 hover:text-white bg-white/20 hover:bg-white/30 rounded-full p-2 transition-colors"
+        <div className="fixed inset-0 bg-black/45 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col border border-gray-100">
+                {/* Header */}
+                <div className="flex justify-between items-center px-5 sm:px-6 py-4 border-b border-orange-100 bg-gradient-to-r from-orange-500 to-orange-600 flex-shrink-0">
+                    <div>
+                        <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-orange-100">
+                            {orderType === 'TAKEAWAY' ? 'Takeaway Order' : 'Dine-In Order'}
+                        </p>
+                        <h3 className="text-lg sm:text-xl font-bold text-white mt-0.5">
+                            {table && table.id === 'Takeaway'
+                                ? 'New Takeaway Order'
+                                : table?.id
+                                  ? `Table ${table.id}`
+                                  : 'New Order'}
+                        </h3>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="text-white/90 hover:text-white bg-white/15 hover:bg-white/25 rounded-xl p-2 transition-colors"
+                        aria-label="Close"
                     >
-                        <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
+                        <X className="w-5 h-5" />
                     </button>
                 </div>
                 {notification && <Notification message={notification.message} type={notification.type} onClose={() => setNotification(null)} />}
-                <div className="p-3 sm:p-6 flex-grow overflow-hidden flex flex-col">
-                    <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 flex-grow min-h-0">
-                        {/* Menu Items Panel - Full width on mobile, 3/4 on desktop */}
-                        <div className="flex-1 lg:flex-[3] bg-gradient-to-br from-orange-50 to-red-50 p-3 sm:p-6 rounded-xl border border-orange-100 overflow-hidden flex flex-col min-h-0 max-h-[calc(100vh-120px)] lg:max-h-none">
-                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 sm:mb-4 flex-shrink-0 gap-2 sm:gap-0">
-                                <h4 className="text-lg sm:text-2xl font-bold text-gray-800 flex items-center">
-                                    <span className="mr-1 sm:mr-2 text-lg sm:text-2xl">🍽️</span> Menu Items
-                                </h4>
-                                <div className="flex items-center space-x-2">
-                                    <div className="relative">
+                <div className="p-4 sm:p-5 flex-grow overflow-hidden flex flex-col bg-[#F7F7F8]">
+                    <div className="flex flex-col lg:flex-row gap-4 flex-grow min-h-0">
+                        {/* Menu panel */}
+                        <div className="flex-1 lg:flex-[3] bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col min-h-0 max-h-[calc(100vh-140px)] lg:max-h-none">
+                            <div className="px-4 sm:px-5 py-4 border-b border-gray-100 flex-shrink-0">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-9 h-9 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center">
+                                            <UtensilsCrossed className="w-4 h-4" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-base sm:text-lg font-bold text-gray-900">Menu</h4>
+                                            <p className="text-xs text-gray-500">{filteredMenu.length} items available</p>
+                                        </div>
+                                    </div>
+                                    <div className="relative w-full sm:w-64">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                         <input
                                             type="text"
-                                            placeholder="Search items"
+                                            placeholder="Search dishes..."
                                             value={searchTerm}
                                             onChange={(e) => setSearchTerm(e.target.value)}
-                                            className="pl-3 sm:pl-4 pr-8 sm:pr-10 py-1.5 sm:py-2.5 border-2 border-orange-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 w-32 sm:w-56 text-xs sm:text-sm font-medium transition-all duration-200 bg-white shadow-sm"
+                                            className="w-full pl-9 pr-9 py-2.5 rounded-xl border border-gray-200 bg-gray-50/80 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-100 focus:border-orange-300 text-sm transition-all"
                                         />
                                         {searchTerm && (
                                             <button
+                                                type="button"
                                                 onClick={() => setSearchTerm('')}
-                                                className="absolute right-2 sm:right-3 top-1.5 sm:top-2.5 text-gray-400 hover:text-gray-600 transition-colors text-xs sm:text-sm"
+                                                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
                                             >
-                                                ✕
+                                                <X className="w-3.5 h-3.5" />
                                             </button>
                                         )}
                                     </div>
                                 </div>
+
+                                <div className="flex flex-wrap gap-2 mt-4">
+                                    {categories.map((category) => {
+                                        const active = selectedCategory === category;
+                                        return (
+                                            <button
+                                                key={category}
+                                                type="button"
+                                                onClick={() => setSelectedCategory(category)}
+                                                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                                                    active
+                                                        ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-md shadow-orange-200/50'
+                                                        : 'bg-gray-50 text-gray-600 border border-gray-200 hover:border-orange-200 hover:text-orange-600'
+                                                }`}
+                                            >
+                                                {category}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                            
-                            {/* Category Tabs */}
-                            <div className="flex flex-wrap gap-1 sm:gap-2 mb-3 sm:mb-4 flex-shrink-0">
-                                {categories.map(category => (
-                                    <button
-                                        key={category}
-                                        onClick={() => setSelectedCategory(category)}
-                                        className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-full font-medium transition-all duration-200 text-xs sm:text-sm ${
-                                            selectedCategory === category
-                                                ? 'bg-gradient-to-r from-orange-400 to-red-400 text-white shadow-lg transform scale-105'
-                                                : 'bg-white text-gray-700 border border-gray-300 hover:border-orange-400 hover:shadow-md'
-                                        }`}
-                                    >
-                                        <span className="mr-0.5 sm:mr-1 text-xs sm:text-sm">{getCategoryIcon(category)}</span>
-                                        <span className="text-xs sm:text-sm">{category}</span>
-                                    </button>
-                                ))}
-                            </div>
-                            
-                            <div className="flex-grow overflow-hidden min-h-0">
-                                {console.log('OrderEntryModal: Rendering menu items, menu array:', menu)}
-                                {console.log('OrderEntryModal: Menu length:', menu.length)}
+
+                            <div className="flex-grow overflow-hidden min-h-0 px-4 sm:px-5 py-4">
                                 {filteredMenu.length === 0 ? (
-                                    <div className="text-center py-4 sm:py-8 h-full flex items-center justify-center">
-                                        <div>
-                                            {searchTerm ? (
-                                                <>
-                                                    <div className="text-4xl sm:text-6xl mb-2 sm:mb-4">🔍</div>
-                                                    <p className="text-gray-500 text-sm sm:text-lg mb-1 sm:mb-2">No items found for "{searchTerm}"</p>
-                                                    <p className="text-xs sm:text-sm text-gray-400 mb-2 sm:mb-4">Try different keywords or browse categories</p>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                                        <span className="text-3xl">🍽️</span>
-                                                    </div>
-                                                    <p className="text-gray-600 font-medium mb-1">No menu items available</p>
-                                                    <p className="text-xs text-gray-400">Try selecting a different category</p>
-                                                </>
-                                            )}
+                                    <div className="h-full flex items-center justify-center py-10">
+                                        <div className="text-center max-w-xs">
+                                            <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
+                                                <Search className="w-6 h-6 text-gray-400" />
+                                            </div>
+                                            <p className="text-gray-700 font-semibold">
+                                                {searchTerm ? `No results for "${searchTerm}"` : 'No menu items'}
+                                            </p>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                {searchTerm ? 'Try another search or category' : 'Check back later or pick another category'}
+                                            </p>
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="h-full overflow-y-auto pr-1 sm:pr-2">
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                                            {filteredMenu.map(item => {
-                                                // Smart categorization for display with consistent casing
-                                                let displayCategory = item.category || 'Other';
-                                                
-                                                // Check if item name contains 'veg' (case insensitive)
-                                                if (item.name && item.name.toLowerCase().includes('veg')) {
-                                                    displayCategory = 'Veg';  // Always use 'Veg' with capital V
-                                                }
-                                                // Check if description contains 'veg'
-                                                else if (item.description && item.description.toLowerCase().includes('veg')) {
-                                                    displayCategory = 'Veg';  // Always use 'Veg' with capital V
-                                                }
-                                                // Normalize existing veg categories
-                                                else if (displayCategory && displayCategory.toLowerCase() === 'veg') {
-                                                    displayCategory = 'Veg';  // Convert 'veg' to 'Veg'
-                                                }
-                                                
+                                    <div className="h-full overflow-y-auto pr-1 -mr-1 scrollbar-thin">
+                                        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-3 sm:gap-4">
+                                            {filteredMenu.map((item) => {
+                                                const displayCategory = getDisplayCategory(item);
+                                                const itemId = item.id || item.productId;
+                                                const inCart = cartItemQty(itemId);
+
                                                 return (
-                                                <div key={item.id} className="bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 transform hover:scale-102 overflow-hidden group border border-orange-100">
-                                                    {/* Food Image - Circular like MenuManagement */}
-                                                    <div className="w-full h-24 sm:h-28 bg-gradient-to-br from-orange-50 to-orange-100 flex items-center justify-center border-b border-orange-50">
-                                                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-white shadow-md overflow-hidden flex items-center justify-center">
+                                                    <div
+                                                        key={item.id}
+                                                        className={`group relative flex flex-col rounded-2xl border bg-white overflow-hidden transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${
+                                                            inCart
+                                                                ? 'border-orange-300 ring-2 ring-orange-100'
+                                                                : 'border-gray-100 hover:border-orange-200'
+                                                        }`}
+                                                    >
+                                                        <div className="relative aspect-[4/3] bg-gradient-to-br from-gray-50 to-gray-100 overflow-hidden">
                                                             {item.image ? (
-                                                                <img 
-                                                                    src={item.image} 
+                                                                <img
+                                                                    src={item.image}
                                                                     alt={item.name}
-                                                                    className="w-full h-full object-cover"
+                                                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                                                 />
                                                             ) : (
-                                                                <span className="text-2xl sm:text-3xl">{getCategoryIcon(displayCategory)}</span>
+                                                                <div className="w-full h-full flex items-center justify-center text-gray-300">
+                                                                    <UtensilsCrossed className="w-10 h-10" />
+                                                                </div>
+                                                            )}
+                                                            {inCart > 0 && (
+                                                                <span className="absolute top-2 right-2 min-w-[22px] h-[22px] px-1 rounded-full bg-orange-500 text-white text-[11px] font-bold flex items-center justify-center shadow-md">
+                                                                    {inCart}
+                                                                </span>
                                                             )}
                                                         </div>
-                                                    </div>
-                                                    <div className="p-2 sm:p-3">
-                                                        {/* Available Badge */}
-                                                        <div className="mb-2">
-                                                            <span className="bg-green-100 text-green-700 text-[10px] sm:text-xs px-2 py-1 rounded-full font-semibold inline-flex items-center">
-                                                                <span className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1"></span>
-                                                                Available
-                                                            </span>
+
+                                                        <div className="p-3 flex flex-col flex-1">
+                                                            <h5 className="font-bold text-gray-900 text-sm leading-snug line-clamp-2 min-h-[2.5rem]">
+                                                                {highlightText(item.name, searchTerm)}
+                                                            </h5>
+                                                            <p className="text-[11px] text-gray-500 mt-1 mb-3">{displayCategory}</p>
+                                                            <div className="mt-auto flex items-center justify-between gap-2">
+                                                                <p className="text-base font-extrabold text-gray-900">
+                                                                    {fmt(item.price)}
+                                                                </p>
+                                                                {inCart > 0 ? (
+                                                                    <div className="flex items-center gap-1 bg-orange-50 rounded-xl p-0.5 border border-orange-100">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => updateCartQty(itemId, -1)}
+                                                                            className="w-8 h-8 rounded-lg flex items-center justify-center text-orange-600 hover:bg-orange-100 transition-colors"
+                                                                        >
+                                                                            <Minus className="w-4 h-4" />
+                                                                        </button>
+                                                                        <span className="w-6 text-center text-sm font-bold text-gray-900">{inCart}</span>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => updateCartQty(itemId, 1)}
+                                                                            className="w-8 h-8 rounded-lg flex items-center justify-center text-orange-600 hover:bg-orange-100 transition-colors"
+                                                                        >
+                                                                            <Plus className="w-4 h-4" />
+                                                                        </button>
+                                                                    </div>
+                                                                ) : (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => addToCart(item)}
+                                                                        className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white text-xs font-semibold shadow-sm shadow-orange-200/60 transition-all"
+                                                                    >
+                                                                        <Plus className="w-3.5 h-3.5" />
+                                                                        Add
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                        {/* Item Name */}
-                                                        <h5 className="font-bold text-gray-800 text-xs sm:text-sm mb-1 group-hover:text-orange-600 transition-colors leading-tight line-clamp-1">
-                                                            {highlightText(item.name, searchTerm)}
-                                                        </h5>
-                                                        {/* Category */}
-                                                        <p className="text-[10px] sm:text-xs text-gray-500 mb-2">
-                                                            {displayCategory}
-                                                        </p>
-                                                        {/* Price and Add Button */}
-                                                        <div className="flex items-center justify-between">
-                                                            <p className="text-sm sm:text-base font-bold text-orange-600">
-                                                                {fmt(item.price)}
-                                                            </p>
-                                                            <button
-                                                                onClick={() => addToCart(item)}
-                                                                className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-full w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center font-bold text-sm shadow-md transition-all duration-200 transform hover:scale-110 flex-shrink-0"
-                                                            >
-                                                                +
-                                                            </button>
-                                                        </div>
                                                     </div>
-                                                </div>
-                                            )})}
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 )}
                             </div>
                         </div>
-                        {/* Right Panel - Current Order - Hidden on mobile, visible on desktop */}
-                        <div className="hidden lg:flex flex-1 lg:max-w-[280px] bg-white flex-col rounded-xl border border-orange-100 shadow-sm">
-                            <div className="p-3 sm:p-4 bg-gradient-to-r from-orange-50 to-orange-100/50 border-b border-orange-100 flex-shrink-0">
-                                <h4 className="text-base sm:text-lg font-bold text-gray-800 flex items-center">
-                                    <svg className="w-4 h-4 mr-2 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                                    </svg>
+
+                        {/* Cart sidebar — desktop */}
+                        <div className="hidden lg:flex w-full lg:w-[300px] flex-shrink-0 bg-white flex-col rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                            <div className="px-4 py-3.5 border-b border-gray-100 flex items-center justify-between">
+                                <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                                    <ShoppingCart className="w-4 h-4 text-orange-500" />
                                     Current Order
                                 </h4>
+                                {cartCount > 0 && (
+                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-600">
+                                        {cartCount} {cartCount === 1 ? 'item' : 'items'}
+                                    </span>
+                                )}
                             </div>
-                            <div className="flex-grow overflow-hidden">
-                                {Object.keys(cart).length === 0 ? (
-                                    <div className="h-full flex items-center justify-center">
+                            <div className="flex-grow overflow-hidden flex flex-col min-h-0 p-4">
+                                {cartCount === 0 ? (
+                                    <div className="flex-1 flex items-center justify-center">
                                         <div className="text-center">
-                                            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                                <svg className="w-8 h-8 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                                                </svg>
+                                            <div className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-3">
+                                                <ShoppingCart className="w-6 h-6 text-gray-300" />
                                             </div>
-                                            <p className="text-gray-600 font-medium mb-1">Add items to order</p>
-                                            <p className="text-xs text-gray-400">Select delicious items from the menu</p>
+                                            <p className="text-sm font-semibold text-gray-700">Cart is empty</p>
+                                            <p className="text-xs text-gray-500 mt-1">Select items from the menu</p>
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="h-full flex flex-col">
-                                        <div className="space-y-1.5 sm:space-y-2 flex-grow overflow-y-auto pr-1 sm:pr-2">
-                                            {Object.values(cart).map(item => (
-                                                <div key={item.id} className="bg-white rounded-xl p-2 sm:p-3 shadow-sm border border-orange-200 hover:shadow-md transition-shadow">
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex-1 min-w-0">
-                                                            <h6 className="font-bold text-gray-800 text-xs sm:text-sm truncate">{item.name}</h6>
-                                                            <p className="text-xs text-gray-500">
-                                                                {fmt(item.price)} × {item.qty}
+                                    <>
+                                        <div className="space-y-2 flex-1 overflow-y-auto pr-1 -mr-1">
+                                            {Object.values(cart).map((item) => (
+                                                <div
+                                                    key={item.id}
+                                                    className="rounded-xl border border-gray-100 bg-gray-50/50 p-3"
+                                                >
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="min-w-0 flex-1">
+                                                            <h6 className="font-semibold text-gray-900 text-sm truncate">{item.name}</h6>
+                                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                                {fmt(item.price)} each
                                                             </p>
                                                         </div>
-                                                        <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0 ml-1 sm:ml-2">
+                                                        <p className="text-sm font-bold text-orange-600 shrink-0">
+                                                            {fmt(item.price * item.qty)}
+                                                        </p>
+                                                    </div>
+                                                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                                                        <div className="flex items-center gap-1 bg-white rounded-lg border border-gray-200 p-0.5">
                                                             <button
+                                                                type="button"
                                                                 onClick={() => updateCartQty(item.id, -1)}
-                                                                className="bg-red-500 hover:bg-red-600 text-white rounded-full w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center text-sm sm:text-base font-bold transition-colors shadow-sm"
+                                                                className="w-7 h-7 rounded-md flex items-center justify-center text-gray-600 hover:bg-gray-100"
                                                             >
-                                                                -
+                                                                <Minus className="w-3.5 h-3.5" />
                                                             </button>
-                                                            <span className="font-bold text-gray-900 w-6 sm:w-7 text-center text-sm sm:text-base bg-orange-50 rounded-lg">{item.qty}</span>
+                                                            <span className="w-7 text-center text-sm font-bold text-gray-900">{item.qty}</span>
                                                             <button
+                                                                type="button"
                                                                 onClick={() => updateCartQty(item.id, 1)}
-                                                                className="bg-green-500 hover:bg-green-600 text-white rounded-full w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center text-sm sm:text-base font-bold transition-colors shadow-sm"
+                                                                className="w-7 h-7 rounded-md flex items-center justify-center text-gray-600 hover:bg-gray-100"
                                                             >
-                                                                +
+                                                                <Plus className="w-3.5 h-3.5" />
                                                             </button>
                                                         </div>
-                                                    </div>
-                                                    <div className="mt-1 pt-1 border-t border-orange-100">
-                                                        <p className="text-xs font-semibold text-orange-600">
-                                                            Item Total: {fmt(item.price * item.qty)}
-                                                        </p>
                                                     </div>
                                                 </div>
                                             ))}
                                         </div>
-                                        <div className="mt-3 sm:mt-4 pt-2 sm:pt-3 border-t-2 border-gray-300 flex-shrink-0">
-                                            <div className="flex justify-between items-center mb-2 sm:mb-3">
-                                                <span className="text-sm sm:text-lg font-bold text-gray-800">Total Amount:</span>
-                                                <span className="text-lg sm:text-xl font-bold text-green-600">{fmt(totalAmount)}</span>
-                                            </div>
-                                            <div className="bg-gradient-to-r from-orange-100 to-red-100 p-1.5 sm:p-2 rounded-lg">
-                                                <p className="text-xs text-gray-600 text-center">
-                                                    🎉 Great choice! Your order is ready to confirm.
-                                                </p>
+                                        <div className="mt-4 pt-3 border-t border-gray-200">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-sm font-medium text-gray-600">Subtotal</span>
+                                                <span className="text-lg font-extrabold text-gray-900">{fmt(totalAmount)}</span>
                                             </div>
                                         </div>
-                                    </div>
+                                    </>
                                 )}
                             </div>
                         </div>
                     </div>
                 </div>
-                {/* Footer - Orange Theme - Hidden on mobile */}
-                <div className="hidden md:flex p-3 sm:p-4 border-t border-orange-100 bg-gradient-to-r from-orange-50 to-orange-100/50 flex-col sm:flex-row justify-between items-center flex-shrink-0 gap-3 sm:gap-0">
-                    <div className="text-left text-center sm:text-left">
-                        <p className="text-xs sm:text-sm text-gray-600 font-medium">Order Summary</p>
-                        <p className="text-lg sm:text-xl font-bold text-orange-600">
-                            {fmt(totalAmount)} <span className="text-gray-500 text-sm">• {Object.keys(cart).length} items</span>
+                {/* Footer */}
+                <div className="hidden md:flex px-5 py-4 border-t border-gray-100 bg-white flex-col sm:flex-row justify-between items-center flex-shrink-0 gap-3">
+                    <div>
+                        <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Order total</p>
+                        <p className="text-xl font-extrabold text-gray-900 mt-0.5">
+                            {fmt(totalAmount)}{' '}
+                            <span className="text-sm font-medium text-gray-500">· {cartCount} items</span>
                         </p>
                     </div>
-                    <div className="flex space-x-2 sm:space-x-3">
+                    <div className="flex gap-2">
                         <button
+                            type="button"
                             onClick={clearCart}
-                            disabled={Object.keys(cart).length === 0}
-                            className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all duration-200 flex items-center ${
-                                Object.keys(cart).length === 0
-                                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                                    : 'bg-white text-red-600 border-2 border-red-200 hover:bg-red-50 hover:border-red-300 shadow-sm'
+                            disabled={cartCount === 0}
+                            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                                cartCount === 0
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'border border-gray-200 text-gray-700 hover:bg-gray-50'
                             }`}
                         >
-                            <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                            Clear Cart
+                            <Trash2 className="w-4 h-4" />
+                            Clear
                         </button>
                         <button
+                            type="button"
                             onClick={placeOrder}
-                            disabled={Object.keys(cart).length === 0}
-                            className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all duration-200 flex items-center ${
-                                Object.keys(cart).length === 0
-                                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                                    : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg transform hover:scale-105'
+                            disabled={cartCount === 0}
+                            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                                cartCount === 0
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-md shadow-orange-200/50'
                             }`}
                         >
-                            <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
+                            <Check className="w-4 h-4" />
                             Confirm Order
                         </button>
                     </div>

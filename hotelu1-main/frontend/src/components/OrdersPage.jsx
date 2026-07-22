@@ -23,6 +23,7 @@ import { io } from 'socket.io-client';
 import { authFetch, getSocketUrl } from '../utils/api';
 import useCurrency from '../hooks/useCurrency';
 import DatePickerButton, { getTodayLocalDate } from './DatePickerButton';
+import { formatRelativeTime } from '../utils/orderDisplay';
 import SourceBadge from './SourceBadge';
 import {
   loadRestaurantInfo,
@@ -58,6 +59,12 @@ const STATUS_COLORS = {
   paid: { bg: 'bg-emerald-50', text: 'text-emerald-600' },
 };
 
+const orderHasItems = (order) => {
+  if (!order) return false;
+  const items = order.items || [];
+  return items.length > 0;
+};
+
 const TYPE_ICON = { DINE_IN: Utensils, TAKEAWAY: ShoppingBag, QR_CODE: QrCode };
 const TYPE_LABEL = { DINE_IN: 'Dine-In', TAKEAWAY: 'Takeaway', QR_CODE: 'QR Order' };
 
@@ -74,8 +81,6 @@ const TYPE_FILTER_OPTIONS = [
 
 const formatId = (n) => `#ORD-${n}`;
 const orderTime = (o) => new Date(o.timestamp || o.created_at || Date.now());
-const minsAgo = (t) =>
-  Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 60000));
 const StatusPill = ({ status, dot = true }) => {
   const key = (status || '').toLowerCase();
   const c = STATUS_COLORS[key] || { bg: 'bg-gray-100', text: 'text-gray-600' };
@@ -133,7 +138,9 @@ const OrdersPage = ({ locationSettings }) => {
       }
       const res = await authFetch(url);
       const data = res.ok ? await res.json() : [];
-      const list = Array.isArray(data) ? data : [];
+      const list = Array.isArray(data)
+        ? data.filter((o) => orderHasItems(o) || Number(o.total) > 0)
+        : [];
       setOrders(list);
       setLastUpdated(new Date());
       setSelectedId((prev) => {
@@ -432,7 +439,6 @@ const OrdersPage = ({ locationSettings }) => {
             const TypeIcon = TYPE_ICON[typeKey] || Utensils;
             const items = Array.isArray(o.items) ? o.items : [];
             const itemCount = items.length;
-            const mins = minsAgo(orderTime(o));
             const time = orderTime(o);
             const isSelected = selected?.id === o.id;
             const statusLower = (o.status || '').toLowerCase();
@@ -486,7 +492,7 @@ const OrdersPage = ({ locationSettings }) => {
 
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-gray-500 inline-flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" /> {mins} min ago
+                      <Clock className="w-3.5 h-3.5" /> {formatRelativeTime(time)}
                     </span>
                     <p className="text-sm font-bold text-gray-900">{fmt(o.total)}</p>
                   </div>

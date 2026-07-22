@@ -22,6 +22,7 @@ import {
   calculateTotals as calcReceiptTotalsShared,
   openReceiptForPrint,
 } from '../utils/receiptPrint';
+import { getOrderDisplayNumber, formatOrderLabel } from '../utils/orderDisplay';
 
 /* ------------------------------------------------------------------ */
 /*  Status helpers                                                     */
@@ -414,7 +415,7 @@ const BillingPage = ({ locationSettings }) => {
     });
     openReceiptForPrint(
       `${kitchenSlipHtml}${customerHtml}`,
-      `Bill #${order.id}`
+      `Bill #${getOrderDisplayNumber(order)}`
     );
   };
 
@@ -472,7 +473,7 @@ const BillingPage = ({ locationSettings }) => {
 
     openReceiptForPrint(
       `${kitchenSlipHtml}${customerHtml}`,
-      `Bill #${selectedOrder.id}`
+      `Bill #${getOrderDisplayNumber(selectedOrder)}`
     );
   };
 
@@ -483,7 +484,7 @@ const BillingPage = ({ locationSettings }) => {
         .map((it) => `${it.quantity || it.qty || 1}x ${it.name}`)
         .join(' | ');
       return [
-        `#${o.id}`,
+        `#${getOrderDisplayNumber(o)}`,
         o.table_name || '',
         STATUS_STYLES[effectiveStatus(o)]?.label || effectiveStatus(o),
         items,
@@ -629,7 +630,7 @@ const BillingPage = ({ locationSettings }) => {
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="text-sm font-bold text-gray-900">
-                          #{order.id}
+                          #{getOrderDisplayNumber(order)}
                         </span>
                         {order.table_name && (
                           <span className="text-xs text-gray-500">
@@ -677,7 +678,7 @@ const BillingPage = ({ locationSettings }) => {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-lg sm:text-xl font-bold text-gray-900">
-                      Invoice #{selectedOrder.id}
+                      Invoice #{getOrderDisplayNumber(selectedOrder)}
                     </h3>
                     <p className="text-xs text-gray-500 mt-1">
                       {selectedOrder.table_name
@@ -904,8 +905,11 @@ const PaymentModal = ({ order, amount, fmt, paying, onSelect, onCancel }) => {
       pn: cfg.payeeName,
       am: Number(amount || 0).toFixed(2),
       cu: cfg.currency || 'INR',
-      tn: cfg.transactionNoteTemplate.replace('{orderId}', order?.id ?? ''),
-      tr: `ORD${order?.id ?? ''}${Date.now()}`,
+      tn: cfg.transactionNoteTemplate.replace(
+        '{orderId}',
+        getOrderDisplayNumber(order) ?? ''
+      ),
+      tr: `ORD${getOrderDisplayNumber(order) ?? ''}${Date.now()}`,
     });
     QRCode.toDataURL(`upi://pay?${params.toString()}`, {
       width: 240,

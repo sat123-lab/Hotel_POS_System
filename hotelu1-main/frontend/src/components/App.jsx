@@ -31,6 +31,7 @@ import StaffByBranch from './StaffByBranch';
 import { NotificationsProvider } from '../contexts/NotificationsContext';
 import { getLocationSettingsForCountry } from '../utils/currency';
 import { canRoleAccessModule } from '../utils/permissions';
+import { canManageFranchiseUsers } from '../utils/branchScope';
 
 // Loading component for Suspense fallback - Reference Image Design
 const LoadingSpinner = () => (
@@ -186,7 +187,7 @@ const App = () => {
           <NoAccessMessage />
         );
       case 'qr-management':
-        return allow('qr_management', ['subfranchise']) ? (
+        return allow('qr_management', ['franchise', 'subfranchise']) ? (
           <QRManagement locationSettings={locationSettings} />
         ) : (
           <NoAccessMessage />
@@ -204,12 +205,13 @@ const App = () => {
           <NoAccessMessage />
         );
       case 'inventory':
-        return allow('inventory', ['subfranchise']) ? <InventoryManagement /> : <NoAccessMessage />;
+        return allow('inventory', ['franchise', 'subfranchise']) ? (
+          <InventoryManagement />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'dashboard':
-        if (role === 'subfranchise' || role === 'franchise') {
-          return <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} setActiveTab={setActiveTab} />;
-        }
-        return allow('dashboard') ? (
+        return allow('dashboard', ['franchise', 'subfranchise']) ? (
           <Dashboard locationSettings={locationSettings} />
         ) : (
           <NoAccessMessage />
@@ -227,13 +229,20 @@ const App = () => {
           <NoAccessMessage />
         );
       case 'menu-management':
-        return allow('menu_management', ['subfranchise']) ? (
+        return allow('menu_management', ['franchise', 'subfranchise']) ? (
           <MenuManagement locationSettings={locationSettings} />
         ) : (
           <NoAccessMessage />
         );
       case 'user-management':
-        return role === 'admin' ? <UserManagement token={localStorage.getItem('token')} /> : <NoAccessMessage />;
+        return canManageFranchiseUsers(currentUser) ? (
+          <UserManagement
+            token={localStorage.getItem('token')}
+            currentUser={currentUser}
+          />
+        ) : (
+          <NoAccessMessage />
+        );
       case 'permission-management':
         return role === 'admin' ? <PermissionManagementNew token={localStorage.getItem('token')} /> : <NoAccessMessage />;
       case 'franchise-dashboard':
@@ -266,7 +275,13 @@ const App = () => {
         if (role === 'chef') return <KitchenDisplaySystem locationSettings={locationSettings} />;
         if (role === 'waiter') return <DineInManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />;
         if (role === 'franchise' || role === 'subfranchise') {
-          return <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} />;
+          return (
+            <FranchiseDashboard
+              currentUser={currentUser}
+              locationSettings={locationSettings}
+              setActiveTab={setActiveTab}
+            />
+          );
         }
         return <Dashboard locationSettings={locationSettings} />;
     }
@@ -365,7 +380,7 @@ const App = () => {
           
           <Route path="/menu" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredModule="menu_management" requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_menu', 'manage_menu', 'create_menu_item', 'edit_menu_item', 'delete_menu_item']}>
+              <PermissionBasedRoute requiredModule="menu_management" requiredRoles={['admin', 'manager', 'franchise', 'subfranchise']} requiredPermissions={['view_menu', 'manage_menu', 'create_menu_item', 'edit_menu_item', 'delete_menu_item']}>
                 <MenuLayout>
                   <MenuManagement locationSettings={locationSettings} />
                 </MenuLayout>
@@ -385,7 +400,7 @@ const App = () => {
           
           <Route path="/inventory" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredModule="inventory" requiredRoles={['admin', 'manager', 'subfranchise']} requiredPermissions={['view_inventory', 'manage_inventory', 'edit_inventory']}>
+              <PermissionBasedRoute requiredModule="inventory" requiredRoles={['admin', 'manager', 'franchise', 'subfranchise']} requiredPermissions={['view_inventory', 'manage_inventory', 'edit_inventory']}>
                 <MenuLayout>
                   <InventoryManagement />
                 </MenuLayout>
@@ -395,7 +410,7 @@ const App = () => {
           
           <Route path="/billing" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredModule="billing" requiredRoles={['admin', 'manager', 'subfranchise', 'waiter']} requiredPermissions={['view_billing', 'process_payments', 'view_bills']}>
+              <PermissionBasedRoute requiredModule="billing" requiredRoles={['admin', 'manager', 'franchise', 'subfranchise', 'waiter']} requiredPermissions={['view_billing', 'process_payments', 'view_bills']}>
                 <MenuLayout>
                   <BillingPage locationSettings={locationSettings} />
                 </MenuLayout>
@@ -405,7 +420,7 @@ const App = () => {
           
           <Route path="/reports" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredModule="reports" requiredRoles={['admin', 'manager']} requiredPermissions={['view_reports', 'view_dashboard']}>
+              <PermissionBasedRoute requiredModule="reports" requiredRoles={['admin', 'manager', 'franchise', 'subfranchise']} requiredPermissions={['view_reports', 'view_dashboard']}>
                 <MenuLayout>
                   <Reports locationSettings={locationSettings} />
                 </MenuLayout>
@@ -425,7 +440,7 @@ const App = () => {
           
           <Route path="/qr-management" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredModule="qr_management" requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['manage_qr_codes']}>
+              <PermissionBasedRoute requiredModule="qr_management" requiredRoles={['admin', 'manager', 'waiter', 'franchise', 'subfranchise']} requiredPermissions={['manage_qr_codes']}>
                 <MenuLayout>
                   <QRManagement locationSettings={locationSettings} />
                 </MenuLayout>
@@ -435,7 +450,7 @@ const App = () => {
           
           <Route path="/takeaway" element={
             <ProtectedRoute>
-              <PermissionBasedRoute requiredModule="takeaway" requiredRoles={['admin', 'manager', 'waiter']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
+              <PermissionBasedRoute requiredModule="takeaway" requiredRoles={['admin', 'manager', 'waiter', 'franchise', 'subfranchise']} requiredPermissions={['view_orders', 'manage_orders', 'create_order']}>
                 <MenuLayout>
                   <TakeawayManagement locationSettings={locationSettings} nextOrderId={nextOrderId} setNextOrderId={setNextOrderId} />
                 </MenuLayout>
@@ -445,11 +460,21 @@ const App = () => {
 
           <Route path="/users" element={
             <ProtectedRoute>
-              <RoleBasedRoute allowedRoles={['admin']}>
+              <PermissionBasedRoute requiredModule="user_management" requiredRoles={['admin', 'franchise', 'subfranchise']}>
                 <MenuLayout>
-                  <UserManagement token={localStorage.getItem('token')} />
+                  <UserManagement token={localStorage.getItem('token')} currentUser={currentUser} />
                 </MenuLayout>
-              </RoleBasedRoute>
+              </PermissionBasedRoute>
+            </ProtectedRoute>
+          } />
+
+          <Route path="/user-management" element={
+            <ProtectedRoute>
+              <PermissionBasedRoute requiredModule="user_management" requiredRoles={['admin', 'franchise', 'subfranchise']}>
+                <MenuLayout>
+                  <UserManagement token={localStorage.getItem('token')} currentUser={currentUser} />
+                </MenuLayout>
+              </PermissionBasedRoute>
             </ProtectedRoute>
           } />
 
@@ -465,7 +490,7 @@ const App = () => {
 
           <Route path="/franchise-overview" element={
             <ProtectedRoute>
-              <RoleBasedRoute allowedRoles={['admin', 'franchise']}>
+              <RoleBasedRoute allowedRoles={['admin', 'franchise', 'subfranchise']}>
                 <MenuLayout>
                   <FranchiseDashboard currentUser={currentUser} locationSettings={locationSettings} setActiveTab={setActiveTab} />
                 </MenuLayout>

@@ -5,6 +5,8 @@ import Notification from './Notification';
 import OrderEntryModal from './OrderEntryModal';
 import { Users, Plus, X } from 'lucide-react';
 import useCurrency from '../hooks/useCurrency';
+import { loadBranchJson, saveBranchJson } from '../utils/branchStorage';
+import { formatOrderLabel } from '../utils/orderDisplay';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers & constants                                                */
@@ -81,6 +83,12 @@ const tableIdMatches = (tableId, tableName) => {
   return normalizedTableId === normalizedTableName || tableId === tableName;
 };
 
+const orderHasItems = (order) => {
+  if (!order) return false;
+  const items = order.items || [];
+  return items.length > 0;
+};
+
 const minutesSince = (iso) => {
   if (!iso) return null;
   const ms = Date.now() - new Date(iso).getTime();
@@ -96,7 +104,9 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
   const { format: fmt } = useCurrency(locationSettings);
   const navigate = useNavigate();
 
-  const [tables, setTables] = useState(initialTables);
+  const [tables, setTables] = useState(() =>
+    loadBranchJson('dineInTables_v1', initialTables)
+  );
   const [activeOrders, setActiveOrders] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -106,6 +116,10 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
   const [isLoaded, setIsLoaded] = useState(false);
   const [showAddTable, setShowAddTable] = useState(false);
   const [newTable, setNewTable] = useState({ capacity: 4, floor: 'ground' });
+  const [statusPickMode, setStatusPickMode] = useState(null);
+  const [showReserveModal, setShowReserveModal] = useState(false);
+  const [reserveTarget, setReserveTarget] = useState(null);
+  const [reserveNote, setReserveNote] = useState('');
   const [, setTick] = useState(0);
 
   /* ------------------------------ auth ------------------------------ */
@@ -114,25 +128,41 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
     if (!token) navigate('/login');
   }, [navigate]);
 
+  useEffect(() => {
+    saveBranchJson('dineInTables_v1', tables);
+  }, [tables]);
+
   /* ------------------------------ fetch ----------------------------- */
   const updateTableStatuses = useCallback((orders) => {
     setTables((prev) =>
       prev.map((table) => {
         const tableOrder = orders.find(
           (o) =>
+            orderHasItems(o) &&
             tableIdMatches(table.id, o.table_name) &&
             o.status !== 'completed' &&
             o.bill_status !== 'paid'
         );
 
         if (!tableOrder) {
-          if (table.status === 'cleaning' || table.status === 'reserved') return table;
-          return { ...table, status: 'available' };
+          if (table.manualStatus === 'reserved') {
+            return { ...table, status: 'reserved' };
+          }
+          if (table.manualStatus === 'occupied') {
+            return { ...table, status: 'occupied' };
+          }
+          if (table.status === 'cleaning') return table;
+          return {
+            ...table,
+            status: 'available',
+            manualStatus: null,
+            reservationNote: '',
+          };
         }
         if (tableOrder.status === 'delivered' && tableOrder.bill_status !== 'paid') {
-          return { ...table, status: 'reserved' };
+          return { ...table, status: 'reserved', manualStatus: null, reservationNote: '' };
         }
-        return { ...table, status: 'occupied' };
+        return { ...table, status: 'occupied', manualStatus: null, reservationNote: '' };
       })
     );
   }, []);
@@ -149,7 +179,9 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
         setActiveOrders([]);
         return;
       }
-      const filteredOrders = data.filter((o) => o.status !== 'completed');
+      const filteredOrders = data.filter(
+        (o) => o.status !== 'completed' && orderHasItems(o)
+      );
       setActiveOrders(filteredOrders);
       updateTableStatuses(data);
     } catch (err) {
@@ -174,16 +206,116 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
   }, []);
 
   /* ---------------------------- handlers ---------------------------- */
+  const applyManualTableStatus = (tableId, status, note = '') => {
+    const tableOrder = activeOrders.find((order) =>
+      tableIdMatches(tableId, order.table_name)
+    );
+
+    if (status === 'available') {
+      if (tableOrder && orderHasItems(tableOrder)) {
+        setNotification({
+          message: 'Cannot mark free — active order on this table. Complete payment first.',
+          type: 'error',
+        });
+        setTimeout(() => setNotification(null), 3000);
+        return false;
+      }
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === tableId
+            ? { ...t, status: 'available', manualStatus: null, reservationNote: '' }
+            : t
+        )
+      );
+    } else if (status === 'reserved') {
+      if (tableOrder && orderHasItems(tableOrder)) {
+        setNotification({
+          message: 'Table has an active order — cannot reserve.',
+          type: 'error',
+        });
+        setTimeout(() => setNotification(null), 3000);
+        return false;
+      }
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === tableId
+            ? {
+                ...t,
+                status: 'reserved',
+                manualStatus: 'reserved',
+                reservationNote: note.trim(),
+              }
+            : t
+        )
+      );
+    } else if (status === 'occupied') {
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === tableId
+            ? { ...t, status: 'occupied', manualStatus: 'occupied', reservationNote: '' }
+            : t
+        )
+      );
+    } else if (status === 'cleaning') {
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === tableId
+            ? { ...t, status: 'cleaning', manualStatus: null, reservationNote: '' }
+            : t
+        )
+      );
+    }
+
+    setStatusPickMode(null);
+    setNotification({
+      message: `Table ${tableId} marked as ${STATUS_CONFIG[status]?.summaryLabel || status}`,
+      type: 'success',
+    });
+    setTimeout(() => setNotification(null), 2500);
+    return true;
+  };
+
+  const handleSummaryClick = (status) => {
+    if (statusPickMode === status) {
+      setStatusPickMode(null);
+      setNotification(null);
+      return;
+    }
+    setStatusPickMode(status);
+    setNotification({
+      message: `Click a table to mark as ${STATUS_CONFIG[status].summaryLabel}`,
+      type: 'info',
+    });
+  };
+
   const handleTableClick = (table) => {
+    if (statusPickMode) {
+      if (statusPickMode === 'reserved') {
+        setReserveTarget(table);
+        setReserveNote(table.reservationNote || '');
+        setShowReserveModal(true);
+        return;
+      }
+      applyManualTableStatus(table.id, statusPickMode);
+      return;
+    }
     setSelectedTable(table);
     setShowOrderModal(true);
+  };
+
+  const handleConfirmReservation = () => {
+    if (!reserveTarget) return;
+    applyManualTableStatus(reserveTarget.id, 'reserved', reserveNote);
+    setShowReserveModal(false);
+    setReserveTarget(null);
+    setReserveNote('');
   };
 
   const handleOrderPlaced = async (placedOrder) => {
     try {
       fetchOrdersAndSync();
       setNotification({
-        message: `Order for ${selectedTable.id} placed! (Order #${placedOrder.id})`,
+        message: `Order for ${selectedTable.id} placed! (${formatOrderLabel(placedOrder)})`,
         type: 'success',
       });
     } catch (error) {
@@ -220,12 +352,20 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
         });
       }
       setTables((prev) =>
-        prev.map((t) => (t.id === tableId ? { ...t, status: 'cleaning' } : t))
+        prev.map((t) =>
+          t.id === tableId
+            ? { ...t, status: 'cleaning', manualStatus: null, reservationNote: '' }
+            : t
+        )
       );
       setNotification({ message: `Table ${tableId} is being cleaned…`, type: 'info' });
       setTimeout(() => {
         setTables((prev) =>
-          prev.map((t) => (t.id === tableId ? { ...t, status: 'available' } : t))
+          prev.map((t) =>
+            t.id === tableId
+              ? { ...t, status: 'available', manualStatus: null, reservationNote: '' }
+              : t
+          )
         );
         setNotification({
           message: `Table ${tableId} is now available!`,
@@ -280,6 +420,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
     (tableId) =>
       activeOrders.find(
         (o) =>
+          orderHasItems(o) &&
           tableIdMatches(tableId, o.table_name) &&
           o.status !== 'completed' &&
           o.bill_status !== 'paid'
@@ -323,19 +464,33 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
         </div>
       )}
 
-      {/* Summary cards */}
+      {/* Summary cards — click Free / Occupied / Reserved, then click a table */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-5">
         {['available', 'occupied', 'reserved', 'cleaning'].map((status, idx) => {
           const cfg = STATUS_CONFIG[status];
+          const isPickActive = statusPickMode === status;
+          const isInteractive = ['available', 'occupied', 'reserved'].includes(status);
           return (
-            <div
+            <button
               key={status}
-              className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4 flex items-center gap-4"
+              type="button"
+              onClick={() => isInteractive && handleSummaryClick(status)}
+              disabled={!isInteractive}
+              className={`text-left bg-white rounded-2xl border shadow-sm px-5 py-4 flex items-center gap-4 transition-all ${
+                isPickActive
+                  ? 'border-orange-400 ring-2 ring-orange-200 shadow-md scale-[1.02]'
+                  : 'border-gray-100 hover:shadow-md'
+              } ${isInteractive ? 'cursor-pointer hover:border-orange-200' : 'cursor-default'}`}
               style={{
                 animation: isLoaded
                   ? `slideUpFade .35s ease-out ${idx * 60}ms both`
                   : 'none',
               }}
+              title={
+                isInteractive
+                  ? `Click, then select a table to mark as ${cfg.summaryLabel}`
+                  : cfg.summaryLabel
+              }
             >
               <span className={`w-2.5 h-2.5 rounded-full ${cfg.dot}`} />
               <div>
@@ -343,11 +498,35 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
                   {summaryCounts[status]}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">{cfg.summaryLabel}</p>
+                {isPickActive && (
+                  <p className="text-[10px] text-orange-600 font-semibold mt-1 uppercase tracking-wide">
+                    Select table
+                  </p>
+                )}
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
+
+      {statusPickMode && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm text-orange-800">
+          <span>
+            Mode: mark table as{' '}
+            <strong>{STATUS_CONFIG[statusPickMode]?.summaryLabel}</strong> — click a table below
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setStatusPickMode(null);
+              setNotification(null);
+            }}
+            className="shrink-0 rounded-lg bg-white px-3 py-1 text-xs font-semibold text-orange-700 border border-orange-200 hover:bg-orange-100"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
 
       {/* Floor tabs */}
       <div className="flex flex-wrap gap-2 mb-5">
@@ -374,21 +553,23 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
         {filteredTables.map((table, idx) => {
           const cfg = STATUS_CONFIG[table.status] || STATUS_CONFIG.available;
           const tableOrder = orderForTable(table.id);
-          const isActive = table.status === 'occupied' || table.status === 'reserved';
+          const isOccupied = table.status === 'occupied';
+          const isReserved = table.status === 'reserved';
 
           const occupiedMin =
             tableOrder && (tableOrder.created_at || tableOrder.createdAt)
               ? minutesSince(tableOrder.created_at || tableOrder.createdAt)
               : null;
-          const guestsOccupied = isActive
-            ? Math.max(
-                1,
-                Math.min(
-                  table.capacity,
-                  Math.ceil((tableOrder?.items?.length || 1) / 1.5)
+          const guestsOccupied =
+            isOccupied && tableOrder
+              ? Math.max(
+                  1,
+                  Math.min(
+                    table.capacity,
+                    Math.ceil((tableOrder.items?.length || 1) / 1.5)
+                  )
                 )
-              )
-            : 0;
+              : 0;
           const orderValue = tableOrder?.total || 0;
 
           return (
@@ -408,9 +589,11 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
                   : 'none',
               }}
               title={
-                table.status !== 'available'
-                  ? 'Click to add items · Right-click to mark available'
-                  : 'Click to place a new order'
+                statusPickMode
+                  ? `Mark as ${STATUS_CONFIG[statusPickMode]?.summaryLabel}`
+                  : table.status !== 'available'
+                    ? 'Click to add items · Right-click to mark available'
+                    : 'Click to place a new order'
               }
             >
               {cfg.showDot && (
@@ -434,7 +617,7 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
               </div>
 
               {/* Footer info */}
-              {isActive ? (
+              {isOccupied ? (
                 <div className="mt-3 space-y-1.5 text-[11px]">
                   <div className="flex items-center gap-1.5 text-gray-600">
                     <Users className="w-3 h-3" />
@@ -457,6 +640,23 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
                       </span>
                     </p>
                   )}
+                </div>
+              ) : isReserved ? (
+                <div className="mt-3 space-y-1 text-[11px]">
+                  {table.reservationNote ? (
+                    <p className="text-center text-yellow-700 font-medium truncate px-1">
+                      {table.reservationNote}
+                    </p>
+                  ) : (
+                    <p className="text-center text-yellow-600 font-medium">Phone booking</p>
+                  )}
+                  <div className="flex items-center justify-center gap-1.5 text-gray-500">
+                    <Users className="w-3 h-3" />
+                    <span className="font-semibold tracking-wide">
+                      0/{table.capacity}
+                    </span>
+                    <span className="uppercase text-gray-400">Guests</span>
+                  </div>
                 </div>
               ) : (
                 <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
@@ -535,6 +735,63 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
         </div>
       )}
 
+      {/* Reservation modal */}
+      {showReserveModal && reserveTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-900">
+                Reserve {reserveTarget.id}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReserveModal(false);
+                  setReserveTarget(null);
+                  setReserveNote('');
+                }}
+                className="p-1 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Guest name / phone (optional)
+            </label>
+            <input
+              type="text"
+              value={reserveNote}
+              onChange={(e) => setReserveNote(e.target.value)}
+              placeholder="e.g. Raju · 9876543210"
+              className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              Use Free mode and click this table again to clear a no-show reservation.
+            </p>
+            <div className="flex gap-3 mt-5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowReserveModal(false);
+                  setReserveTarget(null);
+                  setReserveNote('');
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReservation}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md"
+              >
+                Reserve Table
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Order Entry Modal */}
       {showOrderModal && (
         <OrderEntryModal
@@ -543,13 +800,33 @@ const DineInManagement = ({ locationSettings, nextOrderId, setNextOrderId }) => 
               ? { id: editingOrder.table_name, status: 'occupied', capacity: 0 }
               : selectedTable
           }
-          onClose={() => {
+          onClose={async () => {
+            if (selectedTable?.id) {
+              try {
+                const res = await authFetch(
+                  `/api/orders?type=DINE_IN&tableId=${encodeURIComponent(selectedTable.id)}`
+                );
+                if (res.ok) {
+                  const tableOrders = await res.json();
+                  if (Array.isArray(tableOrders)) {
+                    for (const o of tableOrders) {
+                      if (!orderHasItems(o)) {
+                        await handleDeleteEmptyOrder(o);
+                      }
+                    }
+                  }
+                }
+              } catch {
+                /* non-fatal */
+              }
+            }
             if (editingOrder && (!editingOrder.items || editingOrder.items.length === 0)) {
-              handleDeleteEmptyOrder(editingOrder);
+              await handleDeleteEmptyOrder(editingOrder);
             }
             setShowOrderModal(false);
             setEditingOrder(null);
             setSelectedTable(null);
+            fetchOrdersAndSync();
           }}
           onOrderPlaced={
             editingOrder

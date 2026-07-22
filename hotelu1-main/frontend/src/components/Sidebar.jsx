@@ -31,7 +31,7 @@ import {
   fetchPermissionsMatrixFromServer,
   PERMISSIONS_UPDATED_EVENT,
 } from '../utils/permissions';
-import { getBranchLabel, getBranchSubLabel, isAdminUser } from '../utils/branchScope';
+import { getBranchLabel, getBranchSubLabel, isAdminUser, canManageFranchiseUsers } from '../utils/branchScope';
 
 const navIconClass = (active) =>
   `w-5 h-5 ${active ? 'text-orange-500' : 'text-gray-400 group-hover:text-orange-500'}`;
@@ -275,25 +275,24 @@ const Sidebar = ({
         {/* Nav */}
         <nav className="mt-4 flex-1 px-3 overflow-y-auto">
           <ul className="space-y-1">
-            {/* Franchise overview (franchise users) */}
-            {isFranchiseLogin && (
-              <li>
-                <NavItem
-                  icon={Building}
-                  label={isSubFranchise ? 'My Franchise' : 'Franchise Overview'}
-                  active={activeTab === 'franchise-dashboard'}
-                  onClick={() => handleTabClick('franchise-dashboard')}
-                />
-              </li>
-            )}
-
-            {!isFranchiseLogin && canSee('dashboard', 'view_dashboard') && (
+            {canSee('dashboard', 'view_dashboard') && (
               <li>
                 <NavItem
                   icon={LayoutGrid}
                   label="Dashboard"
                   active={activeTab === 'dashboard'}
                   onClick={() => handleTabClick('dashboard')}
+                />
+              </li>
+            )}
+
+            {isFranchiseLogin && canSee('franchise') && (
+              <li>
+                <NavItem
+                  icon={Building}
+                  label={isSubFranchise ? 'My Branch Admin' : 'Franchise Overview'}
+                  active={activeTab === 'franchise-dashboard'}
+                  onClick={() => handleTabClick('franchise-dashboard')}
                 />
               </li>
             )}
@@ -353,8 +352,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {!isFranchiseLogin &&
-              canSee('menu_management', [
+            {canSee('menu_management', [
                 'view_menu',
                 'manage_menu',
                 'create_menu_item',
@@ -382,8 +380,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {!isFranchiseLogin &&
-              canSee('inventory', [
+            {canSee('inventory', [
                 'view_inventory',
                 'manage_inventory',
                 'edit_inventory',
@@ -398,7 +395,7 @@ const Sidebar = ({
                 </li>
               )}
 
-            {!isFranchiseLogin && canSee('qr_management', 'manage_qr_codes') && (
+            {canSee('qr_management', 'manage_qr_codes') && (
               <li>
                 <NavItem
                   icon={QrCode}
@@ -409,7 +406,7 @@ const Sidebar = ({
               </li>
             )}
 
-            {canSee('user_management') && role === 'admin' && (
+            {canSee('user_management') && canManageFranchiseUsers(currentUser) && (
               <li>
                 <NavItem
                   icon={Users}
@@ -464,7 +461,8 @@ const Sidebar = ({
               />
             </li>
 
-            {!isFranchiseLogin && canSee('settings') && (
+            {canSee('settings') &&
+              (!isFranchiseLogin || canManageFranchiseUsers(currentUser)) && (
               <li>
                 <NavItem
                   icon={Settings}

@@ -38,6 +38,7 @@ const emptyForm = {
   notes: '',
   login_username: '',
   login_password: '',
+  login_user_id: '',
   owner_user_id: '',
   gstin: '',
   tier: 'standard',
@@ -155,8 +156,26 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
     setShowForm(true);
   };
 
-  const openEdit = (row) => {
+  const openEdit = async (row) => {
     setEditingId(row.id);
+    let loginUsername = row.loginUsername || '';
+    let loginUserId = row.loginUserId ? String(row.loginUserId) : '';
+
+    if (isAdmin) {
+      try {
+        const res = await authFetch(`/api/subfranchises/${row.id}/detail`);
+        if (res.ok) {
+          const detail = await res.json();
+          loginUsername =
+            detail.loginUsername || detail.location?.loginUsername || loginUsername;
+          const uid = detail.loginUserId || detail.location?.loginUserId;
+          if (uid) loginUserId = String(uid);
+        }
+      } catch (_) {
+        /* use list row fallback */
+      }
+    }
+
     setForm({
       name: row.name || '',
       code: row.code || '',
@@ -167,8 +186,9 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
       manager_name: row.manager_name || '',
       status: row.status || 'active',
       notes: row.notes || '',
-      login_username: row.loginUsername || '',
+      login_username: loginUsername,
       login_password: '',
+      login_user_id: loginUserId,
       owner_user_id: row.owner_user_id ? String(row.owner_user_id) : '',
       gstin: row.gstin || formatGSTIN(row.code, row.id),
       tier: String(tierFromCode(row.code)).toLowerCase().split(' ')[0],
@@ -184,22 +204,65 @@ const SubFranchiseManagement = ({ currentUser, locationSettings }) => {
       return;
     }
     const safeCode = form.code.trim() || form.name.replace(/\s+/g, '').slice(0, 8).toUpperCase();
+    const existingRow = editingId ? list.find((r) => r.id === editingId) : null;
+    const trimmedUsername = form.login_username?.trim() || '';
+    const trimmedPassword = form.login_password?.trim() || '';
+    const hadBranchLogin = Boolean(existingRow?.loginUserId || existingRow?.loginUsername);
+    const usernameChanged =
+      editingId && trimmedUsername !== (existingRow?.loginUsername || '');
+    const settingBranchLogin = Boolean(trimmedUsername);
+
+    if (settingBranchLogin) {
+      if (!editingId && !trimmedPassword) {
+        setNotification({
+          message: 'Branch login password is required when registering a branch',
+          type: 'error',
+        });
+        return;
+      }
+      if (editingId && (usernameChanged || !hadBranchLogin) && !trimmedPassword) {
+        setNotification({
+          message: 'Enter password when setting or changing branch login username',
+          type: 'error',
+        });
+        return;
+      }
+    }
+
+    const credentialsChanged =
+      settingBranchLogin &&
+      (Boolean(trimmedPassword) || usernameChanged || !hadBranchLogin);
     try {
       const url = editingId ? `/api/subfranchises/${editingId}` : '/api/subfranchises';
+      const payload = {
+        name: form.name,
+        code: safeCode,
+        address: form.address,
+        city: form.city,
+        phone: form.phone,
+        email: form.email,
+        manager_name: form.manager_name,
+        status: form.status,
+        notes: form.notes,
+        owner_user_id: form.owner_user_id ? Number(form.owner_user_id) : null,
+        login_username: trimmedUsername || undefined,
+        login_password: trimmedPassword || undefined,
+        login_user_id: form.login_user_id ? Number(form.login_user_id) : undefined,
+      };
       const res = await authFetch(url, {
         method: editingId ? 'PUT' : 'POST',
-        body: JSON.stringify({
-          ...form,
-          code: safeCode,
-          owner_user_id: form.owner_user_id ? Number(form.owner_user_id) : null,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || 'Save failed');
       }
       setNotification({
-        message: editingId ? 'Branch updated' : 'Branch registered successfully',
+        message: editingId
+          ? credentialsChanged
+            ? 'Branch updated — login credentials changed (old login will no longer work)'
+            : 'Branch updated'
+          : 'Branch registered successfully',
         type: 'success',
       });
       setShowForm(false);
@@ -643,17 +706,29 @@ const RegisterDrawer = ({ editingId, form, setForm, onClose, onSubmit, isAdmin, 
             )}
             <div className="grid grid-cols-2 gap-3">
               <FieldUC
-                label="Login Username"
+                label="Branch Login Username"
                 value={form.login_username}
                 onChange={(v) => setForm({ ...form, login_username: v })}
+                placeholder="Branch portal login (not franchise owner)"
               />
               <FieldUC
-                label="Login Password"
+                label="Branch Login Password"
                 type="password"
                 value={form.login_password}
                 onChange={(v) => setForm({ ...form, login_password: v })}
+                placeholder={
+                  editingId
+                    ? form.login_user_id || form.login_username
+                      ? 'Required when changing username'
+                      : 'Required for new branch login'
+                    : 'Required'
+                }
               />
             </div>
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              Branch login opens only this location&apos;s data. Franchise Owner above is
+              separate — do not reuse the same username unless intended.
+            </p>
           </div>
         </details>
 

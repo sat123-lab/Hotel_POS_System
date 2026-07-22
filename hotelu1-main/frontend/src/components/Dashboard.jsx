@@ -492,8 +492,8 @@ const Dashboard = ({ locationSettings }) => {
           <p className="text-sm text-gray-500 mt-1">
             {isAdminUser(currentUser)
               ? isViewingToday
-                ? "Full overview — all restaurants and branches."
-                : `All locations · ${viewDate.toLocaleDateString('en-US', {
+                ? 'Main branch (HQ) only — franchise orders are kept separate.'
+                : `Main branch (HQ) · ${viewDate.toLocaleDateString('en-US', {
                     weekday: 'long',
                     month: 'long',
                     day: 'numeric',

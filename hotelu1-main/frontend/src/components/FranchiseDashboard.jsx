@@ -9,7 +9,19 @@ import {
   MapPin,
   TrendingUp,
   TrendingDown,
+  Utensils,
+  ShoppingBag,
+  QrCode,
+  LayoutGrid,
+  UserCog,
+  BarChart3,
+  Building2,
+  Receipt,
 } from 'lucide-react';
+import Dashboard from './Dashboard';
+import Reports from './Reports';
+import BillingPage from './BillingPage';
+import { getBranchLabel } from '../utils/branchScope';
 import {
   BarChart,
   Bar,
@@ -77,19 +89,99 @@ const FranchiseDashboard = ({ currentUser, locationSettings, setActiveTab }) => 
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [portalTab, setPortalTab] = useState('dashboard');
 
   const isSubFranchise = currentUser?.role === 'subfranchise';
   const isFranchiseOwner = currentUser?.role === 'franchise';
   const isAdmin = currentUser?.role === 'admin';
+  const isBranchPortal = isSubFranchise || isFranchiseOwner;
 
   const goToSubFranchise = () => {
     if (typeof setActiveTab === 'function') {
       setActiveTab('subfranchise-management');
-      navigate('/dashboard');
-    } else {
-      navigate('/manage-sub-franchises');
     }
+    navigate('/manage-sub-franchises');
   };
+
+  const goToModule = (tab, path) => {
+    if (isBranchPortal) {
+      if (tab === 'reports') {
+        setPortalTab('reports');
+        return;
+      }
+      if (tab === 'billing') {
+        setPortalTab('billing');
+        return;
+      }
+      if (tab === 'dashboard' || tab === 'franchise-dashboard') {
+        setPortalTab('dashboard');
+        return;
+      }
+    }
+    if (typeof setActiveTab === 'function') {
+      setActiveTab(tab);
+    }
+    navigate(path);
+  };
+
+  const quickActions = [
+    {
+      tab: 'dine-in-management',
+      path: '/dinein',
+      label: 'Table Management',
+      sub: 'Dine-in tables & floor plan',
+      Icon: Utensils,
+      tone: 'bg-orange-50 text-orange-600 border-orange-100',
+    },
+    {
+      tab: 'takeaway-management',
+      path: '/takeaway',
+      label: 'Takeaway',
+      sub: 'Pickup & delivery orders',
+      Icon: ShoppingBag,
+      tone: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    },
+    {
+      tab: 'billing',
+      path: '/billing',
+      label: 'POS Billing',
+      sub: 'Bill & collect payment for branch orders',
+      Icon: Receipt,
+      tone: 'bg-rose-50 text-rose-600 border-rose-100',
+    },
+    {
+      tab: 'qr-management',
+      path: '/qr-management',
+      label: 'QR Management',
+      sub: 'Table QR codes for ordering',
+      Icon: QrCode,
+      tone: 'bg-blue-50 text-blue-600 border-blue-100',
+    },
+    {
+      tab: 'user-management',
+      path: '/user-management',
+      label: 'User Management',
+      sub: 'Staff logins for your branch only',
+      Icon: UserCog,
+      tone: 'bg-purple-50 text-purple-600 border-purple-100',
+    },
+    {
+      tab: 'user-management',
+      path: '/user-management',
+      label: 'Permissions',
+      sub: 'Module access for waiter, chef & cashier',
+      Icon: LayoutGrid,
+      tone: 'bg-amber-50 text-amber-700 border-amber-100',
+    },
+    {
+      tab: 'reports',
+      path: '/reports',
+      label: 'Reports',
+      sub: 'Sales, orders & branch analytics',
+      Icon: BarChart3,
+      tone: 'bg-sky-50 text-sky-600 border-sky-100',
+    },
+  ];
 
   const loadOverview = useCallback(async () => {
     setError(null);
@@ -117,6 +209,40 @@ const FranchiseDashboard = ({ currentUser, locationSettings, setActiveTab }) => 
 
   const stats = data?.stats || {};
   const locations = useMemo(() => data?.subfranchises || [], [data]);
+
+  useEffect(() => {
+    if (currentUser?.subfranchise_id != null) {
+      try {
+        localStorage.setItem(
+          'franchiseActiveBranchId',
+          String(currentUser.subfranchise_id)
+        );
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+    if (locations.length === 1 && locations[0]?.id != null) {
+      try {
+        localStorage.setItem('franchiseActiveBranchId', String(locations[0].id));
+      } catch {
+        /* noop */
+      }
+    }
+  }, [currentUser?.subfranchise_id, locations]);
+
+  const portalTabs = useMemo(() => {
+    const tabs = [
+      { id: 'dashboard', label: 'Dashboard', Icon: LayoutGrid },
+      { id: 'billing', label: 'POS Billing', Icon: Receipt },
+      { id: 'reports', label: 'Reports', Icon: BarChart3 },
+      { id: 'operations', label: 'Operations', Icon: Utensils },
+    ];
+    if (isFranchiseOwner && locations.length > 1) {
+      return [{ id: 'overview', label: 'All Branches', Icon: Building2 }, ...tabs];
+    }
+    return tabs;
+  }, [isFranchiseOwner, locations.length]);
 
   /* ---------------------- derived ---------------------- */
 
@@ -178,40 +304,36 @@ const FranchiseDashboard = ({ currentUser, locationSettings, setActiveTab }) => 
 
   /* ---------------------- render ---------------------- */
 
-  return (
-    <div
-      className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
-        isLoaded ? 'opacity-100' : 'opacity-0'
-      }`}
-    >
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
-            {isSubFranchise ? 'My Location Overview' : 'Franchise HQ Overview'}
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Corporate insights, multi-branch revenue audits, and comparative store
-            performance
-          </p>
-        </div>
-        {isAdmin && (
-          <button
-            onClick={goToSubFranchise}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition"
-          >
-            <Plus className="w-4 h-4" />
-            ONBOARD BRANCH
-          </button>
-        )}
+  const renderQuickActions = () => (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <div className="mb-4">
+        <h3 className="text-base font-bold text-gray-900">Restaurant Operations</h3>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Same tools as HQ admin — scoped to your franchise branch only
+        </p>
       </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-3">
+        {quickActions.map((action) => {
+          const Icon = action.Icon;
+          return (
+            <button
+              key={action.label}
+              type="button"
+              onClick={() => goToModule(action.tab, action.path)}
+              className={`text-left rounded-xl border p-4 transition hover:shadow-md hover:scale-[1.01] active:scale-[0.99] ${action.tone}`}
+            >
+              <Icon className="w-5 h-5 mb-2" />
+              <p className="text-sm font-semibold text-gray-900">{action.label}</p>
+              <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{action.sub}</p>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 
-      {error && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-3 text-sm mb-4">
-          {error}
-        </div>
-      )}
-
+  const renderEnterpriseOverview = () => (
+    <>
       {/* KPI cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <KpiCard
@@ -402,19 +524,109 @@ const FranchiseDashboard = ({ currentUser, locationSettings, setActiveTab }) => 
         )}
       </div>
 
-      {isAdmin && selectedId && (
-        <LocationDetailPanel
-          locationId={selectedId}
-          locationSettings={locationSettings}
-          onClose={() => setSelectedId(null)}
-        />
-      )}
-
       {isFranchiseOwner && locations.length === 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-6 text-sm text-blue-900">
           <strong>No location linked yet.</strong> Ask admin to assign your franchise account
           to a location.
         </div>
+      )}
+    </>
+  );
+
+  return (
+    <div
+      className={`px-4 sm:px-6 lg:px-8 py-6 min-h-screen bg-[#F7F7F8] transition-opacity duration-500 ${
+        isLoaded ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between flex-wrap gap-3 mb-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            {isBranchPortal
+              ? `${getBranchLabel(currentUser)} — Branch Admin`
+              : isSubFranchise
+                ? 'My Location Overview'
+                : 'Franchise HQ Overview'}
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {isBranchPortal
+              ? 'Dashboard, billing, reports, orders, tables, takeaway and staff — your branch only'
+              : 'Corporate insights, multi-branch revenue audits, and comparative store performance'}
+          </p>
+        </div>
+        {isAdmin && (
+          <button
+            onClick={goToSubFranchise}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm font-semibold shadow-md shadow-orange-200/60 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] transition"
+          >
+            <Plus className="w-4 h-4" />
+            ONBOARD BRANCH
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-3 text-sm mb-4">
+          {error}
+        </div>
+      )}
+
+      {isBranchPortal && (
+        <div className="flex flex-wrap gap-1 sm:gap-2 mb-5 border-b border-gray-200">
+          {portalTabs.map((t) => {
+            const active = portalTab === t.id;
+            const Icon = t.Icon;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setPortalTab(t.id)}
+                className={`relative inline-flex items-center gap-2 px-4 py-3 text-sm font-semibold transition ${
+                  active ? 'text-orange-600' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {t.label}
+                {active && (
+                  <span className="absolute left-2 right-2 -bottom-px h-0.5 bg-orange-500 rounded-full" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {isBranchPortal && portalTab === 'dashboard' && (
+        <div className="-mx-4 sm:-mx-6 lg:-mx-8">
+          <Dashboard locationSettings={locationSettings} />
+        </div>
+      )}
+
+      {isBranchPortal && portalTab === 'billing' && (
+        <div className="-mx-4 sm:-mx-6 lg:-mx-8">
+          <BillingPage locationSettings={locationSettings} />
+        </div>
+      )}
+
+      {isBranchPortal && portalTab === 'reports' && (
+        <div className="-mx-4 sm:-mx-6 lg:-mx-8">
+          <Reports locationSettings={locationSettings} />
+        </div>
+      )}
+
+      {isBranchPortal && portalTab === 'operations' && renderQuickActions()}
+
+      {isBranchPortal && portalTab === 'overview' && renderEnterpriseOverview()}
+
+      {!isBranchPortal && renderEnterpriseOverview()}
+
+      {!isBranchPortal && isAdmin && selectedId && (
+        <LocationDetailPanel
+          locationId={selectedId}
+          locationSettings={locationSettings}
+          onClose={() => setSelectedId(null)}
+        />
       )}
 
       <style>{`

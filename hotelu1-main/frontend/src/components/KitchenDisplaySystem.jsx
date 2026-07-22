@@ -24,6 +24,10 @@ import { io } from 'socket.io-client';
 import { getLocationSettingsForCountry } from '../utils/currency';
 import useCurrency from '../hooks/useCurrency';
 import {
+  getOrderDisplayNumber,
+  formatOrderLabel,
+} from '../utils/orderDisplay';
+import {
   canRoleAccessModule,
   fetchPermissionsMatrixFromServer,
 } from '../utils/permissions';
@@ -57,7 +61,7 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
     playNewOrderBell();
     const tableLabel = order?.table_name || order?.customer_name || 'Counter';
     setNotification({
-      message: `New order #${order?.id ?? ''} — ${tableLabel}`,
+      message: `New order #${getOrderDisplayNumber(order)} — ${tableLabel}`,
       type: 'success',
     });
     setTimeout(() => setNotification(null), 3500);
@@ -246,11 +250,12 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
         setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
       }
 
+      const matched = orders.find((o) => o.id === orderId);
       setNotification({
         message:
           newStatus === 'delivered'
-            ? `Order #${orderId} served — bill generated`
-            : `Order #${orderId} → ${newStatus.toUpperCase()}`,
+            ? `${formatOrderLabel(matched || { id: orderId })} served — bill generated`
+            : `${formatOrderLabel(matched || { id: orderId })} → ${newStatus.toUpperCase()}`,
         type: 'success',
       });
     } catch (err) {
@@ -264,6 +269,7 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
     try {
       const order = orders.find((o) => o.id === orderId);
       if (!order) return;
+      if (String(order.type || '').toUpperCase() === 'TAKEAWAY') return;
       const updatedItems = order.items.filter((_, idx) => idx !== itemIndex);
       const newTotal = updatedItems.reduce(
         (sum, item) => sum + (Number(item.price) || 0) * (item.qty || item.quantity || 1),
@@ -274,10 +280,16 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
         body: JSON.stringify({ items: updatedItems, total: newTotal }),
       });
       if (!response.ok) throw new Error('Failed');
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, items: updatedItems, total: newTotal } : o))
-      );
-      setNotification({ message: `${itemName} removed`, type: 'success' });
+      const data = await response.json();
+      if (data.deleted) {
+        setOrders((prev) => prev.filter((o) => o.id !== orderId));
+        setNotification({ message: 'Order removed (no items left)', type: 'success' });
+      } else {
+        setOrders((prev) =>
+          prev.map((o) => (o.id === orderId ? { ...o, items: updatedItems, total: newTotal } : o))
+        );
+        setNotification({ message: `${itemName} removed`, type: 'success' });
+      }
       setTimeout(() => setNotification(null), 2500);
     } catch (err) {
       setNotification({ message: 'Error removing item', type: 'error' });
@@ -318,7 +330,7 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
         <div className="flex items-center justify-between mb-3">
           <div className="min-w-0">
             <p className="text-sm font-extrabold text-gray-900">
-              #{order.id}{' '}
+              #{getOrderDisplayNumber(order)}{' '}
               <span className="ml-1 text-[11px] font-bold text-gray-400 uppercase">
                 {order.table_name || 'Counter'}
               </span>
@@ -332,7 +344,8 @@ const KitchenDisplaySystem = ({ locationSettings: locationSettingsProp }) => {
 
         <ul className="space-y-2 mb-3">
           {(order.items || []).map((item, idx) => {
-            const removable = order.status === 'pending';
+            const isTakeaway = String(order.type || '').toUpperCase() === 'TAKEAWAY';
+            const removable = order.status === 'pending' && !isTakeaway;
             return (
               <li key={idx} className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-2 min-w-0">

@@ -4,11 +4,13 @@ import SimpleMenu from './SimpleMenu';
 import CustomerOrderTracker from './CustomerOrderTracker';
 import Notification from './Notification';
 import useCurrency from '../hooks/useCurrency';
+import { formatOrderLabel } from '../utils/orderDisplay';
 
 const QRCodeOrdering = ({ locationSettings, onOrderPlacedWithId, tableId: propTableId }) => {
     const { format: fmt } = useCurrency(locationSettings);
     const navigate = useNavigate();
     const [tableId, setTableId] = useState('Unknown Table/Takeaway');
+    const [branchId, setBranchId] = useState(null);
     const [currentOrderId, setCurrentOrderId] = useState(null);
     const [notification, setNotification] = useState(null);
     const [showTracker, setShowTracker] = useState(false);
@@ -23,13 +25,17 @@ const QRCodeOrdering = ({ locationSettings, onOrderPlacedWithId, tableId: propTa
             if (idFromUrl) {
                 setTableId(idFromUrl);
             }
+            const branchFromUrl = params.get('branchId') || params.get('subfranchise_id');
+            if (branchFromUrl) {
+                setBranchId(branchFromUrl);
+            }
         }
     }, [propTableId]);
 
     const handleOrderPlaced = (order) => {
         setCurrentOrderId(order.id);
         setNotification({
-            message: `✅ Order #${order.id} placed! ${fmt(order.total)} — you can add more items below.`,
+            message: `✅ ${formatOrderLabel(order)} placed! ${fmt(order.total)} — you can add more items below.`,
             type: 'success',
             duration: 6000
         });
@@ -72,6 +78,7 @@ const QRCodeOrdering = ({ locationSettings, onOrderPlacedWithId, tableId: propTa
             ) : (
                 <SimpleMenu 
                     tableId={tableId}
+                    branchId={branchId}
                     onOrderPlaced={handleOrderPlaced}
                     locationSettings={locationSettings}
                 />
