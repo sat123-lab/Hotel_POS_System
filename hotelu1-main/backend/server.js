@@ -1,6 +1,17 @@
 // Load environment variables from .env file
 require('dotenv').config();
 
+// Debug: Log environment variable loading
+console.log('=== ENV DEBUG ===');
+console.log('NODE_ENV:', process.env.NODE_ENV || 'NOT SET');
+console.log('DB_HOST:', process.env.DB_HOST || 'NOT SET');
+console.log('DB_NAME:', process.env.DB_NAME || 'NOT SET');
+console.log('DB_USER:', process.env.DB_USER || 'NOT SET');
+console.log('DB_PASSWORD:', process.env.DB_PASSWORD ? 'SET' : 'NOT SET');
+console.log('DB_PORT:', process.env.DB_PORT || 'NOT SET');
+console.log('JWT_SECRET:', process.env.JWT_SECRET ? 'SET' : 'NOT SET');
+console.log('=================');
+
 const express = require("express");
 const cors = require("cors");
 const { Sequelize, Op } = require("sequelize");
