@@ -2,6 +2,44 @@ const { Sequelize } = require('sequelize');
 
 require('dotenv').config();
 
+// Temporary MySQL connection test using mysql2/promise before Sequelize initializes
+(async function testMySqlConnection() {
+  try {
+    const mysql = require('mysql2/promise');
+    
+    console.log('=== TEMPORARY MYSQL CONNECTION TEST ===');
+    console.log('Attempting direct MySQL connection using mysql2/promise...');
+    
+    const connection = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME
+    });
+    
+    console.log('✓ MySQL connection successful');
+    
+    const [rows] = await connection.execute('SELECT CURRENT_USER(), USER(), DATABASE(), VERSION()');
+    console.log('Query result:', rows[0]);
+    
+    await connection.end();
+    console.log('✓ Connection closed');
+    console.log('=== MYSQL CONNECTION TEST COMPLETED ===\n');
+    
+  } catch (error) {
+    console.error('✗ MySQL connection test FAILED');
+    console.error('=== COMPLETE RAW MYSQL ERROR OBJECT ===');
+    console.error('code:', error.code);
+    console.error('errno:', error.errno);
+    console.error('sqlState:', error.sqlState);
+    console.error('sqlMessage:', error.sqlMessage);
+    console.error('fatal:', error.fatal);
+    console.error('stack:', error.stack);
+    console.error('======================================\n');
+  }
+})();
+
 // Debug: Log environment variable loading in sequelize.js
 console.log('=== SEQUELIZE ENV DEBUG ===');
 console.log('NODE_ENV:', process.env.NODE_ENV || 'NOT SET');
