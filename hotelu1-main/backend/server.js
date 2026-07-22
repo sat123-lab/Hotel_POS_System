@@ -496,8 +496,14 @@ async function startServer() {
         console.error(`Error with demo user ${demoUser.username}:`, err.message);
       }
     }
-  } catch (error) {
-    console.error("Database connection failed:", error.message);
+  } catch (err) {
+    console.error("Database authentication failed");
+    console.error("Message:", err.message);
+    console.error("Code:", err.code);
+    console.error("Errno:", err.errno);
+    console.error("SQL State:", err.sqlState);
+    console.error("SQL Message:", err.sqlMessage);
+    console.error(err);
     console.warn("Server starting without database connection - using fallback authentication");
     dbConnected = false;
   }
