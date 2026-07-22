@@ -4196,14 +4196,22 @@ app.get("/api/staff", verifyToken, async (req, res) => {
 const HOST = process.env.HOST || "0.0.0.0";
 
 async function boot() {
-  await startServer();
   server.listen(PORT, HOST, () => {
     console.log(`Backend running at http://${HOST}:${PORT}`);
     console.log(`Local: http://localhost:${PORT}`);
-    console.log(
-      `Database: ${dbConnected ? "connected" : "disconnected (fallback mode)"}`
-    );
   });
+
+  // Database initialization runs in background with proper error handling
+  (async () => {
+    try {
+      await startServer();
+      console.log(
+        `Database: ${dbConnected ? "connected" : "disconnected (fallback mode)"}`
+      );
+    } catch (err) {
+      console.error("Background database initialization failed:", err);
+    }
+  })();
 }
 
 boot();
