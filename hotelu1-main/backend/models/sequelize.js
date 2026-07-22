@@ -2,17 +2,6 @@ const { Sequelize } = require('sequelize');
 
 require('dotenv').config();
 
-// Debug: Log environment variable loading in sequelize.js
-console.log('=== SEQUELIZE ENV DEBUG ===');
-console.log('NODE_ENV:', process.env.NODE_ENV || 'NOT SET');
-console.log('DB_HOST:', process.env.DB_HOST || 'NOT SET');
-console.log('DB_NAME:', process.env.DB_NAME || 'NOT SET');
-console.log('DB_USER:', process.env.DB_USER || 'NOT SET');
-console.log('DB_PASSWORD:', process.env.DB_PASSWORD ? 'SET' : 'NOT SET');
-console.log('DB_PORT:', process.env.DB_PORT || 'NOT SET');
-console.log('DATABASE_URL:', process.env.DATABASE_URL ? 'SET' : 'NOT SET');
-console.log('===========================');
-
 /**
  * Backend supports two ways to connect:
  * 1. DATABASE_URL  e.g. postgres://user:pass@host:5432/dbname
